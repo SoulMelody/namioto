@@ -226,7 +226,7 @@ class NoteItem(QGraphicsRectItem):
             painter.setClipRect(rect)
             painter.scale(px, py)
             font = QFont()
-            font.setPixelSize(max(12, round(rect.height() / py * 0.9)))
+            font.setPixelSize(max(11, round(rect.height() / py * 0.85)))
             font.setBold(True)
             painter.setFont(font)
             painter.setPen(colors.note_selected_edge if selected else QColor(theme.LYRIC_TEXT))
@@ -329,6 +329,7 @@ class PianoRollView(QGraphicsView):
         self.snap = 0.25
         self._interaction = Interaction.viewing()
         self.overtone_highlight = True
+        self.note_lyrics_visible = True
         self.playing = False
         self.division = "beats"
         self.initial_center = (8.0, float(PITCH_MAX - 60))  # where the view opens, unless a session says otherwise
@@ -816,6 +817,10 @@ class PianoRollView(QGraphicsView):
             color = QColor(theme.NOTE_PALETTE[number % len(theme.NOTE_PALETTE)])
         return color
 
+    def set_note_lyrics_visible(self, visible: bool) -> None:
+        self.note_lyrics_visible = visible
+        self._sync_channel_visuals()
+
     def _sync_channel_visuals(self) -> None:
         """Body colour, bevel, stacking and visibility all come from the channel list; the notes only
         show while editing, the way WaveTone keeps its graph to the spectrum outside note edit mode."""
@@ -826,8 +831,9 @@ class PianoRollView(QGraphicsView):
                 for position, identifier in enumerate(ids):
                     labels.setdefault(identifier, []).append(("↳ " if position else "") + line.sounds[column].label)
         for note in self.notes():
-            note.lyric_text = " ".join(labels.get(note.id, ()))
-            note.setToolTip(note.lyric_text)
+            text = " ".join(labels.get(note.id, ()))
+            note.lyric_text = text if self.note_lyrics_visible else ""
+            note.setToolTip(text)
             note.update()
             note.fill, note.edge_light, note.edge_dark = theme.note_shades(self.channel_color(note.channel))
             channel = self._channel(note.channel)

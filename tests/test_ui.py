@@ -5292,6 +5292,25 @@ def _mapped_pair(own_window, tmp_path, raw=((0.0, 1.0), (1.0, 1.0))) -> None:
     wait_for_lyric_mapping(own_window)
 
 
+def test_note_lyrics_toggle_preserves_mapping(own_window, tmp_path) -> None:
+    _mapped_pair(own_window, tmp_path)
+    view = own_window.view
+    labels = [note.lyric_text for note in view.notes()]
+    operations = view.lyric_operations
+    before = view.undo_stack.count()
+    assert own_window.edit.note_lyrics.isChecked()
+    assert any(labels)
+    own_window.edit.note_lyrics.click()
+    assert all(not note.lyric_text for note in view.notes())
+    assert [note.toolTip() for note in view.notes()] == labels
+    view._sync_channel_visuals()
+    assert all(not note.lyric_text for note in view.notes())
+    own_window.edit.note_lyrics.click()
+    assert [note.lyric_text for note in view.notes()] == labels
+    assert view.lyric_operations == operations
+    assert view.undo_stack.count() == before
+
+
 def test_note_lyric_font_is_bold_and_tracks_vertical_zoom(own_window, monkeypatch) -> None:
     own_window.view.set_notes(((60, 0, 1, 0),))
     note = own_window.view.notes()[0]

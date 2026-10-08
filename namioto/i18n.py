@@ -408,6 +408,7 @@ CATALOGS: dict[str, dict[str, str]] = {
         "The lyrics changed — align again to move them onto the notes": "歌词已变化 — 再次对齐以把它们放到音符上",
         "Re-aligning the lyrics…": "正在重新对齐歌词…",
         "Calculating lyric mapping…": "正在计算歌词映射…",
+        "Show lyrics on MIDI notes": "显示 MIDI 音符上的歌词",
         "Map lyrics to the current channel, or recalculate the whole mapping": "将歌词映射到当前通道，或重新计算整曲映射",
         # main window
         "Namioto project (*{suffix})": "Namioto 工程 (*{suffix})",

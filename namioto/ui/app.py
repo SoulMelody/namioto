@@ -380,6 +380,7 @@ class MainWindow(QMainWindow):
         self.edit.align_requested.connect(self._open_align)
         self.edit.map_channel_requested.connect(self._map_to_channel)
         self.edit.lyric_mode_changed.connect(self._set_lyric_mode)
+        self.edit.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
         self.player.finished.connect(self._on_playback_finished)
         self.song.finished.connect(self._on_playback_finished)
         self.song.failed.connect(self._on_song_failed)

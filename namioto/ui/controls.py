@@ -649,6 +649,8 @@ class EditBar(_Group):
         self.lyric_lock.setEnabled(False)
         self.lyric_lock.toggled.connect(self._on_lyric_lock)
         self._render_lyric_lock(False)
+        self.note_lyrics = icon_button("lyrics", tr("Show lyrics on MIDI notes"), checkable=True)
+        self.note_lyrics.setChecked(True)
 
         tools = Cluster("tools")
         tools.add(self.mode)
@@ -663,6 +665,7 @@ class EditBar(_Group):
         tools.add(self.map_channel)
         tools.add(separator())
         tools.add(self.lyric_lock)
+        tools.add(self.note_lyrics)
 
         self.place(tools, 1, 0, 2)
         self._render()
