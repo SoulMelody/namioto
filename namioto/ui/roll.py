@@ -153,6 +153,7 @@ class NoteItem(QGraphicsRectItem):
         self.note = note
         self.filtered = False
         self.lyric_text = ""
+        self.lyric_runs: tuple[tuple[str, bool], ...] = ()
         self.fill, self.edge_light, self.edge_dark = theme.note_shades(QColor(theme.NOTE_PALETTE[0]))
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -229,15 +230,26 @@ class NoteItem(QGraphicsRectItem):
             font.setPixelSize(max(11, round(rect.height() / py * 0.85)))
             font.setBold(True)
             painter.setFont(font)
-            painter.setPen(colors.note_selected_edge if selected else QColor(theme.LYRIC_TEXT))
-            text = painter.fontMetrics().elidedText(
-                self.lyric_text, Qt.TextElideMode.ElideRight, max(0, int(rect.width() / px) - 6)
-            )
-            painter.drawText(
-                QRectF(3, 0, max(0, rect.width() / px - 6), rect.height() / py),
-                int(Qt.AlignmentFlag.AlignVCenter),
-                text,
-            )
+            metrics = painter.fontMetrics()
+            x = 3
+            right = rect.width() / px - 3
+            runs = self.lyric_runs or ((self.lyric_text, False),)
+            for text, zero in runs:
+                room = max(0, int(right - x))
+                if not room:
+                    break
+                visible = metrics.elidedText(text, Qt.TextElideMode.ElideRight, room)
+                painter.setPen(
+                    QColor(theme.LYRIC_ZERO)
+                    if zero
+                    else colors.note_selected_edge
+                    if selected
+                    else QColor(theme.LYRIC_TEXT)
+                )
+                painter.drawText(QRectF(x, 0, room, rect.height() / py), int(Qt.AlignmentFlag.AlignVCenter), visible)
+                x += metrics.horizontalAdvance(visible)
+                if visible != text:
+                    break
         painter.restore()
 
 
@@ -827,11 +839,41 @@ class PianoRollView(QGraphicsView):
         labels = {}
         for row, line in enumerate(self._lines):
             mapped = self._lyric_mapped[row] if row < len(self._lyric_mapped) else ()
-            for column, ids in enumerate(mapped):
+            zero = self._lyric_zero[row] if row < len(self._lyric_zero) else ()
+            first = next((ids[0] for ids in mapped if ids), None)
+            previous = None
+            for column, sound in enumerate(line.sounds):
+                ids = mapped[column] if column < len(mapped) else ()
+                dropped = column < len(zero) and zero[column]
+                if ids:
+                    previous = ids[-1]
+                elif dropped:
+                    identifier = previous if previous is not None else first
+                    ids = (identifier,) if identifier is not None else ()
                 for position, identifier in enumerate(ids):
-                    labels.setdefault(identifier, []).append(("↳ " if position else "") + line.sounds[column].label)
+                    prefix = "↳ " if position else ""
+                    entries = labels.setdefault(identifier, [])
+                    if (
+                        entries
+                        and sound.rubied
+                        and entries[-1][0].rubied
+                        and entries[-1][0].base == sound.base
+                        and entries[-1][2:] == (dropped, prefix, row, column - 1)
+                    ):
+                        last = entries[-1]
+                        entries[-1] = (last[0], last[1] + sound.reading, dropped, prefix, row, column)
+                    else:
+                        entries.append((sound, sound.reading, dropped, prefix, row, column))
         for note in self.notes():
-            text = " ".join(labels.get(note.id, ()))
+            runs = []
+            for sound, reading, zero, prefix, _row, _column in labels.get(note.id, ()):
+                text = reading
+                if sound.rubied:
+                    left, right = ("(", ")") if sound.first else ("[", "]")
+                    text += f"{left}{sound.base}{right}"
+                runs.append(((" " if runs else "") + prefix + text, zero))
+            text = "".join(text for text, _zero in runs)
+            note.lyric_runs = tuple(runs) if self.note_lyrics_visible else ()
             note.lyric_text = text if self.note_lyrics_visible else ""
             note.setToolTip(text)
             note.update()

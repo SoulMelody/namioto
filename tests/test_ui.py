@@ -5292,6 +5292,45 @@ def _mapped_pair(own_window, tmp_path, raw=((0.0, 1.0), (1.0, 1.0))) -> None:
     wait_for_lyric_mapping(own_window)
 
 
+def test_note_lyrics_merge_same_ruby_base(own_window) -> None:
+    view = own_window.view
+    view.set_notes(((60, 0, 1, 0),))
+    note = view.notes()[0]
+    view.load_lyrics(natural_sounds("今日[きょう]"), [[(0.0, 0.5), (0.5, 1.0)]], mapped=[[(note.id,), (note.id,)]])
+    assert note.lyric_text == "きょう(今日)"
+    assert note.lyric_runs == (("きょう(今日)", False),)
+    assert len(view.lyric_lines[0].sounds) == 2
+
+
+def test_note_lyrics_append_zero_to_previous_note(own_window) -> None:
+    view = own_window.view
+    view.set_notes(((60, 0, 1, 0), (62, 1, 1, 0)))
+    first, second = view.notes()
+    view.load_lyrics(
+        natural_sounds("あいうえ"),
+        [[(0.0, 1.0), (None, None), (None, None), (1.0, 2.0)]],
+        zero=[[False, True, True, False]],
+        mapped=[[(first.id,), (), (), (second.id,)]],
+    )
+    assert first.lyric_text == "あ い う"
+    assert first.lyric_runs == (("あ", False), (" い", True), (" う", True))
+    assert second.lyric_text == "え"
+    assert view.lyric_mapped[0][1:3] == ((), ())
+
+
+def test_note_lyrics_leading_zero_uses_first_mapped_note(own_window) -> None:
+    view = own_window.view
+    view.set_notes(((60, 0, 1, 0),))
+    note = view.notes()[0]
+    view.load_lyrics(
+        natural_sounds("あい"),
+        [[(None, None), (0.0, 1.0)]],
+        zero=[[True, False]],
+        mapped=[[(), (note.id,)]],
+    )
+    assert note.lyric_runs == (("あ", True), (" い", False))
+
+
 def test_note_lyrics_toggle_preserves_mapping(own_window, tmp_path) -> None:
     _mapped_pair(own_window, tmp_path)
     view = own_window.view
@@ -5351,7 +5390,8 @@ def test_boundary_drag_changes_mapping_without_editing_raw(own_window, tmp_path)
     assert view.lyric_operations == (Match(SoundRef(0, 0), ids, True), Drop(SoundRef(0, 1), True))
     assert view.lyric_raw == raw
     assert view.undo_stack.count() == before + 1
-    assert [note.lyric_text for note in view.notes()] == ["あ", "↳ あ"]
+    assert [note.lyric_text for note in view.notes()] == ["あ", "↳ あ い"]
+    assert view.notes()[1].lyric_runs == (("↳ あ", False), (" い", True))
     view.undo()
     wait_for_lyric_mapping(own_window)
     assert view.lyric_mapped == (((ids[0],), (ids[1],)),)
