@@ -5420,14 +5420,14 @@ def test_note_lyrics_toggle_preserves_mapping(own_window, tmp_path) -> None:
     labels = [note.lyric_text for note in view.notes()]
     operations = view.lyric_operations
     before = view.undo_stack.count()
-    assert own_window.edit.note_lyrics.isChecked()
+    assert own_window.transport.note_lyrics.isChecked()
     assert any(labels)
-    own_window.edit.note_lyrics.click()
+    own_window.transport.note_lyrics.click()
     assert all(not note.lyric_text for note in view.notes())
     assert [note.toolTip() for note in view.notes()] == labels
     view._sync_channel_visuals()
     assert all(not note.lyric_text for note in view.notes())
-    own_window.edit.note_lyrics.click()
+    own_window.transport.note_lyrics.click()
     assert [note.lyric_text for note in view.notes()] == labels
     assert view.lyric_operations == operations
     assert view.undo_stack.count() == before

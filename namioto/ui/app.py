@@ -383,7 +383,7 @@ class MainWindow(QMainWindow):
         self.edit.map_channel_requested.connect(self._map_to_channel)
         self.sound_strip.save_map_requested.connect(self._save_lyrics_map)
         self.sound_strip.discard_map_requested.connect(self._discard_lyrics_map)
-        self.edit.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
+        self.transport.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
         self.player.finished.connect(self._on_playback_finished)
         self.song.finished.connect(self._on_playback_finished)
         self.song.failed.connect(self._on_song_failed)

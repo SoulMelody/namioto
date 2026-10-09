@@ -528,6 +528,8 @@ class TransportBar(_Group):
         self.channels = icon_button(
             "channels", tr("Channels: colours, mute and instruments, one card per channel"), checkable=True
         )
+        self.note_lyrics = icon_button("lyrics", tr("Show lyrics on MIDI notes"), checkable=True)
+        self.note_lyrics.setChecked(True)
         self.division = icon_button(
             "beat",
             tr("Time division: checked follows the beats of the tempo map, unchecked follows seconds"),
@@ -550,7 +552,9 @@ class TransportBar(_Group):
         playback.add(separator())
         playback.add(self.auto_page)
         playback.add(self.overtone)
+        playback.add(separator())
         playback.add(self.channels)
+        playback.add(self.note_lyrics)
         playback.add(self.division)
 
         bpm = Cluster("bpm")
@@ -644,8 +648,6 @@ class EditBar(_Group):
         self.map_channel = icon_button("map", tr("Map lyrics to the current channel, or recalculate the whole mapping"))
         self.map_channel.setEnabled(False)
         self.map_channel.clicked.connect(self.map_channel_requested)
-        self.note_lyrics = icon_button("lyrics", tr("Show lyrics on MIDI notes"), checkable=True)
-        self.note_lyrics.setChecked(True)
 
         tools = Cluster("tools")
         tools.add(self.mode)
@@ -658,8 +660,6 @@ class EditBar(_Group):
         tools.add(self.lyrics)
         tools.add(self.align)
         tools.add(self.map_channel)
-        tools.add(separator())
-        tools.add(self.note_lyrics)
 
         self.place(tools, 1, 0, 2)
         self._render()
