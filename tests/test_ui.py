@@ -55,7 +55,6 @@ from namioto.channels import Channel
 from namioto.interaction import Interaction, Tool
 from namioto.karaoke.operations import Drop, Match, Merge, SoundRef
 from namioto.karaoke.sounds import natural_sounds
-from namioto.lyricmap.raw import from_spans
 from namioto.lyrics import text_key
 from namioto.ui import theme
 from namioto.ui.align_dialog import AlignDialog, Aligner
@@ -3622,12 +3621,13 @@ def test_copying_the_prompt_puts_it_on_the_clipboard(lyrics_window) -> None:
     dialog.close()
 
 
-def test_saving_writes_the_lyrics_beside_the_project(lyrics_window) -> None:
+def test_saving_lyrics_writes_the_temporary_copy(lyrics_window) -> None:
     dialog = lyrics_dialog(lyrics_window)
     dialog.result.setPlainText("季節[き,せつ]は移[うつ]ろい")
     dialog.save_button.click()
     assert lyrics.load(lyrics_window.lyrics_path()) == "季節[き,せつ]は移[うつ]ろい"
-    assert "Saved to song.krc" in dialog.status_label.text()
+    assert "Saved to lyrics.krc" in dialog.status_label.text()
+    assert not lyrics_window.project_path.with_suffix(".krc").exists()
     dialog.close()
 
 
@@ -3814,7 +3814,7 @@ def test_the_api_key_is_typed_back_hidden() -> None:
 
 def test_the_lyrics_open_in_an_external_editor(lyrics_window, monkeypatch) -> None:
     calls: list[tuple] = []
-    monkeypatch.setattr(QProcess, "startDetached", lambda program, args: calls.append((program, args)) or True)
+    monkeypatch.setattr(QProcess, "startDetached", lambda program, args: calls.append((program, args)) or (True, 1))
     lyrics_window.settings.lyrics.editor = "code --wait"
 
     lyrics_window._open_lyrics_editor()
@@ -3849,7 +3849,8 @@ def test_the_watcher_moves_with_the_project(lyrics_window, tmp_path) -> None:
     lyrics_window.project_path = other
     lyrics_window._watch_lyrics()
 
-    assert lyrics_window.lyrics_path() == tmp_path / "other.krc"
+    assert lyrics_window.lyrics_path().parent != tmp_path
+    assert not (tmp_path / "other.krc").exists()
     assert lyrics_window.lyrics_text == ""
 
 
@@ -5315,31 +5316,28 @@ def test_a_label_is_dropped_when_it_does_not_fit(window) -> None:
     assert strip._fit_label(plain, _Metrics(), 5) == ""
 
 
-def test_without_alignment_the_mapping_does_not_run(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
+def test_without_alignment_lyrics_use_faithful_mapping(own_window, tmp_path) -> None:
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = None
+    own_window._stored_lyrics = project.Lyrics(text="あい\n", mode="read")
     own_window._watch_lyrics()
     own_window.transport.bpm.setValue(60.0)  # a beat is a second, so notes read in seconds
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 2.0, 1.0, 0)))
     wait_for_lyric_mapping(own_window)
 
-    assert own_window._lyric_error  # incomplete_alignment: the sounds have no times yet
-    assert own_window.view.lyric_times == (((None, None), (None, None)),)
+    assert own_window._lyric_error == ""
+    assert own_window.view.lyric_times == (((0.0, 1.0), (2.0, 3.0)),)
+    assert own_window.view.lyric_editable is False
 
 
 def test_an_alignment_puts_each_sound_on_the_note_its_time_covers(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = None
+    own_window._stored_lyrics = project.Lyrics(text="あい\n", mode="read")
     own_window._watch_lyrics()
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 2.0, 0),))  # one note under both sounds
-    own_window._lyric_key = ""
-    own_window._stored_lyrics = project.Lyrics(key=text_key("あい\n"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),))
-    own_window._load_sounds()
+    own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms")
     wait_for_lyric_mapping(own_window)
 
     assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)  # the merge tiles the one note
@@ -5630,7 +5628,7 @@ def test_a_cross_container_merge_is_green_and_exports_a_continuation(own_window,
     assert (tmp_path / "exported.krc").read_text(encoding="utf-8") == "泣[な]い.+"
 
 
-def test_read_mode_uses_continuations_without_changing_edit_evidence(own_window, tmp_path) -> None:
+def test_discard_restores_the_original_krc_continuations(own_window, tmp_path, monkeypatch) -> None:
     from namioto import project
 
     own_window.transport.bpm.setValue(60.0)
@@ -5643,12 +5641,14 @@ def test_read_mode_uses_continuations_without_changing_edit_evidence(own_window,
     own_window._watch_lyrics()
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_mapped == (((1,), (2,)),)
-    raw = own_window.view.lyric_raw
-    own_window._set_lyric_mode("read")
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Discard)
+    assert own_window._discard_lyrics_map()
     wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "泣[な]い.+"
     assert own_window.view.lyric_times == (((0.0, 0.5), (0.5, 1.0)),)
     assert own_window.view.lyric_mapped == (((1,), (1,)),)
-    assert own_window.view.lyric_raw == raw
+    assert own_window.view.lyric_raw == (((None, None), (None, None)),)
+    assert own_window.view.lyric_operations == ()
 
 
 def test_merging_two_sounds_confirms_the_pair(own_window, tmp_path) -> None:
@@ -5675,9 +5675,10 @@ def test_a_merge_can_be_dissolved_again(own_window, tmp_path) -> None:
 
 
 def test_a_grouped_run_is_marked_on_the_strip(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = project.Lyrics(key=text_key("あい\n"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),))
+    own_window._stored_lyrics = project.Lyrics(
+        text="あい\n", key=text_key("あい\n"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),)
+    )
     own_window._lyric_key = ""
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
@@ -5717,7 +5718,9 @@ def test_shared_sound_blocks_have_a_thin_internal_separator(window) -> None:
 def test_a_sound_that_covers_no_note_is_marked_grey(own_window, tmp_path) -> None:
     (tmp_path / "song.krc").write_text("あか\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = project.Lyrics(key=text_key("あか\n"), model="mms", raw=(((0.0, 1.0), (3.0, 0.5)),))
+    own_window._stored_lyrics = project.Lyrics(
+        text="あか\n", key=text_key("あか\n"), model="mms", raw=(((0.0, 1.0), (3.0, 0.5)),)
+    )
     own_window._lyric_key = ""
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
@@ -5749,7 +5752,7 @@ def test_short_sounds_on_one_note_fall_to_zero(own_window, tmp_path) -> None:
     (tmp_path / "song.krc").write_text("きにく\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(
-        key=text_key("きにく\n"), model="mms", raw=(((0.0, 0.9), (0.9, 0.05), (0.95, 0.05)),)
+        text="きにく\n", key=text_key("きにく\n"), model="mms", raw=(((0.0, 0.9), (0.9, 0.05), (0.95, 0.05)),)
     )
     own_window._lyric_key = ""
     own_window.transport.bpm.setValue(60.0)
@@ -5766,7 +5769,9 @@ def test_short_sounds_on_one_note_fall_to_zero(own_window, tmp_path) -> None:
 def test_a_block_is_the_note_the_sound_maps_to(own_window, tmp_path) -> None:
     (tmp_path / "song.krc").write_text("タに\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = project.Lyrics(key=text_key("タに\n"), model="mms", raw=(((0.0, 0.8), (0.8, 0.5)),))
+    own_window._stored_lyrics = project.Lyrics(
+        text="タに\n", key=text_key("タに\n"), model="mms", raw=(((0.0, 0.8), (0.8, 0.5)),)
+    )
     own_window._lyric_key = ""
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
@@ -5783,10 +5788,11 @@ def test_a_block_is_the_note_the_sound_maps_to(own_window, tmp_path) -> None:
 
 
 def test_a_lyric_drag_is_kept_in_the_project(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
     project_path = tmp_path / "song.nto"
     own_window.project_path = project_path
-    own_window._stored_lyrics = project.Lyrics(key=text_key("あい\n"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),))
+    own_window._stored_lyrics = project.Lyrics(
+        text="あい\n", key=text_key("あい\n"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),)
+    )
     own_window._lyric_key = ""
     own_window.transport.bpm.setValue(60.0)  # a beat is a second, so notes read in seconds
     own_window.view.set_channels((Channel(channel=0),))
@@ -5808,9 +5814,8 @@ def test_a_lyric_drag_is_kept_in_the_project(own_window, tmp_path) -> None:
 
 
 def test_notes_on_another_channel_are_not_mapped(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = None
+    own_window._stored_lyrics = project.Lyrics(text="あい\n", mode="read")
     own_window._watch_lyrics()
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=1),))
@@ -5864,59 +5869,210 @@ def test_the_strip_hides_until_the_times_arrive(own_window, tmp_path) -> None:
     assert own_window.view.lyric_times == (((None, None), (None, None)),)
     assert own_window.sound_strip.isHidden()
 
-    own_window._stored_lyrics = project.Lyrics(key=text_key("あい\n"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),))
-    own_window._lyric_key = ""
-    own_window._load_sounds()
+    own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms")
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)
     assert not own_window.sound_strip.isHidden()
 
 
-def test_the_project_keeps_the_lyrics_text_without_the_krc(own_window, tmp_path) -> None:
-    project_path = tmp_path / "song.nto"
-    sidecar = tmp_path / "song.krc"
-    sidecar.write_text("あい\n", encoding="utf-8")
-    own_window.project_path = project_path
-    own_window._stored_lyrics = None
-    own_window._watch_lyrics()
+def test_project_lyrics_ignore_existing_sidecars(own_window, tmp_path) -> None:
+    path = tmp_path / "song.nto"
+    sidecar = path.with_suffix(".krc")
+    sidecar.write_text("あう\n", encoding="utf-8")
+    project.save(project.Project(lyrics=project.Lyrics(text="あい\n", mode="read")), path)
+    assert own_window.load_project(path)
     assert own_window.lyrics_text == "あい\n"
-
-    assert own_window.save_project(project_path) is True
-    saved = project.load(project_path)
-    assert saved.lyrics.text == "あい\n"
-
+    assert own_window.lyrics_path().parent != tmp_path
+    assert own_window.save_project(path)
+    assert project.load(path).lyrics.text == "あい\n"
+    assert sidecar.read_text(encoding="utf-8") == "あう\n"
     sidecar.unlink()
-    own_window._stored_lyrics = saved.lyrics
+    assert own_window.load_project(path)
+    assert own_window.lyrics_text == "あい\n"
+    assert not sidecar.exists()
+
+
+def test_saving_a_map_finalizes_the_project_as_faithful(own_window, tmp_path) -> None:
+    _mapped_pair(own_window, tmp_path, raw=((0.0, 0.5), (0.5, 0.5)))
+    own_window.view.set_notes([(60, 0.0, 1.0, 0, 1)])
+    wait_for_lyric_mapping(own_window)
+    own_window._on_lyric_action("merge", 0, 1)
+    wait_for_lyric_mapping(own_window)
+    expected = own_window.view.lyric_mapped
+    assert own_window._save_lyrics_map()
+    wait_for_lyric_mapping(own_window)
+    saved = project.load(own_window.project_path)
+    assert saved.lyrics.text == "(あい).1"
+    assert saved.lyrics.mode == "read"
+    assert saved.lyrics.operations == ()
+    assert saved.lyrics.raw == ()
+    assert saved.lyrics.key == ""
+    assert saved.lyrics.model == ""
+    assert not own_window.view.lyric_editable
+    assert own_window.edit.lyrics.isEnabled()
+    assert own_window.view.lyric_mapped == expected
+    assert own_window.load_project(own_window.project_path)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_mapped == expected
+
+
+@pytest.mark.parametrize("use_constraints,slots", [(True, (2, 1)), (False, (1, 2))])
+def test_alignment_mapping_can_use_or_ignore_krc_constraints(own_window, tmp_path, use_constraints, slots):
+    own_window.project_path = tmp_path / "song.nto"
     own_window._watch_lyrics()
-    assert own_window.lyrics_text == "あい\n"  # the project itself is the baseline
+    own_window.transport.bpm.setValue(60.0)
+    own_window.view.set_channels((Channel(channel=5),))
+    own_window.view.set_active_channel(5)
+    own_window.view.set_notes([(60, 0.0, 1.0, 5), (62, 1.0, 1.0, 5), (64, 2.0, 1.0, 5)])
+    assert own_window._on_lyrics_saved("あ.2い")
+    own_window._adopt_alignment([[(0.0, 1.0), (1.0, 2.0)]], "mms", use_constraints=use_constraints)
+    wait_for_lyric_mapping(own_window)
+    assert tuple(operation.slots for operation in own_window.view.lyric_operations) == slots
+    assert own_window.save_project(own_window.project_path)
+    assert own_window.load_project(own_window.project_path)
+    wait_for_lyric_mapping(own_window)
+    assert own_window._lyric_mode == "edit"
+    assert own_window._lyric_use_constraints == use_constraints
+    assert tuple(operation.slots for operation in own_window.view.lyric_operations) == slots
+    assert own_window._save_lyrics_map()
+    wait_for_lyric_mapping(own_window)
+    expected = own_window.view.lyric_mapped
+    assert lyrics.load(own_window.lyrics_path()) == own_window.lyrics_text
+    assert own_window.load_project(own_window.project_path)
+    wait_for_lyric_mapping(own_window)
+    assert own_window._lyric_channel == 5
+    assert own_window.view.lyric_mapped == expected
 
-    own_window._watch_lyrics(materialize=True)
-    assert sidecar.read_text(encoding="utf-8") == "あい\n"  # a copy for the external editor
 
-
-def test_the_lyrics_mode_is_kept_in_the_project(own_window, tmp_path) -> None:
-    project_path = tmp_path / "song.nto"
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
-    own_window.project_path = project_path
-    own_window._stored_lyrics = None
+def test_incompatible_krc_constraints_stay_visible_and_cannot_be_finalized(own_window, tmp_path):
+    own_window.project_path = tmp_path / "song.nto"
     own_window._watch_lyrics()
+    own_window.view.set_notes([(60, 0.0, 1.0)])
+    assert own_window._on_lyrics_saved("あ.3")
+    own_window._adopt_alignment([[(0.0, 1.0)]], "mms", use_constraints=True)
+    wait_for_lyric_mapping(own_window)
+    assert own_window._lyric_error
+    assert own_window._lyric_mode == "edit"
+    assert not own_window.sound_strip.isHidden()
+    assert not own_window._save_lyrics_map()
+    assert own_window.lyrics_text == "あ.3"
+    own_window._adopt_alignment([[(0.0, 1.0)]], "mms", use_constraints=False)
+    wait_for_lyric_mapping(own_window)
+    assert not own_window._lyric_error
+    assert own_window._save_lyrics_map()
+    assert own_window.lyrics_text == "あ"
 
-    own_window._set_lyric_mode("read")
 
-    assert own_window._lyric_mode == "read"
-    assert own_window.project_dirty is True
-    assert own_window.save_project(project_path) is True
-    assert project.load(project_path).lyrics.mode == "read"
+def test_unreadable_temporary_lyrics_do_not_replace_project_text(lyrics_window):
+    assert lyrics_window._on_lyrics_saved("あい")
+    lyrics_window.lyrics_path().write_bytes(b"\xff")
+    lyrics_window._on_lyrics_file_changed()
+    assert lyrics_window.lyrics_text == "あい"
+    assert "could not be read" in lyrics_window.statusBar().currentMessage().lower()
 
 
-def test_exporting_krc_without_a_mapping_writes_nothing(own_window, monkeypatch, tmp_path) -> None:
-    own_window.lyrics_text = "あい\n"
+def test_failed_map_save_keeps_the_editing_session(own_window, tmp_path, monkeypatch):
+    _mapped_pair(own_window, tmp_path)
+    before = own_window.lyrics_text, own_window.view.lyric_raw, own_window.view.lyric_operations
+
+    def fail(*args):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(project, "save", fail)
+    assert not own_window._save_lyrics_map()
+    assert own_window._lyric_mode == "edit"
+    assert (own_window.lyrics_text, own_window.view.lyric_raw, own_window.view.lyric_operations) == before
+    assert own_window.view.lyric_editable
+    assert "read-only filesystem" in own_window.statusBar().currentMessage()
+
+
+@pytest.mark.parametrize("answer", [QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Discard])
+def test_discard_requires_confirmation(own_window, tmp_path, monkeypatch, answer):
+    _mapped_pair(own_window, tmp_path)
+    before = own_window.view.lyric_operations
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: answer)
+    assert own_window._discard_lyrics_map() == (answer == QMessageBox.StandardButton.Discard)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "あい"
+    if answer == QMessageBox.StandardButton.Cancel:
+        assert own_window._lyric_mode == "edit"
+        assert own_window.view.lyric_operations == before
+    else:
+        assert own_window._lyric_mode == "read"
+        assert own_window.view.lyric_operations == ()
+        assert own_window.edit.lyrics.isEnabled()
+
+
+def test_editing_blocks_all_lyrics_text_entries(own_window, tmp_path, monkeypatch):
+    _mapped_pair(own_window, tmp_path)
+    before = own_window.lyrics_text, own_window.view.lyric_raw
+    monkeypatch.setattr(LyricsDialog, "exec", lambda self: pytest.fail("must not open"))
+    monkeypatch.setattr(QProcess, "startDetached", lambda *args: pytest.fail("must not launch"))
+    own_window._open_lyrics()
+    own_window._open_lyrics_editor()
+    own_window._on_lyrics_saved("あう")
+    lyrics.save(own_window.lyrics_path(), "あう")
+    own_window._on_lyrics_file_changed()
+    assert (own_window.lyrics_text, own_window.view.lyric_raw) == before
+    assert "save or discard" in own_window.statusBar().currentMessage().lower()
+
+
+def test_temporary_lyrics_copy_is_released_when_switching_documents(lyrics_window, tmp_path):
+    old = lyrics_window.lyrics_path()
+    lyrics.save(old, "あい")
+    next_project = tmp_path / "next.nto"
+    project.save(project.Project(lyrics=project.Lyrics(text="あう", mode="read")), next_project)
+    assert lyrics_window.load_project(next_project)
+    assert not old.parent.exists()
+    assert lyrics_window.lyrics_path().parent != old.parent
+    assert not next_project.with_suffix(".krc").exists()
+    current = lyrics_window.lyrics_path()
+    lyrics_window.project_dirty = False
+    lyrics_window.close()
+    assert not current.parent.exists()
+
+
+def test_timeline_blank_menu_can_save_and_discard_maps(own_window, tmp_path, monkeypatch):
+    _mapped_pair(own_window, tmp_path)
+    menus = []
+    monkeypatch.setattr(QMenu, "exec", lambda self, *args: menus.append(self))
+    point = QPoint(own_window.sound_strip.width() - 1, 1)
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, point)
+    own_window.sound_strip.contextMenuEvent(event)
+    actions = {action.text(): action for action in menus[-1].actions()}
+    assert actions["Save lyrics map"].isEnabled()
+    assert actions["Discard lyrics map"].isEnabled()
+    assert "Confirm its operation" not in actions
+    own_window.view.lyric_mapping_pending = True
+    own_window.sound_strip.contextMenuEvent(event)
+    actions = {action.text(): action for action in menus[-1].actions()}
+    assert not actions["Save lyrics map"].isEnabled()
+    assert actions["Discard lyrics map"].isEnabled()
+
+
+@pytest.mark.parametrize("text", ["あ.2", "あ.2い.0"])
+def test_faithful_ass_export_uses_krc_spans_without_edit_operations(own_window, tmp_path, text):
+    own_window.transport.bpm.setValue(60.0)
+    own_window.view.set_notes([(60, 0.0, 1.0), (62, 1.0, 1.0)])
+    own_window.lyrics_text = text
+    own_window._load_sounds()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_operations == ()
+    assert own_window._derived_spans()[0][0] == (0.0, 2.0)
+    assert own_window.export_ass(tmp_path / "lyrics.ass")
+    assert (tmp_path / "lyrics.ass").exists()
+
+
+def test_faithful_krc_export_does_not_require_edit_operations(own_window, monkeypatch, tmp_path) -> None:
+    own_window.lyrics_text = "あ.2い.0\n"
+    own_window._load_sounds()
+    wait_for_lyric_mapping(own_window)
     monkeypatch.setattr(
         QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "exported"), "Lyrics file (*.krc)")
     )
 
-    assert own_window._on_export_krc() is False
-    assert not (tmp_path / "exported.krc").exists()
+    assert own_window._on_export_krc() is True
+    assert (tmp_path / "exported.krc").read_text(encoding="utf-8") == "あ.2い.0\n"
     assert own_window.project_path is None
 
 
@@ -5957,7 +6113,7 @@ def test_read_mode_lays_the_krcs_own_dot_n_onto_the_notes(own_window, tmp_path) 
     assert own_window.view.lyric_times == (((0.0, 2.0),),)  # one sound held over both notes
     assert own_window.view.lyric_mapped == (((1, 2),),)  # the ids the playback highlight reads
     assert own_window.view.lyric_editable is False
-    assert own_window.edit.align.isEnabled() is False
+    assert own_window.edit.align.isEnabled() is True
 
 
 def test_read_mode_draws_a_dot_n_sound_where_it_holds_off(own_window, tmp_path) -> None:
@@ -6021,34 +6177,36 @@ def test_a_broken_read_only_lyrics_file_opens_empty(own_window, tmp_path) -> Non
     assert not own_window.view.lyric_lines
 
 
-def test_read_mode_refuses_to_align(own_window, tmp_path) -> None:
+def test_faithful_lyrics_can_start_alignment(own_window, tmp_path, monkeypatch) -> None:
     own_window.project_path = tmp_path / "song.nto"
+    own_window.audio_path = str(tmp_path / "song.wav")
     own_window._stored_lyrics = project.Lyrics(text="あい\n", key=text_key("あい\n"), mode="read")
     own_window._watch_lyrics()
-
+    opened = []
+    monkeypatch.setattr(AlignDialog, "exec", lambda self: opened.append(self) or 0)
     own_window._open_align()
+    assert len(opened) == 1
+    assert own_window._lyric_mode == "read"
+    opened[0].aligned.emit([[(0.0, 1.0), (1.0, 1.0)]], "mms", ())
+    assert own_window._lyric_mode == "edit"
+    assert own_window._lyric_use_constraints is True
+    assert not own_window.edit.lyrics.isEnabled()
 
-    assert "edit mode" in own_window.statusBar().currentMessage().lower()
 
-
-def test_the_lock_button_switches_the_timeline_mode(lyrics_window) -> None:
-    assert lyrics_window.edit.lyric_lock.isEnabled() is True
-    assert lyrics_window.edit.lyric_lock.isChecked() is False
-    assert lyrics_window._lyric_mode == "edit"
-
-    lyrics_window.edit.lyric_lock.click()
-
+def test_the_lyrics_mode_button_is_removed(lyrics_window) -> None:
+    assert not hasattr(lyrics_window.edit, "lyric_lock")
     assert lyrics_window._lyric_mode == "read"
-    assert lyrics_window.edit.align.isEnabled() is False
+    assert lyrics_window.edit.lyrics.isEnabled()
+    assert lyrics_window.edit.align.isEnabled()
 
 
-def test_a_read_only_project_sets_the_lock(own_window, tmp_path) -> None:
+def test_a_read_only_project_allows_text_edits_and_alignment(own_window, tmp_path) -> None:
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="あい\n", key=text_key("あい\n"), mode="read")
     own_window._watch_lyrics()
-
-    assert own_window.edit.lyric_lock.isChecked() is True
-    assert own_window.edit.align.isEnabled() is False
+    assert own_window.edit.lyrics.isEnabled()
+    assert own_window.edit.align.isEnabled()
+    assert not own_window.view.lyric_editable
 
 
 def test_a_read_only_strip_does_not_drag(own_window, tmp_path) -> None:
@@ -6070,28 +6228,24 @@ def test_a_read_only_strip_does_not_drag(own_window, tmp_path) -> None:
     assert own_window.view.lyric_raw == before
 
 
-def test_read_mode_preserves_edit_evidence_and_uses_faithful_positions(own_window, tmp_path) -> None:
+def test_a_finalized_map_can_enter_editing_again_through_alignment(own_window, tmp_path) -> None:
     _mapped_pair(own_window, tmp_path, raw=((0.1, 0.2), (0.8, 0.4)))
-    before = own_window.view.lyric_raw
-    own_window._set_lyric_mode("read")
+    assert own_window._save_lyrics_map()
     wait_for_lyric_mapping(own_window)
-    strip = own_window.sound_strip
-    assert own_window.view.lyric_raw == before
-    assert strip._boundary_x(0, 1) == pytest.approx(strip._x(1.0))
-    own_window._set_lyric_mode("edit")
+    assert own_window.view.lyric_raw == (((None, None), (None, None)),)
+    assert not own_window.view.lyric_editable
+    own_window._adopt_alignment([[(0.1, 0.2), (0.8, 0.4)]], "mms", use_constraints=True)
     wait_for_lyric_mapping(own_window)
-    assert own_window.view.lyric_raw == before
-    assert strip._boundary_x(0, 1) == pytest.approx(strip._x(1.0))
+    assert own_window.view.lyric_editable
+    assert own_window.view.lyric_raw == (((0.1, 0.2), (0.8, 0.4)),)
+    assert not own_window.edit.lyrics.isEnabled()
 
 
 def test_the_aligned_times_are_kept_in_the_project(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = None
     own_window._watch_lyrics()
-    own_window.view.set_lyrics(natural_sounds("あい\n"), [[(0.0, 1.0), (1.0, 2.0)]])
-    own_window._lyric_key = text_key("あい\n")
-    own_window._lyric_model = "mms"
+    own_window._on_lyrics_saved("あい\n")
+    own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms")
 
     assert own_window.save_project(tmp_path / "song.nto") is True
     saved = project.load(tmp_path / "song.nto")
@@ -6186,7 +6340,13 @@ def test_the_align_dialog_remembers_what_was_chosen(own_window) -> None:
     dialog.reject()
 
     again = AlignDialog("vocal.wav", "あん\n", 120.0, parent=own_window)
-    assert again.parameters() == {"model": "yohane", "device": "cpu", "quantize": 4, "chunk": "off"}
+    assert again.parameters() == {
+        "model": "yohane",
+        "device": "cpu",
+        "quantize": 4,
+        "chunk": "off",
+        "use_constraints": True,
+    }
 
 
 def test_the_align_dialog_runs_chunked_unless_told_otherwise(own_window) -> None:
@@ -6236,8 +6396,8 @@ def test_the_aligner_reports_the_lines_it_doubts() -> None:
 
 
 def test_the_align_button_opens_the_dialog(own_window, monkeypatch, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あん\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
+    own_window._stored_lyrics = project.Lyrics(text="あん\n", mode="read")
     own_window._watch_lyrics()
     own_window.audio_path = str(tmp_path / "vocal.wav")
 
@@ -6271,87 +6431,22 @@ def test_the_align_button_says_why_it_cannot_open(own_window, tmp_path) -> None:
     own_window._open_align()
     assert "no lyrics" in own_window.statusBar().currentMessage()
 
-    (tmp_path / "song.krc").write_text("世界\n", encoding="utf-8")
+    own_window._stored_lyrics = project.Lyrics(text="世界\n", mode="read")
     own_window._watch_lyrics()
     own_window._open_align()
     assert "could not be read" in own_window.statusBar().currentMessage()
 
 
-class _FakeAligner(QObject):
-    """One pass of the aligner, answering at once with a hand-made alignment."""
-
-    aligned = pyqtSignal(object)
-    failed = pyqtSignal(str)
-    finished = pyqtSignal()
-    calls: list = []
-
-    def __init__(self, audio, text, model, provider, chunk, parent=None):
-        super().__init__(parent)
-        _FakeAligner.calls.append((audio, text, model, provider, chunk))
-
-    def start(self) -> None:
-        self.aligned.emit(([[(0.0, 1.0), (1.0, 2.0)]], "mms", [], [True]))
-        self.finished.emit()
-
-
-def test_auto_align_reuses_the_cached_pass(lyrics_window, monkeypatch, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
-    lyrics_window._watch_lyrics()
-    lyrics_window.audio_path = str(tmp_path / "vocal.wav")
-    monkeypatch.setattr(align, "is_installed", lambda model, language="ja": True)
-    monkeypatch.setattr(align, "has_emissions", lambda *args, **kwargs: True)
-    _FakeAligner.calls = []
-    monkeypatch.setattr("namioto.ui.app.Aligner", _FakeAligner)
-
-    lyrics_window._auto_align()
-
-    assert _FakeAligner.calls == [(str(tmp_path / "vocal.wav"), "あい\n", "mms", "cpu", align.DEFAULT_MODE)]
-    assert lyrics_window.view.lyric_raw == (((0.0, 1.0), (1.0, 1.0)),)
-    assert lyrics_window._lyric_flags == (True,)  # the aligner's doubt is kept with the times
-    assert lyrics_window._auto_align_thread is None
-
-
-def test_auto_align_quantizes_onsets_without_changing_reference_durations(lyrics_window, monkeypatch) -> None:
-    lyrics_window.lyrics_text = "あい"
-    lyrics_window._load_sounds()
-    lyrics_window.transport.bpm.setValue(60.0)
-    monkeypatch.setattr(align, "load_parameters", lambda: {"quantize": 1})
-    lyrics_window._auto_align_key = text_key("あい")
-    spans = [[(0.1, 0.3), (0.6, 0.9)]]
-    lyrics_window._on_auto_aligned((spans, "mms", [], []))
-    assert lyrics_window.view.lyric_raw == (((0.0, pytest.approx(0.2)), (1.0, pytest.approx(0.3))),)
-    assert [length for _onset, length in lyrics_window.view.lyric_raw[0]] == [
-        length for _onset, length in from_spans(spans)[0]
-    ]
-
-
-def test_auto_align_waits_when_the_pass_is_not_cached(lyrics_window, monkeypatch, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
-    lyrics_window._watch_lyrics()
-    lyrics_window.audio_path = str(tmp_path / "vocal.wav")
-    monkeypatch.setattr(align, "is_installed", lambda model, language="ja": True)
-    monkeypatch.setattr(align, "has_emissions", lambda *args, **kwargs: False)
-    started = []
-    monkeypatch.setattr("namioto.ui.app.Aligner", lambda *args, **kwargs: started.append(args))
-
-    lyrics_window._auto_align()
-
-    assert started == []
-    assert "align again" in lyrics_window.statusBar().currentMessage()
-
-
-def test_auto_align_can_be_turned_off(lyrics_window, monkeypatch, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あい\n", encoding="utf-8")
-    lyrics_window._watch_lyrics()
-    lyrics_window.audio_path = str(tmp_path / "vocal.wav")
-    lyrics_window.settings.lyrics.auto_align = False
-    started = []
-    monkeypatch.setattr("namioto.ui.app.Aligner", lambda *args, **kwargs: started.append(args))
-    monkeypatch.setattr(align, "has_emissions", lambda *args, **kwargs: True)
-
-    lyrics_window._auto_align()
-
-    assert started == []
+def test_text_changes_do_not_start_alignment(lyrics_window, monkeypatch) -> None:
+    monkeypatch.setattr(Aligner, "start", lambda self: pytest.fail("must not align automatically"))
+    lyrics_window._on_lyrics_saved("あい")
+    wait_for_lyric_mapping(lyrics_window)
+    assert lyrics_window._lyric_mode == "read"
+    assert lyrics_window.view.lyric_raw == (((None, None), (None, None)),)
+    lyrics.save(lyrics_window.lyrics_path(), "あう")
+    lyrics_window._on_lyrics_file_changed()
+    assert lyrics_window.lyrics_text == "あう"
+    assert lyrics_window._lyric_mode == "read"
 
 
 def test_exporting_is_not_gated_on_the_lyrics(own_window, monkeypatch, tmp_path) -> None:
@@ -6577,7 +6672,7 @@ def test_an_unchanged_gesture_does_not_leave_mapping_pending(own_window, tmp_pat
 def test_read_mode_disables_onset_dragging_before_its_mapping_finishes(own_window, tmp_path, monkeypatch):
     _mapped_pair(own_window, tmp_path)
     workers = _manual_mapping(monkeypatch)
-    own_window._set_lyric_mode("read")
+    assert own_window._save_lyrics_map()
     assert own_window.view.lyric_mapping_pending
     assert not own_window.view.lyric_editable
     before = own_window.view.lyric_raw
@@ -6606,9 +6701,9 @@ def test_changed_conflict_filtering_invalidates_the_cached_mapping(monkeypatch):
     cached = []
     original = lyric_map.solve
 
-    def record(lines, raw, notes, anchors, state):
+    def record(lines, raw, notes, anchors, state, constraints):
         cached.append(state)
-        return original(lines, raw, notes, anchors, state)
+        return original(lines, raw, notes, anchors, state, constraints)
 
     monkeypatch.setattr(lyric_map, "solve", record)
     request["notes"].append((0.0, 1.0, 62, 99))

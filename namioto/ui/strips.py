@@ -31,6 +31,8 @@ class SoundStrip(ViewportStrip):
     """Independent Sound blocks, grouped by NOTE, and position-only grey Drop labels."""
 
     lyric_action_requested = pyqtSignal(str, int, int)
+    save_map_requested = pyqtSignal()
+    discard_map_requested = pyqtSignal()
     mapping_drag_started = pyqtSignal()
     mapping_preview_requested = pyqtSignal(object)
     mapping_drag_finished = pyqtSignal(bool)
@@ -301,22 +303,28 @@ class SoundStrip(ViewportStrip):
         super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
-        if not self.view.lyric_editable or self.view.lyric_mapping_pending:
+        if not self.view.lyric_editable:
             return
         menu = QMenu(self)
+        save = menu.addAction(tr("Save lyrics map"))
+        save.setEnabled(not self.view.lyric_mapping_pending and not self.view.gesture_active)
+        save.triggered.connect(self.save_map_requested)
+        discard = menu.addAction(tr("Discard lyrics map"))
+        discard.setEnabled(not self.view.gesture_active)
+        discard.triggered.connect(self.discard_map_requested)
+        menu.addSeparator()
         raw = QAction(tr("Show raw timing (advanced)"), menu)
         raw.setCheckable(True)
         raw.setChecked(self.show_raw)
         raw.toggled.connect(self._toggle_raw)
         menu.addAction(raw)
         found = self._sound_at(event.pos().x(), event.pos().y())
-        if found is not None:
+        if found is not None and not self.view.lyric_mapping_pending:
             for kind, label in (
                 ("drop", "Drop this sound"),
                 ("keep", "Keep this sound"),
                 ("merge", "Merge with the sound before it"),
                 ("dissolve", "Dissolve its merge"),
-                ("confirm", "Confirm its operation"),
             ):
                 action = QAction(tr(label), menu)
                 action.triggered.connect(

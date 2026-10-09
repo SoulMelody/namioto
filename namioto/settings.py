@@ -170,13 +170,6 @@ SECTIONS: tuple[Section, ...] = (
                 "External editor",
                 "Command that opens a .krc, such as code; empty picks the platform's own",
             ),
-            Field(
-                "auto_align",
-                "bool",
-                True,
-                "Auto-align",
-                "Re-align the lyrics when the .krc changes and the model's cached pass over the audio is there",
-            ),
         ),
     ),
     Section(

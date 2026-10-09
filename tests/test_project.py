@@ -184,6 +184,7 @@ def test_the_lyric_times_survive_a_round_trip() -> None:
         "problems": [],
         "operations": [],
         "version": project.MAPPING_VERSION,
+        "use_constraints": False,
     }
     assert project.from_dict(written).lyrics == lyrics
 

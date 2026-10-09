@@ -377,3 +377,7 @@ def test_lyrics_get_and_set(qt_app, window, endpoint):
     result = call(qt_app, endpoint, "lyrics.set", {"text": "ら[la] り[li] る[lu]\n"})
     assert result["lines"] == 1
     assert call(qt_app, endpoint, "lyrics.get")["text"].startswith("ら")
+    window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0), (2.0, 1.0)]], "mms")
+    previous = window.lyrics_text
+    assert failure(qt_app, endpoint, "lyrics.set", {"text": "あい"}).code == "failed"
+    assert window.lyrics_text == previous

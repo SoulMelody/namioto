@@ -15,8 +15,8 @@ window keeps every change the user makes to one in `namioto.state`, and the next
 from it.
 
 `Lyrics` carries the `.krc` text itself (the baseline), the aligned times keyed by a hash of that
-text, and the mode. A same-named `.krc` beside the project is a working copy the editor keeps in
-step; it is never validated.
+text, and the mode. External text editing uses a temporary working copy; the project remains the
+source of truth.
 """
 
 from __future__ import annotations
@@ -314,8 +314,7 @@ class Note(NamedTuple):
 class Lyrics(NamedTuple):
     """A `.krc` as the project keeps it: the text itself, the times made from it, and the mapping.
 
-    The text is the baseline: the `.krc` beside the project is a copy written for editing and
-    export, so a project still opens with the lyrics it was saved with once that file is gone.
+    The text is the baseline and the source of truth for temporary editing copies and exports.
     `key` is the hash of the text the times were made from, so a changed text invalidates them;
     `raw` holds one `(onset, raw_length)` in seconds per Sound, `None` where none was found; `scores`
     holds the aligner's own score per sound beside it; `flagged` holds one bool per line, true where
@@ -336,6 +335,7 @@ class Lyrics(NamedTuple):
     problems: tuple[tuple[str, ...], ...] = ()
     operations: tuple = ()
     version: int = MAPPING_VERSION
+    use_constraints: bool = False
 
 
 @dataclass(frozen=True)
@@ -408,6 +408,7 @@ def _lyrics_dict(lyrics: Lyrics | None) -> dict | None:
         "problems": [list(row) for row in lyrics.problems],
         "operations": [_operation_dict(operation) for operation in lyrics.operations],
         "version": lyrics.version,
+        "use_constraints": lyrics.use_constraints,
     }
 
 
@@ -593,6 +594,7 @@ def _lyrics(value: Any) -> Lyrics | None:
         problems=_problems(value.get("problems")),
         operations=_operations(value.get("operations")),
         version=_version(value.get("version")),
+        use_constraints=value.get("use_constraints") is True,
     )
 
 

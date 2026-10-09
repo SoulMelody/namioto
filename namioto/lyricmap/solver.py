@@ -65,6 +65,7 @@ class _Context:
     merge_weights: list[tuple[float, ...]]
     notes: list
     total: int
+    constraints: dict[int, tuple[int, int]]
 
 
 def solve(
@@ -73,15 +74,32 @@ def solve(
     notes: Sequence[Note],
     anchors: Sequence[Operation] = (),
     previous: MappingState | None = None,
+    constraints: dict[SoundRef, tuple[int, int]] | None = None,
 ) -> list[Operation]:
     """Partition all Sounds and notes, retaining confirmed anchors.
 
-    `previous` permits an approximate local solve for time-only changes. Structural changes use
-    the full DP. Raises `MappingError` when the input cannot yield a mapping.
+    `constraints` holds explicit KRC run lengths and NOTE counts; session anchors override the
+    runs they edit. Constrained solves use the full DP. Without constraints, `previous` permits
+    an approximate local solve for time-only changes. Raises `MappingError` for impossible input.
     """
     validate(lines, raw)
     note_list = list(notes)
     context = _context(lines, raw, note_list)
+    anchored = {ref for operation in anchors for ref in operation.sounds}
+    for ref, shape in (constraints or {}).items():
+        if not 0 <= ref.line < len(lines) or not 0 <= ref.index < len(lines[ref.line].sounds):
+            raise MappingError("invalid_constraint", "a KRC constraint names a missing sound")
+        run, slots = shape
+        if run < 1 or slots < 0 or (run > 1 and slots != 1) or ref.index + run > len(lines[ref.line].sounds):
+            raise MappingError("invalid_constraint", "a KRC constraint cannot be represented by one operation")
+        if any(SoundRef(ref.line, at) in anchored for at in range(ref.index, ref.index + run)):
+            continue
+        index = context.line_start[ref.line] + ref.index
+        context.constraints[index] = shape
+        for inner in range(index + 1, index + run):
+            context.constraints[inner] = (0, 0)
+    if context.constraints:
+        previous = None
     if context.total == 0:
         raise MappingError("no_lyric_sounds", "the lyrics have no sounds")
     if not note_list:
@@ -178,7 +196,7 @@ def _context(lines: Sequence[SoundLine], rows: Sequence[Sequence[Raw]], notes: l
     for index in range(total - 2, -1, -1):
         if info[index][0] == info[index + 1][0]:
             maxm[index] = maxm[index + 1] + 1
-    return _Context(info, line_start, line_count, raw_start, line_end, is_last, maxm, weights, notes, total)
+    return _Context(info, line_start, line_count, raw_start, line_end, is_last, maxm, weights, notes, total, {})
 
 
 def _boundary(context: _Context, note_at: int) -> float:
@@ -304,7 +322,7 @@ def _segment(context: _Context, sa: int, sb: int, na: int, nb: int, forced: set[
     next_forced = [size] * (size + 1)
     following = size
     for step in range(size - 1, -1, -1):
-        if sa + step in forced:
+        if sa + step in forced or sa + step in context.constraints:
             following = step
         next_forced[step] = following
 
@@ -314,9 +332,24 @@ def _segment(context: _Context, sa: int, sb: int, na: int, nb: int, forced: set[
     for step in range(size):
         index = sa + step
         forced_here = index in forced
+        constraint = context.constraints.get(index)
         for have in range(count + 1):
             here = best[step][have]
             if here is None:
+                continue
+            if constraint is not None:
+                run, slots = constraint
+                if run == 0 or step + run > size or have + slots > count or (forced_here and slots):
+                    continue
+                if slots == 0:
+                    base, complexity, rank, pointer = _drop_base(context, index, na + have), 1, 2 * weight[step], ("d",)
+                elif run == 1:
+                    base = _match_base(context, index, na + have, slots)
+                    complexity, rank, pointer = slots - 1, 0, ("m", have)
+                else:
+                    base = _merge_base(context, index, run, na + have)
+                    complexity, rank, pointer = run - 1, sum(weight[step : step + run]), ("g", run)
+                _relax(best, back, step + run, have + slots, _add(here, base, complexity, rank), pointer)
                 continue
             _relax(
                 best,
@@ -341,11 +374,12 @@ def _segment(context: _Context, sa: int, sb: int, na: int, nb: int, forced: set[
                         ),
                         ("g", run),
                     )
-        if not forced_here:
+        if not forced_here and constraint is None:
             _match_run(context, best, back, step, index, na, count, weight)
     found = best[size][count]
     if found is None:
-        raise MappingError("invalid_anchor", "the sounds and the notes cannot be partitioned")
+        code = "invalid_constraint" if context.constraints else "invalid_anchor"
+        raise MappingError(code, "the sounds and the notes cannot be partitioned")
     return _rebuild(context, back, sa, na, size, count)
 
 

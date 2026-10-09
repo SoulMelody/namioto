@@ -593,7 +593,6 @@ class EditBar(_Group):
     lyrics_requested = pyqtSignal()
     align_requested = pyqtSignal()
     map_channel_requested = pyqtSignal()
-    lyric_mode_changed = pyqtSignal(str)
 
     def __init__(self, snap_choices, parent=None):
         super().__init__(parent)
@@ -635,7 +634,7 @@ class EditBar(_Group):
         self.transcribe.clicked.connect(self.transcribe_requested)
         self.lyrics = icon_button(
             "lyrics",
-            tr("Lyrics: import a .krc, annotate plain text with a model, or open the sidecar in an external editor"),
+            tr("Lyrics: import a .krc, annotate plain text with a model, or edit a temporary copy externally"),
         )
         self.lyrics.setEnabled(False)
         self.lyrics.clicked.connect(self.lyrics_requested)
@@ -645,10 +644,6 @@ class EditBar(_Group):
         self.map_channel = icon_button("map", tr("Map lyrics to the current channel, or recalculate the whole mapping"))
         self.map_channel.setEnabled(False)
         self.map_channel.clicked.connect(self.map_channel_requested)
-        self.lyric_lock = icon_button("lock", "", checkable=True)
-        self.lyric_lock.setEnabled(False)
-        self.lyric_lock.toggled.connect(self._on_lyric_lock)
-        self._render_lyric_lock(False)
         self.note_lyrics = icon_button("lyrics", tr("Show lyrics on MIDI notes"), checkable=True)
         self.note_lyrics.setChecked(True)
 
@@ -664,7 +659,6 @@ class EditBar(_Group):
         tools.add(self.align)
         tools.add(self.map_channel)
         tools.add(separator())
-        tools.add(self.lyric_lock)
         tools.add(self.note_lyrics)
 
         self.place(tools, 1, 0, 2)
@@ -693,26 +687,6 @@ class EditBar(_Group):
 
     def _pick_tool(self, tool: Tool) -> None:
         self.set_interaction(pick_tool(self._interaction, tool))
-
-    def set_lyric_mode(self, mode: str) -> None:
-        """Take the project's timeline mode over without telling the world about it."""
-        locked = mode == "read"
-        self.lyric_lock.blockSignals(True)
-        self.lyric_lock.setChecked(locked)
-        self.lyric_lock.blockSignals(False)
-        self._render_lyric_lock(locked)
-
-    def _on_lyric_lock(self, locked: bool) -> None:
-        self._render_lyric_lock(locked)
-        self.lyric_mode_changed.emit("read" if locked else "edit")
-
-    def _render_lyric_lock(self, locked: bool) -> None:
-        self.lyric_lock.setIcon(icons.icon("lock" if locked else "unlock"))
-        self.lyric_lock.setToolTip(
-            tr("Read-only lyrics: the .krc's own .N and groups lay the sounds out; the strip cannot be dragged")
-            if locked
-            else tr("Edit lyrics: the aligner's times lay the sounds out and the strip can be dragged")
-        )
 
 
 class MixBar(_Group):

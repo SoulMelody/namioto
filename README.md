@@ -239,7 +239,7 @@ namioto/project.py    the .nto file: the notes, the audio they were drawn over, 
 namioto/settings.py   the program's own preferences: the spec table, its file and the defaults, no Qt
 namioto/params.py     the Field primitive every parameter table is built from, no Qt
 namioto/state.py      the window's size, position, last folder and the habits a new document starts from, no Qt
-namioto/lyrics.py     the .krc sidecar beside a project, and the model call that fills it, no Qt
+namioto/lyrics.py     KRC text I/O and the model call that fills it, no Qt
 namioto/ipc.py        the remote control's protocol, endpoint and `namioto-ctl` client, no Qt
 namioto/karaoke/      the .krc model, its parser, its writer, its timeline and the ASS subtitle (lark), no Qt
 namioto/utils.py      the app's directories, a file's identity, kana to romaji tokens, no Qt
@@ -290,7 +290,7 @@ The window has three control bars, each split into captioned blocks of related c
 | Bar | Blocks |
 | --- | --- |
 | Transport | **Project** (open, save, export MIDI), **Playback** (rewind, stop, play from the beginning, play/pause, forward, position readout, and the four display switches: auto page turn, overtone highlight, the channel sidebar, and the time division - the metronome icon checked means the time axis follows the beats of the tempo map, unchecked the seconds), **Speed** (0.10x-2.00x in 5% steps, pitch unchanged, with a reset icon back to 1.00x), **Tempo** (BPM, the estimated tempo of the audio, and the grid offset in ms) |
-| Edit | **Tools** (edit mode, pen, select, snap grid, quantize, the GAME transcription, the lyrics window and the read-only lock) |
+| Edit | **Tools** (edit mode, pen, select, snap grid, quantize, the GAME transcription, the lyrics window) |
 | Mix | **Spectrum** (gain, contrast), **Volume** (**Audio** for the file, **MIDI** for the notes), and the gear that opens the settings window (the few options the bars do not hold; the analysis parameters belong to the project) |
 
 **Volume** has a slider for each layer: the audio file is streamed at the level of the first one, and
@@ -396,17 +396,17 @@ are downloaded rather than redistributed here - see NOTICE.
 
 ## Importing lyrics
 
-A project can carry rubies for the words its notes sing. The text itself lives in the `.nto`, so the
-project still opens with its lyrics once the sidecar is gone; a `.krc` file of the same base name
-beside it is a copy the project writes for external editing and export. The text-box button beside
-the GAME wand opens a window over that file. The window is one pipeline: the **Project lyrics
+A project can carry rubies for the words its notes sing. The text itself lives in the `.nto`.
+External editing uses a temporary `.krc` copy, not a file beside the project; existing sibling
+`.krc` files are left untouched and can be imported manually. The text-box button beside
+the GAME wand opens the lyrics window. The window is one pipeline: the **Project lyrics
 (.krc)** box at the top is what the project sings, and the plain text below it is the optional
 upstream that fills it. `Import .krc…` puts another `.krc` into that box, and `Open in external
 editor` hands the file to the command named under **External editor** in the settings, or to the
-platform's own choice when that is left empty. `Save` writes the box as plain UTF-8 text - readable and editable on
-its own - and the editor reloads it whenever something else changes it, so a hand edit shows up
-without reopening the project. The plain-text panel folds away when there are already lyrics to work
-on, and opens by itself when the box is empty.
+platform's own choice when that is left empty. `Save` updates the project lyrics through the temporary
+UTF-8 copy. External saves are validated and reloaded without reopening the project or automatically
+running Align. Temporary copies are removed when the document closes. The plain-text panel folds
+away when there are already lyrics to work on, and opens by itself when the box is empty.
 
 Plain text is the exception, and only so a model can make a `.krc` of it: the panel takes pasted
 lyrics or a `.txt`/`.md`/`.lrc` (`Load text…`), and `Convert with the API` or `Copy prompt` fills
@@ -426,10 +426,13 @@ before they are dropped. The key lives in `~/.config/namioto/settings.json` in p
 an external hand edit leaves broken is kept as it is for you to fix where it lives, but the window
 will not write one that does not parse.
 
-The lock button beside the lyrics one in the Edit bar picks how the sounds are laid on the notes.
-Off, the aligner's times do it and the strip can be dragged; on, the `.krc`'s own `.N` and groups do
-it and the strip is still. The mode is kept in the `.nto`, and aligning is available in edit mode
-only.
+Lyrics normally follow the KRC's own `.N` and groups (faithful mapping). A successful **Align**
+starts a mapping-editing session. Its **Use KRC mapping constraints** switch, on by default,
+preserves explicit NOTE counts and shared-sound groups; turn it off to compute a new structure.
+Text editing is unavailable during this session. Right-click the lyrics timeline, including its
+blank area, and choose **Save lyrics map** to write the final structure into the project and return
+to faithful mapping, or **Discard lyrics map** to restore the KRC structure from before Align.
+Saving the project normally keeps unfinished mapping work so it can be resumed next time.
 
 Once a `.krc` is open and its audio is loaded, the clock button beside the text-box one puts a time
 on every sound: the whole stream is forced onto the frames of a wav2vec2 CTC model in one pass, and
@@ -439,7 +442,7 @@ it sits on its notes, red while the mapping doubts it, grey and blockless while 
 Dragging a `|` slides the boundary between two sounds' raw aligned starts; the drag is smooth and
 sticks to a drawn beat line when the pointer comes near it, and one gesture is one undo step.
 Hovering a sound that shares a note with its neighbours lights the whole run. The mapping is the only
-thing that decides a sound's look, and the editor never rewrites the `.krc` itself.
+thing that decides a sound's look; **Save lyrics map** writes the final mapping into the project lyrics.
 The text and the times ride in the `.nto` beside the notes, saved and undone with them.
 `Export lyrics` folds the current mapping back into a `.krc`: a run of sounds sharing a note becomes
 `(...)`, and every word gets the notes it covers as its `.N` - `0` for a sound that covers none - so a

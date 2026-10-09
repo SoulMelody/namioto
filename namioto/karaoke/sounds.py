@@ -117,17 +117,20 @@ def split_tokens(tokens: Sequence, lines: list[SoundLine]) -> list[list[tuple[fl
     return rows
 
 
-def note_groups(line: Line, sound_line: SoundLine) -> list[tuple[int, list[int]]]:
-    """NOTE slots and their Sound indices, with continuations extending the preceding one-NOTE group."""
+def note_groups(line: Line, sound_line: SoundLine, *, explicit_only: bool = False) -> list[tuple[int, list[int]]]:
+    """NOTE slots and Sound indices; optionally only explicit overrides and continuations."""
     groups: list[tuple[int, list[int]]] = []
+    explicit: list[bool] = []
     for unit, indices in _leaves(line, sound_line):
         if unit.join_previous:
             if not groups or groups[-1][0] != 1:
                 raise KrcError(".+ requires a preceding Sound mapped to exactly one NOTE in the same line")
             groups[-1][1].extend(indices)
+            explicit[-1] = True
             continue
         slots = unit.override if unit.override is not None else len(indices)
         count = len(indices)
+        before = len(groups)
         if slots == 0:
             groups.append((0, indices))
         elif slots >= count:
@@ -137,7 +140,8 @@ def note_groups(line: Line, sound_line: SoundLine) -> list[tuple[int, list[int]]
         else:
             for slot in range(slots):
                 groups.append((1, indices[slot * count // slots : (slot + 1) * count // slots]))
-    return groups
+        explicit.extend([unit.override is not None] * (len(groups) - before))
+    return [group for group, marked in zip(groups, explicit, strict=True) if marked or not explicit_only]
 
 
 def _leaves(line: Line, sound_line: SoundLine) -> list[tuple[Unit, list[int]]]:

@@ -126,7 +126,7 @@ def test_values_of_the_wrong_type_fall_back_one_by_one(settings_file) -> None:
             {
                 "devices": {"gpu": 5, "power": None},
                 "tempo": {"window_seconds": "long"},
-                "lyrics": {"temperature": True, "auto_align": "yes"},
+                "lyrics": {"temperature": True},
                 "editor": {"auto_page": 0},
             }
         )
@@ -136,7 +136,6 @@ def test_values_of_the_wrong_type_fall_back_one_by_one(settings_file) -> None:
     assert store.get_value(loaded, "devices", "power") == "high-performance"
     assert store.get_value(loaded, "tempo", "window_seconds") == 12.0
     assert store.get_value(loaded, "lyrics", "temperature") == 0.2
-    assert store.get_value(loaded, "lyrics", "auto_align") is True
     assert store.get_value(loaded, "editor", "auto_page") is False
 
 

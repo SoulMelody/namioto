@@ -746,10 +746,8 @@ class WindowBridge:
         if not isinstance(text, str):
             raise IpcError("bad_params", "text must be a string")
         window = self.window
-        window.lyrics_text = text
-        window._load_sounds()
-        window._mark_dirty()
-        window._auto_align()
+        if not window._on_lyrics_saved(text):
+            raise IpcError("failed", window.statusBar().currentMessage())
         return {"lines": len(window.view.lyric_lines)}
 
     def undo(self, _params: dict) -> dict:

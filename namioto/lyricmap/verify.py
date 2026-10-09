@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from namioto.karaoke.canonical import rebuild
 from namioto.karaoke.model import KrcError
-from namioto.karaoke.operations import Drop, Operation, partition
+from namioto.karaoke.operations import Drop, Operation, SoundRef, partition
 from namioto.karaoke.sounds import SoundLine
 from namioto.lyricmap import problems as codes
 from namioto.lyricmap.confidence import read
@@ -118,19 +118,31 @@ def verify(
 
 
 def faithful_gate(
-    spans: Sequence[Sequence[tuple | None]], notes: Sequence[Note], *, filtered: Sequence = (), subtitle: bool = False
+    spans: Sequence[Sequence[tuple | None]],
+    notes: Sequence[Note],
+    *,
+    filtered: Sequence = (),
+    subtitle: bool = False,
+    dropped: Sequence[SoundRef] = (),
 ) -> Gate:
     """The read-only subtitle's own gate: no edit mapping, only what the input `.krc` already says.
 
     The KRC itself may always be copied, so this concerns the subtitle alone: the target channel must
     have notes, no conflict may have filtered one out, and every Sound it is to render must have a
-    definite time - a Sound whose `.N` outran the notes has none.
+    definite time - a Sound whose `.N` outran the notes has none. Explicit `.0` Sounds are excluded
+    from the missing-time check.
     """
     issues: list[Problem] = []
     if not notes:
         issues.append(Problem(codes.NO_TARGET_NOTES, "the target channel has no notes"))
     issues.extend(Problem(codes.FILTERED_NOTE, "a note is kept out by a conflict", (note.id,)) for note in filtered)
-    missing = any(span is None or span[0] is None or span[1] is None for row in spans for span in row)
+    omitted = set(dropped)
+    missing = any(
+        span is None or span[0] is None or span[1] is None
+        for line, row in enumerate(spans)
+        for index, span in enumerate(row)
+        if SoundRef(line, index) not in omitted
+    )
     if missing:
         issues.append(Problem(codes.INCOMPLETE_ALIGNMENT, "a sound has no time to render"))
     if subtitle and all(span is None for row in spans for span in row):

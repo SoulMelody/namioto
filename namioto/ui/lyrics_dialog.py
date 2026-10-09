@@ -5,8 +5,8 @@ The project's lyrics are the box at the top, and the plain text below is the opt
 feeds it - the model, through the endpoint in the settings or through the clipboard, turns it into
 the `.krc` above. A request runs off the GUI thread (`LyricsConverter`) and a refused answer is fed
 back for another try, up to `MAX_ATTEMPTS`; a refusal that outlives them is kept so `Copy prompt` can
-carry it to a web model. `LyricsWatcher` follows the sidecar file so one edited outside the editor is
-seen.
+carry it to a web model. `LyricsWatcher` follows the temporary working copy so an external save
+can be validated and adopted by the project.
 """
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ def _fold_button(title: str, tooltip: str) -> QToolButton:
 class LyricsDialog(QDialog):
     """The `.krc` beside the project, and the one pipeline that fills it.
 
-    `Save` writes the box at the top out as the project's sidecar; the plain text below is the only
+    `Save` writes the box at the top to the temporary KRC working copy; the plain text below is the only
     reason a file that is not a `.krc` is read at all, and it folds away once there are lyrics to
     work on.
     """

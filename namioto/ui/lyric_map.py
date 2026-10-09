@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from namioto.karaoke.operations import Match, Merge, Operation
-from namioto.lyricmap import confidence, faithful
+from namioto.lyricmap import confidence, constraints, faithful
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import MappingError
 from namioto.lyricmap.raw import Raw
@@ -55,6 +55,7 @@ def map_lyrics(
     mode: str = "edit",
     anchors: Sequence[Operation] = (),
     previous: LyricResult | None = None,
+    use_constraints: bool = False,
 ) -> LyricResult:
     """The mapping for the mode in force: the aligner's times in edit, the `.krc`'s own in read.
 
@@ -72,7 +73,7 @@ def map_lyrics(
         except (MappingError, ValueError) as error:
             return _failed(lines, raw, str(error))
     try:
-        return _edit_result(lines, raw, scores, flagged, notes, anchors, previous)
+        return _edit_result(text, lines, raw, scores, flagged, notes, anchors, previous, use_constraints)
     except (MappingError, ValueError) as error:
         return _failed(lines, raw, str(error))
     except Exception as error:  # noqa: BLE001 - the worker reports whatever the mapping raised
@@ -98,11 +99,12 @@ def _read_result(text, lines, raw, notes) -> LyricResult:
     )
 
 
-def _edit_result(lines, raw, scores, flagged, notes, anchors, previous) -> LyricResult:
+def _edit_result(text, lines, raw, scores, flagged, notes, anchors, previous, use_constraints) -> LyricResult:
     rows = [_raw_row(raw[index], scores[index] if index < len(scores) else ()) for index in range(len(lines))]
     resolved = resolve([TimedNote(*note) for note in notes])
     state = previous.state if previous is not None and previous.filtered == resolved.filtered else None
-    operations = tuple(solve(lines, rows, resolved.stream, anchors, state))
+    shapes = constraints.read(text) if use_constraints else {}
+    operations = tuple(solve(lines, rows, resolved.stream, anchors, state, shapes))
     readings = tuple(confidence.read(lines, rows, resolved.stream, operations, flagged))
     spans = sound_spans([len(line.sounds) for line in lines], operations, resolved.stream)
     red, zero, group, mapped = _tables(lines, operations, readings, resolved.stream)
