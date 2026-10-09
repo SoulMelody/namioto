@@ -213,6 +213,30 @@ def test_stereo_channels_are_summed_before_normalising():
     assert np.allclose(energies, expected, rtol=1e-4, atol=1e-5)
 
 
+@pytest.mark.parametrize("channels", [1, 2])
+def test_silent_audio_has_a_finite_zero_spectrum(channels):
+    audio = np.zeros((channels, SAMPLE_RATE), dtype=np.float32)
+    with np.errstate(divide="raise", invalid="raise"):
+        spectrum = stft_notes(audio, SAMPLE_RATE)
+    assert spectrum.sigma == 0.0
+    assert spectrum.table.shape == (40, NOTE_COUNT)
+    assert spectrum.table.dtype == np.float32
+    assert np.isfinite(spectrum.table).all()
+    assert np.count_nonzero(spectrum.table) == 0
+
+
+@pytest.mark.parametrize("mode,phase", [("side", 1), ("sum", -1)])
+def test_cancelling_channels_have_a_finite_zero_spectrum(tmp_path, mode, phase):
+    left = tone(440.0)
+    path = write_wav(tmp_path / "cancelled.wav", np.stack([left, phase * left], axis=1))
+    with np.errstate(divide="raise", invalid="raise"):
+        spectrum = analyse(path, channels=mode)
+    assert spectrum.sigma == 0.0
+    assert spectrum.table.shape == (40, NOTE_COUNT)
+    assert np.isfinite(spectrum.table).all()
+    assert np.count_nonzero(spectrum.table) == 0
+
+
 def test_too_short_audio_raises():
     with pytest.raises(ValueError, match="too short"):
         stft_notes(tone(440.0, 0.01), SAMPLE_RATE)

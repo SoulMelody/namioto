@@ -50,7 +50,7 @@ from namioto import settings as store
 from namioto import state as window_state
 from namioto.analysis import align, devices, transcription
 from namioto.analysis.bpm import BpmEstimate
-from namioto.analysis.spectrum import MIDI_OFFSET, NOTE_COUNT, NoteSpectrum
+from namioto.analysis.spectrum import MIDI_OFFSET, NOTE_COUNT, NoteSpectrum, stft_notes
 from namioto.channels import Channel
 from namioto.interaction import Interaction, Tool
 from namioto.karaoke.operations import Drop, Match, Merge, SoundRef
@@ -2533,6 +2533,14 @@ def test_spectrum_image_follows_the_colour_ramp() -> None:
     assert quiet.blue() > quiet.red()  # the ramp starts as blue
     assert middle.green() > middle.red()  # climbs through green
     assert (hot.red(), hot.green(), hot.blue()) == (255, 2, 0)  # and ends red
+
+
+def test_silent_audio_spectrum_renders_black() -> None:
+    with np.errstate(divide="raise", invalid="raise"):
+        spectrum = stft_notes(np.zeros(44100, dtype=np.float32), 44100)
+        image = SpectrumImage(spectrum).image(240.0, 1.0)
+    assert (image.width(), image.height()) == (40, NOTE_COUNT)
+    assert all(image.pixel(x, y) == 0xFF000000 for x in range(40) for y in range(NOTE_COUNT))
 
 
 def test_spectrum_image_is_cached_until_the_parameters_change() -> None:

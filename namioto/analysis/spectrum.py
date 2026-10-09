@@ -208,7 +208,7 @@ def stft_notes(
 
     mark = time.perf_counter()
     sigma = float(energies.std())
-    table = np.sqrt(np.maximum(energies, 0.0) / sigma).astype(np.float32)
+    table = np.sqrt(np.maximum(energies, 0.0) / sigma).astype(np.float32) if sigma > 0 else np.zeros_like(energies)
     if timings is not None:
         timings["fft"] = fft_seconds
         timings["reduce"] = reduce_seconds
