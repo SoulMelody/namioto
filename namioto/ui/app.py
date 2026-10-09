@@ -922,6 +922,7 @@ class MainWindow(QMainWindow):
         if project.remember_changes(self.state.project, document, chosen):
             self._save_state()
         self._consume_analysis()
+        self.reset_document()
         self.project_settings = chosen
         self._apply_project_settings()
         self.load_audio(path)
