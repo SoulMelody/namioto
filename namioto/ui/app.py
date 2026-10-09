@@ -1385,7 +1385,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 number = free
-                channels.append(Channel(name="GAME", channel=number, program=53))
+                channels.append(Channel(name="GAME", channel=number))
         else:
             kept = [note for note in kept if note[3] != number]
         self.view.replace(channels, kept + [(*note, number) for note in arriving], "Transcribe with GAME")

@@ -3466,6 +3466,7 @@ def test_a_transcription_lands_on_a_channel_of_its_own(own_window) -> None:
     channels = own_window.view.channels
     assert len(channels) == before + 1
     assert channels[-1].name == "GAME"
+    assert channels[-1].program == 0
     assert [note.pitch for note in own_window.view.notes()] == [60, 62]
     assert {note.channel for note in own_window.view.notes()} == {channels[-1].channel}
 
@@ -4192,6 +4193,13 @@ def test_notes_land_on_the_active_channel_and_wear_its_colour(window) -> None:
     on_first = window.view.add_note(60, 0.0, 1.0, 0)
     assert on_first.fill != drawn.fill  # each channel paints its own colour
     reset_channels(window)
+
+
+def test_new_channels_use_piano_instead_of_the_active_instrument(own_window) -> None:
+    own_window.view.set_channels((Channel(channel=0, program=53),))
+    added = own_window.view.add_channel()
+    assert added.program == 0
+    assert own_window.view.channels[0].program == 53
 
 
 def test_a_locked_channel_cannot_be_edited(window) -> None:

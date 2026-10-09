@@ -196,10 +196,9 @@ class _Card(QWidget):
 class ChannelPanel(QWidget):
     """The list of the document's channels; a view over `PianoRollView.channels`, never a copy."""
 
-    def __init__(self, view: PianoRollView, default_program: int = 0, parent=None):
+    def __init__(self, view: PianoRollView, parent=None):
         super().__init__(parent)
         self.view = view
-        self.default_program = default_program
         self.setFixedWidth(CARD_WIDTH)
         view.channels_changed.connect(self._sync)
         view.active_channel_changed.connect(self._on_active_changed)
@@ -252,4 +251,4 @@ class ChannelPanel(QWidget):
         add = menu.addAction(tr("Add channel"))
         add.setEnabled(free_channel(self.view.channels) is not None)
         if menu.exec(event.globalPos()) is add:
-            self.view.add_channel(program=self.default_program)
+            self.view.add_channel()
