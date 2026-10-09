@@ -1292,7 +1292,7 @@ class MainWindow(QMainWindow):
                 channels.get(place, Channel(channel=place)), program=wanted.program, volume=wanted.volume
             )
             landing[wanted.channel] = place
-        kept = [(note.pitch, note.start, note.duration, note.channel) for note in self.view.notes()]
+        kept = [(note.pitch, note.start, note.duration, note.channel, note.id) for note in self.view.notes()]
         arriving = [
             (note.pitch, self.view.to_beats(note.start), self.view.to_beats(note.duration), landing[note.channel])
             for note in imported.notes
@@ -1351,7 +1351,7 @@ class MainWindow(QMainWindow):
         ]
         channels = list(self.view.channels)
         number = self.view.active_channel
-        kept = [(note.pitch, note.start, note.duration, note.channel) for note in self.view.notes()]
+        kept = [(note.pitch, note.start, note.duration, note.channel, note.id) for note in self.view.notes()]
         if target == "new":
             free = free_channel(channels)
             if free is None:

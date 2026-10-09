@@ -113,6 +113,20 @@ def test_a_note_from_a_file_without_ids_gets_them_in_order() -> None:
     assert document.next_id == 4
 
 
+def test_rebuilding_notes_does_not_reuse_removed_ids() -> None:
+    document = Document(notes=[Note(60, 0.0, 1.0, id=100), Note(62, 1.0, 1.0, id=200)])
+    document.replace_notes([Note(60, 0.0, 1.0, id=100)])
+    assert document.next_id == 201
+    document.replace_notes([])
+    assert document.add_note(Note(64, 2.0, 1.0)).id == 201
+
+
+def test_fresh_notes_do_not_take_ids_of_later_existing_notes() -> None:
+    document = Document(notes=[Note(60, 0.0, 1.0), Note(62, 1.0, 1.0, id=1)])
+    assert [note.id for note in document.notes] == [2, 1]
+    assert document.next_id == 3
+
+
 def test_replacing_the_notes_keeps_a_free_id_free() -> None:
     document = Document()
     document.replace_notes([Note(60, 0.0, 1.0, id=4)], next_id=9)

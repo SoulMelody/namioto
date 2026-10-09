@@ -433,11 +433,12 @@ class PianoRollView(QGraphicsView):
             self.notes_changed.emit()
         return item
 
-    def set_notes(self, notes, next_id: int = 1) -> None:
+    def set_notes(self, notes, next_id: int | None = None) -> None:
         """Replace every note in one go: a project or an extraction arrives all at once.
 
         A note may carry a fourth element, the channel it plays on, and a fifth, the stable id it was
-        saved under; `next_id` is the id the project file says is free next.
+        saved under; `next_id` is the id the project file says is free next. Without it, the current
+        allocator is kept, including when undo restores older notes.
         """
         with self._edit("Replace notes"):
             self._drop_items()

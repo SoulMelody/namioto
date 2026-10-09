@@ -196,6 +196,29 @@ def test_notes_round_trip(qt_app, endpoint):
     assert call(qt_app, endpoint, "document.clear_notes") == {"notes": 0}
 
 
+def test_remote_edits_preserve_existing_note_ids_and_allocator(qt_app, window, endpoint):
+    view = window.view
+    view.set_notes([(60, 0.0, 1.0, 0, 100), (62, 2.0, 1.0, 0, 200)], next_id=500)
+    view.undo_stack.clear()
+    call(qt_app, endpoint, "document.add_notes", {"notes": [{"pitch": 64, "start": 2.0, "duration": 0.5}]})
+    assert [note.id for note in view.notes()] == [100, 200, 500]
+    assert view.document.next_id == 501
+    view.undo()
+    assert [note.id for note in view.notes()] == [100, 200]
+    assert view.document.next_id == 501
+    view.redo()
+    assert [note.id for note in view.notes()] == [100, 200, 500]
+    call(qt_app, endpoint, "document.remove_notes", {"notes": [{"pitch": 64, "start": 2.0}]})
+    assert [note.id for note in view.notes()] == [100, 200]
+    assert view.document.next_id == 501
+    view.undo()
+    assert [note.id for note in view.notes()] == [100, 200, 500]
+    view.redo()
+    call(qt_app, endpoint, "document.replace_notes", {"notes": [{"pitch": 67, "start": 3.0, "duration": 0.5}]})
+    assert [note.id for note in view.notes()] == [501]
+    assert view.document.next_id == 502
+
+
 def test_replace_notes_carries_channels(qt_app, endpoint):
     result = call(
         qt_app,

@@ -81,7 +81,7 @@ class Document:
     def _assign_ids(self) -> None:
         """Give every note a stable id, keeping the ones it already has; the next free id is kept."""
         used: set[int] = set()
-        top = self.next_id
+        top = max(self.next_id, max((note.id for note in self.notes), default=0) + 1)
         for note in self.notes:
             if note.id <= 0 or note.id in used:
                 note.id = top
@@ -149,9 +149,10 @@ class Document:
     def clear_notes(self) -> None:
         self.notes.clear()
 
-    def replace_notes(self, notes, next_id: int = 1) -> None:
+    def replace_notes(self, notes, next_id: int | None = None) -> None:
         self.notes = list(notes)
-        self.next_id = max(1, int(next_id))
+        if next_id is not None:
+            self.next_id = max(1, int(next_id))
         self._assign_ids()
         self._fill_channels()
 

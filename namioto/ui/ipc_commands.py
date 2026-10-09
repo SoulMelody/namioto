@@ -473,7 +473,7 @@ class WindowBridge:
         if not isinstance(entries, list) or not entries:
             raise IpcError("bad_params", "notes must be a non-empty list")
         view = self.window.view
-        kept = [(item.pitch, item.start, item.duration, item.channel) for item in view.notes()]
+        kept = [(item.pitch, item.start, item.duration, item.channel, item.id) for item in view.notes()]
         arriving = []
         for entry in entries:
             pitch, start, duration, channel = self._note_spec(entry)
@@ -507,7 +507,7 @@ class WindowBridge:
                 remaining.remove(item)
                 removed += 1
                 break
-        view.set_notes([(item.pitch, item.start, item.duration, item.channel) for item in remaining])
+        view.set_notes([(item.pitch, item.start, item.duration, item.channel, item.id) for item in remaining])
         return {"removed": removed, "notes": len(remaining)}
 
     def clear_notes(self, _params: dict) -> dict:
