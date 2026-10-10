@@ -74,7 +74,7 @@ class _Card(QWidget):
         self.swatch.setFixedSize(SWATCH_WIDTH, 34)
 
         self.name = _NameLabel(channel.name)
-        self.id = QLabel(f"({channel.channel + 1})")
+        self.id = QLabel(f"({channel.channel})")
         self.id.setMinimumWidth(16)
         self.id.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.program = QComboBox()
@@ -120,7 +120,7 @@ class _Card(QWidget):
         self._channel = channel
         self.set_active(channel.channel == self._panel.view.active_channel)
         self.swatch.setStyleSheet(f"background: {channel.color}; border-radius: 2px;")
-        self.id.setText(f"({channel.channel + 1})")
+        self.id.setText(f"({channel.channel})")
         self.id.setStyleSheet(f"color: {self._panel.view.channel_color(channel.channel).name()};")
         self.name.setText(channel.name or tr("Channel"))
         self.program.blockSignals(True)
@@ -173,8 +173,8 @@ class _Card(QWidget):
             if ok:
                 view.set_channel_field(self._number, volume=value)
         elif chosen is number:
-            value, ok = QInputDialog.getInt(self, tr("Channel ID"), tr("MIDI channel (1-16):"), self._number + 1, 1, 16)
-            if ok and not view.set_channel_number(self._number, value - 1):
+            value, ok = QInputDialog.getInt(self, tr("Channel ID"), tr("MIDI channel (0-15):"), self._number, 0, 15)
+            if ok and not view.set_channel_number(self._number, value):
                 QMessageBox.warning(self, tr("Channel ID"), tr("Channel {number} is already in use", number=value))
         elif chosen is remove:
             view.remove_channel(self._number)

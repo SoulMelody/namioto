@@ -3329,33 +3329,29 @@ def test_a_missing_runtime_stops_the_transcription(own_window, monkeypatch) -> N
     assert dialog.run_button.isEnabled()
 
 
-def test_choosing_the_active_target_does_not_ask_until_the_run(own_window, monkeypatch) -> None:
+def test_transcription_has_no_target_choice(own_window, monkeypatch) -> None:
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: pytest.fail("must not ask"))
-    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window, active_has_notes=True)
-
-    parameter_writer(dialog, "target")("active")
-
-    assert dialog.target() == "active"  # picked quietly; the question belongs to the run
+    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window, channel_has_notes=True)
+    assert "target" not in dialog.parameters()
+    assert all(field.name != "target" for field, _read, _write in dialog._fields)
     dialog.close()
 
 
-def test_the_active_channel_is_only_overwritten_on_an_explicit_yes(own_window, monkeypatch) -> None:
+def test_declining_channel_zero_overwrite_does_not_start_transcription(own_window, monkeypatch) -> None:
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
-    monkeypatch.setattr("namioto.ui.transcription_dialog.start_job", fake_job([("done", [(0.0, 0.5, 60.0)])]))
-    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window, active_has_notes=True)
-    parameter_writer(dialog, "target")("active")
-
+    monkeypatch.setattr("namioto.ui.transcription_dialog.start_job", lambda *args: pytest.fail("must not run"))
+    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window, channel_has_notes=True)
     dialog._start()
-    dialog._poll()
+    assert dialog.notes() == []
+    assert dialog._process is None
+    assert dialog.run_button.isEnabled()
 
-    assert dialog.target() == "new"  # a declined overwrite falls back to a channel of its own
 
-
-def test_an_empty_active_channel_takes_the_notes_without_asking(own_window, monkeypatch) -> None:
+def test_an_empty_channel_zero_takes_the_notes_without_asking(own_window, monkeypatch) -> None:
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: pytest.fail("must not ask"))
     monkeypatch.setattr("namioto.ui.transcription_dialog.start_job", fake_job([("done", [(0.0, 0.5, 60.0)])]))
     dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window)
-    parameter_writer(dialog, "target")("active")
+    monkeypatch.setattr(devices, "validate", lambda: None)
 
     dialog._start()
     dialog._poll()
@@ -3363,19 +3359,14 @@ def test_an_empty_active_channel_takes_the_notes_without_asking(own_window, monk
     assert dialog.notes() == [(0.0, 0.5, 60.0)]
 
 
-def test_a_remembered_active_target_is_checked_before_it_overwrites(own_window, monkeypatch) -> None:
-    values = dict(transcription.default_parameters(), target="active")
-    monkeypatch.setattr(transcription, "load_parameters", lambda: dict(values))
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+def test_accepting_channel_zero_overwrite_runs_transcription(own_window, monkeypatch) -> None:
+    monkeypatch.setattr(devices, "validate", lambda: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr("namioto.ui.transcription_dialog.start_job", fake_job([("done", [(0.0, 0.5, 60.0)])]))
-
-    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window, active_has_notes=True)
-    assert dialog.target() == "active"  # remembered, and only questioned when the run is asked for
-
+    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window, channel_has_notes=True)
     dialog._start()
     dialog._poll()
-
-    assert dialog.target() == "new"
+    assert dialog.notes() == [(0.0, 0.5, 60.0)]
 
 
 def test_the_button_closes_the_window_when_idle(own_window) -> None:
@@ -3427,7 +3418,7 @@ def test_the_window_is_pinned_to_its_content(own_window) -> None:
     assert dialog.minimumSize() == dialog.maximumSize() == dialog.size()
 
 
-@pytest.mark.parametrize("operation", ["merge", "transcribe_new", "transcribe_active"])
+@pytest.mark.parametrize("operation", ["merge", "transcribe"])
 def test_bulk_edits_preserve_note_ids_and_allocator_through_undo(own_window, operation) -> None:
     view = own_window.view
     view.set_channels((Channel(channel=0), Channel(channel=1)))
@@ -3441,9 +3432,9 @@ def test_bulk_edits_preserve_note_ids_and_allocator_through_undo(own_window, ope
         imported = midi.Imported(channels=(Channel(channel=0),), notes=(project.Note(2.0, 0.5, 64, 0),), bpm=120.0)
         own_window._merge_midi(imported, [0])
     else:
-        own_window._adopt_transcription([(2.0, 2.5, 64.0)], "new" if operation == "transcribe_new" else "active")
+        own_window._adopt_transcription([(2.0, 2.5, 64.0)])
 
-    expected = [200, 500] if operation == "transcribe_active" else [100, 200, 500]
+    expected = [200, 500] if operation == "transcribe" else [100, 200, 500]
     assert [note.id for note in view.notes()] == expected
     assert view.lyric_operations == (confirmed,)
     assert view.document.next_id == 501
@@ -3458,29 +3449,24 @@ def test_bulk_edits_preserve_note_ids_and_allocator_through_undo(own_window, ope
     assert view.add_note(67, 6.0, 1.0).id == 501
 
 
-def test_a_transcription_lands_on_a_channel_of_its_own(own_window) -> None:
-    before = len(own_window.view.channels)
-
-    own_window._adopt_transcription([(0.0, 0.5, 60.0), (0.5, 1.0, 62.0)], "new")
-
-    channels = own_window.view.channels
-    assert len(channels) == before + 1
-    assert channels[-1].name == "GAME"
-    assert channels[-1].program == 0
+def test_transcription_creates_channel_zero_when_missing(own_window) -> None:
+    own_window.view.set_channels((Channel(channel=5),))
+    own_window.view.set_active_channel(5)
+    own_window._adopt_transcription([(0.0, 0.5, 60.0), (0.5, 1.0, 62.0)])
+    assert {channel.channel for channel in own_window.view.channels} == {0, 5}
     assert [note.pitch for note in own_window.view.notes()] == [60, 62]
-    assert {note.channel for note in own_window.view.notes()} == {channels[-1].channel}
-
+    assert {note.channel for note in own_window.view.notes()} == {0}
     own_window.view.undo()
     assert own_window.view.notes() == []
-    assert len(own_window.view.channels) == before
+    assert [channel.channel for channel in own_window.view.channels] == [5]
 
 
-def test_a_transcription_over_the_active_channel_replaces_only_that_channel(own_window) -> None:
+def test_transcription_replaces_only_channel_zero(own_window) -> None:
     own_window.view.set_channels((Channel(channel=0), Channel(channel=1)))
     own_window.view.set_notes([(60, 0.0, 1.0, 0), (62, 0.0, 1.0, 1)])
-    own_window.view.set_active_channel(0)
+    own_window.view.set_active_channel(1)
 
-    own_window._adopt_transcription([(1.0, 1.5, 64.0)], "active")
+    own_window._adopt_transcription([(1.0, 1.5, 64.0)])
 
     assert len(own_window.view.channels) == 2
     assert sorted((note.pitch, note.channel) for note in own_window.view.notes()) == [(62, 1), (64, 0)]
@@ -4335,9 +4321,9 @@ def test_a_channel_change_refreshes_its_card_in_place(own_window) -> None:
 def test_a_channel_id_shows_before_its_name(own_window) -> None:
     own_window.view.set_channels((Channel(channel=0, name="Lead"), Channel(channel=2)))
     cards = own_window.channel_panel._cards
-    assert cards[0].id.text() == "(1)"
+    assert cards[0].id.text() == "(0)"
     assert cards[0].name.text() == "Lead"
-    assert cards[2].id.text() == "(3)"
+    assert cards[2].id.text() == "(2)"
     assert cards[2].name.text() != ""  # an unnamed channel keeps a word to read
 
 
@@ -4378,7 +4364,7 @@ def test_the_card_menu_can_change_the_channel_id(own_window, monkeypatch) -> Non
     card.contextMenuEvent(
         QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(0, 0), card.mapToGlobal(QPoint(0, 0)))
     )
-    assert [channel.channel for channel in view.channels] == [1, 4]
+    assert [channel.channel for channel in view.channels] == [1, 5]
 
 
 def test_the_active_channel_wears_the_selection_colour(own_window) -> None:
@@ -5352,24 +5338,38 @@ def test_an_alignment_puts_each_sound_on_the_note_its_time_covers(own_window, tm
     assert own_window.view.lyric_red == ((False, False),)
 
 
-def test_mapping_the_lyrics_to_the_active_channel(own_window, tmp_path) -> None:
+def test_moving_a_lyric_line_preserves_its_mapping_as_krc(own_window, tmp_path) -> None:
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0), Channel(channel=1)))
-    own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 0.0, 1.0, 1), (64, 1.0, 1.0, 1)))
+    own_window.view.set_notes(((60, 0.0, 2.0, 0), (62, 4.0, 2.0, 1)))
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="あい", key=text_key("あい"), raw=(((0.0, 1.0), (1.0, 1.0)),))
     own_window._watch_lyrics()
     wait_for_lyric_mapping(own_window)
-
-    assert own_window._lyric_channel == 0  # the stored mapping names channel 0
-    assert own_window.view.lyric_times == (((0.0, 1.0), (None, None)),)  # channel 0 has one note
-
+    assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)
     own_window.view.set_active_channel(1)
-    own_window._map_to_channel()
+    assert own_window.view.lyric_lines[0].track == 0
+    before = own_window.view.undo_stack.count()
+    own_window._set_lyric_channel(0, 1)
     wait_for_lyric_mapping(own_window)
-
-    assert own_window._lyric_channel == 1
-    assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)  # channel 1 has two
+    assert own_window.lyrics_text == "{1}(あい).1"
+    assert own_window.view.lyric_lines[0].track == 1
+    assert own_window.view.lyric_times == (((4.0, 5.0), (5.0, 6.0)),)
+    assert own_window.view.lyric_operations == ()
+    assert own_window.view.undo_stack.count() == before + 1
+    assert own_window.save_project(own_window.project_path)
+    own_window.view.undo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "あい"
+    assert own_window.view.lyric_lines[0].track == 0
+    assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)
+    own_window.view.redo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "{1}(あい).1"
+    assert own_window.load_project(own_window.project_path)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_lines[0].track == 1
+    assert own_window.view.lyric_times == (((4.0, 5.0), (5.0, 6.0)),)
 
 
 def _mapped_pair(own_window, tmp_path, raw=((0.0, 1.0), (1.0, 1.0))) -> None:
@@ -5929,9 +5929,9 @@ def test_alignment_mapping_can_use_or_ignore_krc_constraints(own_window, tmp_pat
     own_window.project_path = tmp_path / "song.nto"
     own_window._watch_lyrics()
     own_window.transport.bpm.setValue(60.0)
-    own_window.view.set_channels((Channel(channel=5),))
+    own_window.view.set_channels((Channel(channel=0), Channel(channel=5)))
     own_window.view.set_active_channel(5)
-    own_window.view.set_notes([(60, 0.0, 1.0, 5), (62, 1.0, 1.0, 5), (64, 2.0, 1.0, 5)])
+    own_window.view.set_notes([(60, 0.0, 1.0, 0), (62, 1.0, 1.0, 0), (64, 2.0, 1.0, 0)])
     assert own_window._on_lyrics_saved("あ.2い")
     own_window._adopt_alignment([[(0.0, 1.0), (1.0, 2.0)]], "mms", use_constraints=use_constraints)
     wait_for_lyric_mapping(own_window)
@@ -5948,7 +5948,7 @@ def test_alignment_mapping_can_use_or_ignore_krc_constraints(own_window, tmp_pat
     assert lyrics.load(own_window.lyrics_path()) == own_window.lyrics_text
     assert own_window.load_project(own_window.project_path)
     wait_for_lyric_mapping(own_window)
-    assert own_window._lyric_channel == 5
+    assert own_window.view.lyric_lines[0].track == 0
     assert own_window.view.lyric_mapped == expected
 
 
@@ -6542,16 +6542,14 @@ def test_mapping_computation_runs_outside_the_gui_thread(own_window, tmp_path, m
     assert own_window.view.lyric_zero == ((False, True),)
 
 
-def test_a_same_channel_map_click_forces_a_full_solve(own_window, tmp_path, monkeypatch):
+def test_same_lyric_channel_is_a_noop(own_window, tmp_path, monkeypatch):
     _mapped_pair(own_window, tmp_path)
     workers = _manual_mapping(monkeypatch)
-    dirty = own_window.project_dirty
-    own_window.edit.map_channel.click()
-    assert len(workers) == 1
-    assert workers[0].request["previous"] is None
-    assert own_window.project_dirty == dirty
-    workers[0].complete()
-    assert not own_window.view.lyric_mapping_pending
+    before = own_window.view.undo_stack.count()
+    own_window._set_lyric_channel(0, 0)
+    assert workers == []
+    assert own_window.view.undo_stack.count() == before
+    assert not hasattr(own_window.edit, "map_channel")
 
 
 def test_saving_during_a_local_mapping_does_not_request_a_full_solve(own_window, tmp_path, monkeypatch):
@@ -6744,3 +6742,120 @@ def test_time_edit_undo_and_redo_preserve_sparse_note_ids_and_anchors(own_window
         assert view.lyric_raw[0][1][0] == onset
         assert anchor in view.lyric_operations
         assert not own_window._lyric_error
+
+
+def _mixed_lyrics(own_window, tmp_path, *, confirmed=True):
+    text = "あ\n{1}い\nう"
+    own_window.project_path = tmp_path / "mixed.nto"
+    own_window.transport.bpm.setValue(60.0)
+    own_window.view.set_channels((Channel(channel=0), Channel(channel=1), Channel(channel=2)))
+    own_window.view.set_notes(
+        ((60, 0.0, 1.0, 0, 10), (62, 2.0, 1.0, 0, 20), (64, 4.0, 1.0, 1, 30), (65, 6.0, 1.0, 1, 40))
+    )
+    own_window._stored_lyrics = project.Lyrics(
+        text=text,
+        key=text_key(text),
+        raw=(((0.0, 1.0),), ((4.0, 1.0),), ((2.0, 1.0),)),
+        operations=(Match(SoundRef(2, 0), (20,), confirmed=True),) if confirmed else (),
+    )
+    own_window._watch_lyrics()
+    wait_for_lyric_mapping(own_window)
+
+
+def test_mixed_channels_use_edit_mapping_only_on_zero(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path)
+    assert own_window.view.lyric_times == (((0.0, 1.0),), ((4.0, 5.0),), ((2.0, 3.0),))
+    assert {ref.line for op in own_window.view.lyric_operations for ref in op.sounds} == {0, 2}
+    assert Match(SoundRef(2, 0), (20,), confirmed=True) in own_window.view.lyric_operations
+    assert not own_window._lyric_error
+    assert own_window.export_krc(tmp_path / "mixed.krc")
+    assert natural_sounds((tmp_path / "mixed.krc").read_text())[1].track == 1
+    assert own_window.export_ass(tmp_path / "mixed.ass")
+
+
+def test_alignment_adopts_only_channel_zero_rows(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path)
+    own_window._adopt_alignment([[(0.1, 0.9)], [(2.1, 0.9)]], "mms", (True, False))
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_raw == (((0.1, 0.9),), ((4.0, 1.0),), ((2.1, 0.9),))
+    assert own_window._lyric_flags == (True, False, False)
+    assert own_window.view.lyric_mapped[1] == ((30,),)
+
+
+def test_align_dialog_receives_only_channel_zero_text(own_window, tmp_path, monkeypatch):
+    _mixed_lyrics(own_window, tmp_path)
+    own_window.audio_path = Path("/tmp/song.wav")
+    seen = []
+    monkeypatch.setattr(AlignDialog, "exec", lambda dialog: seen.append(dialog.text))
+    own_window._open_align()
+    assert seen == ["あ\nう"]
+
+
+def test_moving_one_line_preserves_other_confirmed_anchors(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path)
+    own_window._set_lyric_channel(0, 1)
+    wait_for_lyric_mapping(own_window)
+    assert [line.track for line in own_window.view.lyric_lines] == [1, 1, 0]
+    assert Match(SoundRef(2, 0), (20,), confirmed=True) in own_window.view.lyric_operations
+    assert own_window.view.lyric_mapped[:2] == (((30,),), ((40,),))
+    assert "Channel 0" in own_window._lyric_error
+    assert own_window.view.lyric_times[2] == ((2.0, 3.0),)
+
+
+def test_empty_faithful_channel_does_not_block_channel_zero_edits(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path, confirmed=False)
+    own_window._set_lyric_channel(1, 2)
+    wait_for_lyric_mapping(own_window)
+    assert "Channel 2" in own_window._lyric_error
+    assert own_window.view.lyric_times[1] == ((4.0, 5.0),)
+    own_window._on_lyric_action("drop", 0, 0)
+    wait_for_lyric_mapping(own_window)
+    assert any(
+        isinstance(op, Drop) and op.sound == SoundRef(0, 0) and op.confirmed for op in own_window.view.lyric_operations
+    )
+    own_window.view.add_note(67, 4.0, 1.0, channel=2)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_mapped[1]
+    assert not own_window._lyric_error
+
+
+def test_faithful_rows_reject_edit_anchors(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path)
+    before = own_window.view.lyric_operations
+    count = own_window.view.undo_stack.count()
+    own_window._on_lyric_action("drop", 1, 0)
+    assert own_window.view.lyric_operations == before
+    assert own_window.view.undo_stack.count() == count
+
+
+def test_nonzero_only_lyrics_cannot_be_aligned(own_window, tmp_path, monkeypatch):
+    _mixed_lyrics(own_window, tmp_path, confirmed=False)
+    own_window._set_lyric_channel(0, 1)
+    wait_for_lyric_mapping(own_window)
+    own_window._set_lyric_channel(2, 1)
+    wait_for_lyric_mapping(own_window)
+    assert not own_window.edit.align.isEnabled()
+    own_window.audio_path = Path("/tmp/song.wav")
+    monkeypatch.setattr(AlignDialog, "exec", lambda dialog: pytest.fail("must not align"))
+    own_window._open_align()
+    assert own_window.statusBar().currentMessage() == "Only lyrics on channel 0 can be aligned"
+
+
+def test_lyric_context_menu_selects_a_channel(own_window, tmp_path, monkeypatch):
+    _mixed_lyrics(own_window, tmp_path)
+    menus = []
+
+    def choose(menu, *_args):
+        submenu = next(action.menu() for action in menu.actions() if action.text() == "Lyric channel")
+        menus.append(submenu)
+        assert [action.isChecked() for action in submenu.actions()] == [False, True, False]
+        assert not any(action.text() == "Drop this sound" for action in menu.actions())
+        submenu.actions()[2].trigger()
+
+    monkeypatch.setattr(QMenu, "exec", choose)
+    strip = own_window.sound_strip
+    point = QPoint(round(strip._x(4.5)), 15)
+    strip.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, strip.mapToGlobal(point)))
+    wait_for_lyric_mapping(own_window)
+    assert menus
+    assert own_window.view.lyric_lines[1].track == 2

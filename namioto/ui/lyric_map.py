@@ -1,22 +1,21 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Laying a `.krc`'s Sounds onto the target channel's notes: the result the strip draws and the
-thread that maps them.
+"""Map KRC lines to the MIDI channels named by their zero-based tracks, off the GUI thread.
 
-The mapping is the spec's one: `resolve` picks the single voice a conflicted channel previews,
-`solve` lays every Sound on it as a `match`, `merge` or `drop`, and the strip's spans, doubt, grey
-and shared-note tables are read off those operations rather than kept as facts of their own.
-Read-only mode takes the `.krc`'s own `.N` and groups instead, running no DP. `LyricMapper` runs the
-mapping off the GUI thread, since a long `.krc` over a long roll takes a moment.
+Channel 0 uses `solve` in edit mode; all other channels and read-only sessions use faithful KRC
+NOTE slots without a DP. Each channel has its own resolved NOTE stream. Results retain global
+line indices so the strip, anchors and undo stack address the same Sounds.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QThread, Signal
 
-from namioto.karaoke.operations import Match, Merge, Operation
+from namioto.karaoke.operations import Match, Merge, Operation, SoundRef, remap_operation
+from namioto.karaoke.parser import parse
+from namioto.karaoke.writer import dumps
 from namioto.lyricmap import confidence, constraints, faithful
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import MappingError
@@ -43,6 +42,7 @@ class LyricResult:
     readings: tuple = ()
     error: str = ""
     state: MappingState | None = None
+    channel_errors: tuple = ()
 
 
 def map_lyrics(
@@ -56,15 +56,21 @@ def map_lyrics(
     anchors: Sequence[Operation] = (),
     previous: LyricResult | None = None,
     use_constraints: bool = False,
+    notes_by_channel: dict | None = None,
 ) -> LyricResult:
     """The mapping for the mode in force: the aligner's times in edit, the `.krc`'s own in read.
 
     `raw` is one `(onset, raw_length)` per Sound, per line; `scores` the alignment confidence;
     `notes` the target channel as `(start, end, pitch, id)` tuples. A mapping that cannot be made -
-    missing alignment, no notes, a broken anchor - comes back with `.error` set and the raw times as
-    the drawn spans, so the strip still shows what it has. `previous` permits local time-edit
-    solves when the lyric and NOTE structure and conflict filtering are unchanged.
+    missing alignment, no notes, a broken anchor - comes back with `.error` set. `notes_by_channel`
+    selects each line's KRC track; only track 0 can use edit mapping. Failed faithful rows retain
+    their raw times for display. `previous` permits local time-edit solves when the lyric and NOTE
+    structure and conflict filtering are unchanged.
     """
+    if notes_by_channel is not None:
+        return _channel_result(
+            text, lines, raw, scores, flagged, notes_by_channel, mode, anchors, previous, use_constraints
+        )
     lines = list(lines)
     raw = [[(span[0], span[1]) for span in row] for row in raw]
     if mode == "read":
@@ -80,6 +86,83 @@ def map_lyrics(
         return _failed(lines, raw, f"{type(error).__name__}: {error}")
 
 
+def channel_lines(lines):
+    return {
+        channel: tuple(index for index, line in enumerate(lines) if line.track == channel)
+        for channel in dict.fromkeys(line.track for line in lines)
+    }
+
+
+def subset_text(text, indices):
+    lyrics = parse(text)
+    selected = set(indices)
+    index = 0
+    chapters = []
+    for chapter in lyrics.chapters:
+        kept = []
+        for line in chapter.lines:
+            if index in selected:
+                kept.append(line)
+            index += 1
+        if kept:
+            chapter.lines = kept
+            chapters.append(chapter)
+    lyrics.chapters = chapters
+    return dumps(lyrics, dotted=True)
+
+
+def _channel_result(text, lines, raw, scores, flagged, notes, mode, anchors, previous, use_constraints):
+    if any(not 0 <= ref.line < len(lines) for operation in anchors for ref in operation.sounds):
+        error = "an anchor names a missing lyric line"
+        return replace(_failed(lines, raw, error), operations=tuple(anchors), channel_errors=((0, error),))
+    tables = {name: [()] * len(lines) for name in ("spans", "red", "raw", "zero", "group", "mapped")}
+    operations, readings, filtered, errors = [], [], [], []
+    state = None
+    for channel, indices in channel_lines(lines).items():
+        local = {index: position for position, index in enumerate(indices)}
+        local_anchors = [remap_operation(op, local) for op in anchors if all(ref.line in local for ref in op.sounds)]
+        result = map_lyrics(
+            text=subset_text(text, indices),
+            lines=[lines[index] for index in indices],
+            raw=[raw[index] for index in indices],
+            scores=[scores[index] if index < len(scores) else () for index in indices],
+            flagged=[flagged[index] if index < len(flagged) else False for index in indices],
+            notes=notes.get(channel, ()),
+            mode=mode if channel == 0 else "read",
+            anchors=local_anchors,
+            previous=previous if len(indices) == len(lines) else None,
+            use_constraints=use_constraints,
+        )
+        for name, rows in tables.items():
+            for position, index in enumerate(indices):
+                rows[index] = getattr(result, name)[position]
+                if name == "spans" and channel != 0 and result.error:
+                    rows[index] = tuple(
+                        span
+                        if span[0] is not None
+                        else (onset, onset + length if onset is not None and length is not None else None)
+                        for span, (onset, length) in zip(rows[index], raw[index], strict=True)
+                    )
+        kept = local_anchors if result.error and channel == 0 and mode == "edit" else result.operations
+        operations.extend(remap_operation(op, indices) for op in kept)
+        readings.extend(result.readings)
+        filtered.extend(result.filtered)
+        if result.error:
+            errors.append((channel, result.error))
+        if channel == 0:
+            state = result.state
+    return LyricResult(
+        lines=tuple(lines),
+        **{name: tuple(rows) for name, rows in tables.items()},
+        operations=tuple(operations),
+        readings=tuple(readings),
+        filtered=tuple(filtered),
+        error="; ".join(f"Channel {channel}: {error}" for channel, error in errors),
+        state=state,
+        channel_errors=tuple(errors),
+    )
+
+
 def _read_result(text, lines, raw, notes) -> LyricResult:
     resolved = resolve([TimedNote(*note) for note in notes])
     spans, ids = faithful.lay_out(text, resolved.stream)
@@ -87,6 +170,14 @@ def _read_result(text, lines, raw, notes) -> LyricResult:
     empty = tuple(tuple(False for _sound in line.sounds) for line in lines)
     zero = tuple(tuple(span is None or span[0] is None for span in row) for row in rows)
     groups = tuple(tuple(-1 for _sound in line.sounds) for line in lines)
+    error = "the target channel has no notes" if not resolved.stream else ""
+    dropped = {ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0}
+    if not error and any(
+        (span is None or span[0] is None) and SoundRef(index, at) not in dropped
+        for index, row in enumerate(rows)
+        for at, span in enumerate(row)
+    ):
+        error = "the faithful mapping has more NOTE slots than the target channel has notes"
     return LyricResult(
         lines=tuple(lines),
         spans=_pairs(rows),
@@ -96,6 +187,7 @@ def _read_result(text, lines, raw, notes) -> LyricResult:
         group=groups,
         mapped=tuple(tuple(tuple(chunk) for chunk in row) for row in ids),
         filtered=tuple(resolved.filtered),
+        error=error,
     )
 
 

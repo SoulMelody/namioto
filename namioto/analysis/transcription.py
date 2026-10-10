@@ -29,7 +29,6 @@ GAME_SIZES = ("small", "medium", "large")
 # the codes GAME's own config.json maps for the segmenter; 0, and so the empty code, is universal
 LANGUAGE_CODES = ("", "en", "ja", "yue", "zh")
 LANGUAGE_LABELS = ("Universal", "English", "Japanese", "Cantonese", "Mandarin")
-TARGETS = ("new", "active")
 PARAMETER_FILE = "transcription.json"
 STORE_VERSION = 3
 
@@ -68,15 +67,6 @@ PARAMETERS: tuple[Field, ...] = (
         "Snap the notes to the beat grid, this many cells per quarter note",
         choices=(0, 1, 2, 4, 8, 16, 32),
         labels=("Off", "1/4", "1/8", "1/16", "1/32", "1/64", "1/128"),
-    ),
-    Field(
-        "target",
-        "choice",
-        "new",
-        "Target",
-        "Where the notes land: a channel of their own, or the active channel, over what it holds",
-        choices=TARGETS,
-        labels=("New channel", "Active channel"),
     ),
     Field("batch_size", "int", 4, "Batch", "Chunks per inference batch", low=1, high=32),
     Field(
@@ -171,15 +161,13 @@ def run_key(path: Any, parameters: Any) -> str:
 
     The grid is not one of them: a quantised run and a raw one are the same model run, so changing
     the tempo, the quantize choice or the grid offset re-snaps the stored notes instead of asking
-    the model again. Nor is `target`, which only says where the notes go afterwards.
+    the model again.
     """
     values = coerce_parameters(parameters)
     identity = {
         "audio": list(file_stamp(path)),
         "device": devices.resolve(values["device"]),
-        "parameters": {
-            item.name: values[item.name] for item in PARAMETERS if item.name not in ("target", "quantize", "device")
-        },
+        "parameters": {item.name: values[item.name] for item in PARAMETERS if item.name not in ("quantize", "device")},
     }
     return hashlib.sha1(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
 

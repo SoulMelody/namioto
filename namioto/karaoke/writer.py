@@ -35,7 +35,7 @@ def _chapter_text(chapter: Chapter, dotted: bool = False) -> str:
 
 def _line_text(line: Line, dotted: bool = False) -> str:
     body = "".join(_unit_text(unit, dotted) for unit in line.units)
-    return f"{{{line.track}}}{body}" if line.track != 1 else body
+    return f"{{{line.track}}}{body}" if line.track != 0 else body
 
 
 def _unit_text(unit: Unit, dotted: bool = False) -> str:

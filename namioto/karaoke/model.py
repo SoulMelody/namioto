@@ -166,7 +166,7 @@ class Line:
     """One line of units, with the track it is sung on."""
 
     units: list[Unit]
-    track: int = 1
+    track: int = 0
 
     @property
     def words(self) -> list[Unit]:

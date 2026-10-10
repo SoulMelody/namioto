@@ -11,7 +11,7 @@ mapping everything else is derived from. Qt-free.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from namioto.karaoke.model import KrcError
 
@@ -98,6 +98,11 @@ class Drop:
 
 
 Operation = Match | Merge | Drop
+
+
+def remap_operation(operation: Operation, indices) -> Operation:
+    refs = tuple(SoundRef(indices[ref.line], ref.index) for ref in operation.sounds)
+    return replace(operation, sounds=refs) if isinstance(operation, Merge) else replace(operation, sound=refs[0])
 
 
 def keep_operations(operations: Sequence[Operation], version: int, current: int = MAPPING_VERSION) -> tuple:

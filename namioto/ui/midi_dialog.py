@@ -20,7 +20,7 @@ from namioto.i18n import tr
 
 def _title(channel: Channel) -> str:
     """A channel as the dialog names it: its own name when it has one, its number either way."""
-    number = channel.channel + 1
+    number = channel.channel
     return (
         tr("{name} (channel {number})", name=channel.name, number=number)
         if channel.name

@@ -22,7 +22,7 @@ def test_parse_splits_the_file_into_chapters_and_lines():
     lyrics = parse(SAMPLE)
     assert isinstance(lyrics, Lyrics)
     assert [len(chapter.lines) for chapter in lyrics.chapters] == [3, 2]
-    assert [line.track for line in lyrics.chapters[0].lines] == [1, 1, 2]
+    assert [line.track for line in lyrics.chapters[0].lines] == [0, 0, 2]
     assert [line.total_mora() for line in lyrics.chapters[0].lines] == [8, 2, 5]
 
 

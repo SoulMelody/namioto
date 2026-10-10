@@ -111,10 +111,11 @@ class _RollState:
     lyrics: tuple = ()
     lyric_raw: tuple = ()
     lyric_operations: tuple = ()
+    lyric_text: str = ""
 
 
 def _state_data(state: _RollState) -> tuple:
-    return (state.channels, state.notes, state.lyric_raw, state.lyric_operations)
+    return (state.channels, state.notes, state.lyric_raw, state.lyric_operations, state.lyric_text)
 
 
 class _RollEdit(QUndoCommand):
@@ -327,6 +328,7 @@ class PianoRollView(QGraphicsView):
     note_preview = Signal(int)
     seek_requested = Signal(float)
     lyrics_changed = Signal()
+    lyric_text_changed = Signal(str)
     lyric_highlight_changed = Signal()
 
     GRAB_PX = 7
@@ -374,6 +376,7 @@ class PianoRollView(QGraphicsView):
         self._lyric_mapped: tuple[tuple[tuple[int, ...], ...], ...] = ()
         self._lyric_operations: tuple = ()
         self._lyric_editable = True
+        self.lyric_text = ""
         self.lyric_mapping_pending = False
         self._highlight_note: int | None = None
         self._highlight_sounds: tuple[tuple[int, int], ...] = ()
@@ -711,6 +714,7 @@ class PianoRollView(QGraphicsView):
             lyrics=self._lines,
             lyric_raw=self._lyric_raw,
             lyric_operations=self._lyric_operations,
+            lyric_text=self.lyric_text,
         )
 
     def _push(self, before: _RollState, after: _RollState, text: str) -> bool:
@@ -764,6 +768,9 @@ class PianoRollView(QGraphicsView):
         self._gesture_text = ""
         gesture, self._gesture = self._gesture, None
         if gesture is None:
+            self.lyric_text = before.lyric_text
+            self.lyric_text_changed.emit(before.lyric_text)
+            self._lines = before.lyrics
             self._lyric_raw = before.lyric_raw
             self._lyric_operations = before.lyric_operations
             self.lyrics_changed.emit()
@@ -794,6 +801,8 @@ class PianoRollView(QGraphicsView):
         """
         self._history_depth += 1
         try:
+            self.lyric_text = state.lyric_text
+            self.lyric_text_changed.emit(state.lyric_text)
             self._lines = state.lyrics
             self._lyric_raw = state.lyric_raw
             self._lyric_operations = state.lyric_operations

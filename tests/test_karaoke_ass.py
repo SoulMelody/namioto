@@ -97,7 +97,7 @@ def test_the_settings_name_the_font_and_the_overlay():
 
 def test_an_unknown_track_style_is_refused():
     with pytest.raises(ValueError, match="track style"):
-        generate_ass("あ", [[(0.0, 0.5)]], settings=AssSettings(track_style={1: "nowhere"}))
+        generate_ass("あ", [[(0.0, 0.5)]], settings=AssSettings(track_style={0: "nowhere"}))
 
 
 def test_a_line_with_no_time_is_left_out():

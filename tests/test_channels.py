@@ -26,7 +26,7 @@ def test_a_channel_keeps_the_number_it_was_given() -> None:
 
 
 def test_a_label_speaks_for_an_unnamed_channel() -> None:
-    assert Channel(channel=6).label == "Channel 7"
+    assert Channel(channel=6).label == "Channel 6"
     assert Channel(channel=6, name="Voice").label == "Voice"
 
 

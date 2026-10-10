@@ -320,8 +320,8 @@ class Lyrics(NamedTuple):
     holds the aligner's own score per sound beside it; `flagged` holds one bool per line, true where
     the aligner itself doubted the times it made; `problems` holds the aligner's line-level
     complaints. `mode` is `edit` while the aligner's times lay the sounds out, or `read` while the
-    `.krc`'s own `.N` and groups do. `channel` is the target MIDI channel; `operations` is the
-    authoritative mapping, and `version` the algorithm that suggested it.
+    `.krc`'s own `.N` and groups do. Each line's KRC track names its MIDI channel; only channel 0
+    has an edit mapping. `operations` is that mapping, and `version` the algorithm that suggested it.
     """
 
     text: str = ""
@@ -330,7 +330,6 @@ class Lyrics(NamedTuple):
     mode: str = "edit"
     raw: tuple[tuple[tuple[float | None, float | None], ...], ...] = ()
     flagged: tuple[bool, ...] = ()
-    channel: int = 0
     scores: tuple[tuple[float | None, ...], ...] = ()
     problems: tuple[tuple[str, ...], ...] = ()
     operations: tuple = ()
@@ -401,7 +400,6 @@ def _lyrics_dict(lyrics: Lyrics | None) -> dict | None:
         "key": lyrics.key,
         "model": lyrics.model,
         "mode": lyrics.mode,
-        "channel": lyrics.channel,
         "raw": [[list(sound) for sound in line] for line in lyrics.raw],
         "scores": [list(row) for row in lyrics.scores],
         "flagged": list(lyrics.flagged),
@@ -589,19 +587,12 @@ def _lyrics(value: Any) -> Lyrics | None:
         mode=mode if mode in LYRIC_MODES else "edit",
         raw=tuple(rows),
         flagged=tuple(bool(flag) for flag in flagged) if isinstance(flagged, list) else (),
-        channel=_channel_number(value.get("channel", 0)),
         scores=_scores(value.get("scores")),
         problems=_problems(value.get("problems")),
         operations=_operations(value.get("operations")),
         version=_version(value.get("version")),
         use_constraints=value.get("use_constraints") is True,
     )
-
-
-def _channel_number(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return min(max(value, 0), CHANNEL_COUNT - 1)
 
 
 def _scores(value: Any) -> tuple[tuple[float | None, ...], ...]:

@@ -177,7 +177,6 @@ def test_the_lyric_times_survive_a_round_trip() -> None:
         "key": "abc",
         "model": "mms",
         "mode": "read",
-        "channel": 0,
         "raw": [[[0.0, 1.0], [None, None]]],
         "scores": [],
         "flagged": [True],
@@ -338,9 +337,8 @@ def test_the_mapping_survives_a_round_trip(tmp_path) -> None:
     from namioto.karaoke.operations import Match, Merge, SoundRef
 
     lyrics = project.Lyrics(
-        text="胡椒[こ,しょう]\n",
+        text="{3}胡椒[こ,しょう]\n",
         key="abc",
-        channel=3,
         raw=(((0.0, 0.9), (1.0, 0.4), (2.0, 0.0)),),
         scores=((0.9, None, 0.8),),
         flagged=(True,),

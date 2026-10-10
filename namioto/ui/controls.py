@@ -596,7 +596,6 @@ class EditBar(_Group):
     transcribe_requested = Signal()
     lyrics_requested = Signal()
     align_requested = Signal()
-    map_channel_requested = Signal()
 
     def __init__(self, snap_choices, parent=None):
         super().__init__(parent)
@@ -645,9 +644,6 @@ class EditBar(_Group):
         self.align = icon_button("align", tr("Align lyrics: put a time on every sound with the forced aligner"))
         self.align.setEnabled(False)
         self.align.clicked.connect(self.align_requested)
-        self.map_channel = icon_button("map", tr("Map lyrics to the current channel, or recalculate the whole mapping"))
-        self.map_channel.setEnabled(False)
-        self.map_channel.clicked.connect(self.map_channel_requested)
 
         tools = Cluster("tools")
         tools.add(self.mode)
@@ -659,7 +655,6 @@ class EditBar(_Group):
         tools.add(self.transcribe)
         tools.add(self.lyrics)
         tools.add(self.align)
-        tools.add(self.map_channel)
 
         self.place(tools, 1, 0, 2)
         self._render()

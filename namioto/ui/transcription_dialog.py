@@ -55,17 +55,16 @@ def start_job(audio: str, parameters: dict):
 class TranscriptionDialog(QDialog):
     """GAME's parameters and the run, over one audio file.
 
-    `accept()` means the caller takes `notes()` and puts them where `target()` says; a finished run
-    accepts on its own, so the notes land without a second click.
+    `accept()` means the caller replaces channel 0 with `notes()`; a finished run accepts on its own.
     """
 
-    def __init__(self, audio: str, tempo: float, parent=None, active_has_notes: bool = False, offset: float = 0.0):
+    def __init__(self, audio: str, tempo: float, parent=None, channel_has_notes: bool = False, offset: float = 0.0):
         super().__init__(parent)
         self.setWindowTitle(tr("Transcribe the singing voice with GAME"))
         self.audio = str(audio)
         self.tempo = float(tempo)
         self.offset = float(offset)
-        self.active_has_notes = bool(active_has_notes)
+        self.channel_has_notes = bool(channel_has_notes)
         self._parameters = transcription.load_parameters()
         self._fields: list[tuple[Field, Callable[[], object], Callable[[object], None]]] = []
         self._process = None
@@ -110,10 +109,6 @@ class TranscriptionDialog(QDialog):
         """What the form holds now, checked the way the store checks it."""
         return transcription.coerce_parameters({field.name: read() for field, read, _write in self._fields})
 
-    def target(self) -> str:
-        """Where to put the notes; read when they are taken, so the choice stays the user's."""
-        return str(self.parameters()["target"])
-
     def notes(self) -> list[tuple[float, float, float]]:
         return list(self._notes)
 
@@ -132,8 +127,6 @@ class TranscriptionDialog(QDialog):
                 editor, read, write = field_editor(self._parameters[item.name], item)
                 add_row(form, editor, item)
                 self._fields.append((item, read, write))
-                if item.name == "target":
-                    self._target_read, self._target_write = read, write
             if advanced:
                 heading = advanced_section(form)
                 layout.addWidget(heading)
@@ -152,17 +145,17 @@ class TranscriptionDialog(QDialog):
         self.layout().invalidate()
         self.setFixedSize(self.sizeHint())
 
-    def _confirm_target(self) -> None:
-        """A channel that already carries notes is only overwritten on an explicit yes."""
-        if self._target_read() != "active" or not self.active_has_notes:
-            return
-        answer = QMessageBox.question(
-            self,
-            tr("Transcribe with GAME"),
-            tr("The active channel already has notes. Replace them with the transcription?"),
+    def _confirm_target(self) -> bool:
+        if not self.channel_has_notes:
+            return True
+        return (
+            QMessageBox.question(
+                self,
+                tr("Transcribe with GAME"),
+                tr("Channel 0 already has notes. Replace them with the transcription?"),
+            )
+            == QMessageBox.StandardButton.Yes
         )
-        if answer != QMessageBox.StandardButton.Yes:
-            self._target_write("new")
 
     def _close_or_cancel(self) -> None:
         """The one button closes the window when idle and stops a running model when it is not."""
@@ -182,7 +175,8 @@ class TranscriptionDialog(QDialog):
         self._set_running(False)
 
     def _start(self) -> None:
-        self._confirm_target()
+        if not self._confirm_target():
+            return
         self._parameters = self.parameters()
         transcription.save_parameters(self._parameters)
         cached = transcription.find_run(self.audio, self._parameters)

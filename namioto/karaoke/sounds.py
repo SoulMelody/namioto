@@ -79,7 +79,7 @@ class SoundLine:
     text: str
     sounds: tuple[Sound, ...]
     containers: tuple[Container, ...]
-    track: int = 1
+    track: int = 0
     chapter: int = 0
 
 

@@ -31,6 +31,7 @@ class SoundStrip(ViewportStrip):
     """Independent Sound blocks, grouped by NOTE, and position-only grey Drop labels."""
 
     lyric_action_requested = Signal(str, int, int)
+    channel_requested = Signal(int, int)
     save_map_requested = Signal()
     discard_map_requested = Signal()
     mapping_drag_started = Signal()
@@ -181,7 +182,7 @@ class SoundStrip(ViewportStrip):
         self._press_x = x
         if self.show_raw:
             found = self._raw_boundary_at(x)
-            if found is None:
+            if found is None or self.view.lyric_lines[found[0]].track != 0:
                 return
             row, column = found
             self._drag = ("raw", row, column)
@@ -195,7 +196,7 @@ class SoundStrip(ViewportStrip):
         if found is None:
             found = self._sound_at(x, y)
             kind = "body"
-        if found is None or not self.view.lyric_operations:
+        if found is None or self.view.lyric_lines[found[0]].track != 0 or not self.view.lyric_operations:
             return
         self._base = self.view.lyric_operations
         ids = {identifier for spans in self.view.lyric_mapped for chunk in spans for identifier in chunk}
@@ -204,7 +205,7 @@ class SoundStrip(ViewportStrip):
                 (
                     TimedNote(self.view.to_seconds(note.start), self.view.to_seconds(note.end), note.pitch, note.id)
                     for note in self.view.notes()
-                    if note.id in ids
+                    if note.channel == 0 and note.id in ids
                 ),
                 key=lambda note: (note.start, note.end, note.pitch, note.id),
             )
@@ -319,7 +320,19 @@ class SoundStrip(ViewportStrip):
         raw.toggled.connect(self._toggle_raw)
         menu.addAction(raw)
         found = self._sound_at(event.pos().x(), event.pos().y())
-        if found is not None and not self.view.lyric_mapping_pending:
+        if found is not None:
+            channels = menu.addMenu(tr("Lyric channel"))
+            channels.setEnabled(not self.view.lyric_mapping_pending and not self.view.gesture_active)
+            for channel in self.view.channels:
+                action = channels.addAction(
+                    tr("Channel {number}", number=channel.channel) + (f" — {channel.name}" if channel.name else "")
+                )
+                action.setCheckable(True)
+                action.setChecked(channel.channel == self.view.lyric_lines[found[0]].track)
+                action.triggered.connect(
+                    lambda _checked=False, number=channel.channel: self.channel_requested.emit(found[0], number)
+                )
+        if found is not None and not self.view.lyric_mapping_pending and self.view.lyric_lines[found[0]].track == 0:
             for kind, label in (
                 ("drop", "Drop this sound"),
                 ("keep", "Keep this sound"),
@@ -422,7 +435,7 @@ class SoundStrip(ViewportStrip):
         return (row, first, last) if last > first else None
 
     def _set_cursor(self, found):
-        if found is not None and self.view.lyric_editable:
+        if found is not None and self.view.lyric_editable and self.view.lyric_lines[found[0]].track == 0:
             self.setCursor(Qt.CursorShape.SizeHorCursor)
         else:
             self.unsetCursor()

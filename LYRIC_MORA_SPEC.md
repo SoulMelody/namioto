@@ -12,7 +12,7 @@
 本规范定义：
 
 1. `.krc` 如何自然展开为稳定的 `Sound` 序列；
-2. edit 模式如何把整首歌词映射到一个 MIDI channel 的 NOTE；
+2. edit 模式如何把 channel 0 的歌词映射到其 NOTE，其他 channel 如何 faithful map；
 3. 用户如何修正、确认和持久化映射；
 4. 如何从最终映射机械地重建 KRC group 与 `.N`；
 5. KRC 与 ASS 导出的共同验证门禁；
@@ -40,7 +40,7 @@
 | `.+` | 当前完整 Unit/group 接续前一个 Sound 所属的单 NOTE 共享组，不额外消费 NOTE；不是 drop。 |
 | `Sound` | edit 模式的稳定、最小自然读音原子。 |
 | raw evidence | 每个 Sound 的可编辑 `onset`、参考时长 `raw_length` 与可选 `score`；是匹配证据，不是最终 NOTE 边界。`raw_length` 在现有对齐流程输出后、Quantize 前取 `end - start`，不随编辑或 Quantize 改变。score 可缺失，缺失时降低置信度。 |
-| target channel | 当前歌词映射使用的唯一 MIDI channel。 |
+| target channel | KRC 行的 `{N}` 所指定的 MIDI channel，默认 `0`；edit mapping 仅使用 channel `0`。 |
 | target NOTE stream（歌词 NOTE，lyrics note） | target channel 的 NOTE 经过冲突预处理后得到的单声部、有序预览流；就是 timeline 上显示的歌词 NOTE，每个元素对应条带上的一块 NOTE block。 |
 | operation | 最终映射的一个 `match`、`merge` 或 `drop`。 |
 | suggested | 自动算法产生、尚未由用户确认的 operation。 |
@@ -151,12 +151,16 @@ ruby part、`]`、顶层与 ruby 是文字结构边界，不再限制同一行�
 
 ### 4.1 channel 选择
 
-- 第一次执行 align/map 时，target channel 取当时的 active channel，并写入工程歌词状态；
-- 此后切换 active channel MUST NOT 自动改变 target channel；
-- 用户可显式执行“Map lyrics to current channel”；
-- 切换 target channel 后，旧 channel 上的 confirmed operation 失效，并重新映射；
-- 旧工程没有歌词 channel 时迁移为 channel `0`；
-- KRC 行的 `{N}` track 与 MIDI channel 是不同概念，不参与 target channel 选择；
+- MIDI channel 和 KRC track 均使用 0-based 编号；无 `{N}` 的行属于 channel `0`，显式编号保持原值，不自动减一；
+- KRC 行的 `{N}` 是归属的唯一来源，也用于 ASS track 分组；工程不另存全局歌词 channel；
+- transcription 只替换 channel `0` 的音符，align 只处理 channel `0` 的歌词行，其他行保持不变；
+- channel `0` 的行共同执行 edit mapping；其他 channel 按各自 KRC NOTE 槽顺序执行 faithful map，不运行 DP，也不允许修改映射锚点；
+- 切换 active channel MUST NOT 自动改变歌词行归属；
+- 歌词编辑模式下，用户可右键歌词行选择项目中的 channel；没有单独的 Map lyrics 按钮；
+- 从 channel `0` 移走前，必须把该行有效编辑映射写成 KRC group、`.N` 和 `.+`；无效映射禁止移动；
+- 归属变更清除该行旧音符引用，不影响其他行的人工确认；归属、KRC 结构和锚点变化合为一个 undo；
+- 允许移到没有音符的 channel；faithful map 失败时显示已有原始时间和错误，不改选 channel，也不回退到 edit mapping；
+- 音符编辑自动触发重算；不同 channel 独立映射，允许时间重叠；
 - channel 的 mute、visible、program 和 volume 不影响映射输入。
 
 ### 4.2 NOTE 身份与顺序
@@ -715,7 +719,7 @@ read-only 模式允许把输入 KRC 原样复制到用户选择的路径，即�
 `.nto` 的语义模型必须保存：
 
 - NOTE 的稳定整数 ID 与下一个可用 ID；
-- lyrics target channel；
+- KRC 文本内的逐行 `{N}` channel 归属；
 - 每个 Sound 的 `(onset, raw_length, score?)`；
 - aligner 行级 flagged/problem；
 - `Match / Merge / Drop` operation；
@@ -729,7 +733,7 @@ read-only 模式允许把输入 KRC 原样复制到用户选择的路径，即�
 (global_line_index, natural_sound_index_in_line)
 ```
 
-operation 按 Sound 顺序组成完整 partition。
+edit operation 按 channel `0` 的 Sound 顺序组成完整 partition；其他 channel 不保存 edit operation。
 
 工程的 `lyrics.raw` 按行保存每个 Sound 的 `[onset, raw_length]`，score 保存在同结构的 `scores` 中。不读取或迁移旧的 span-based 对齐数据，不用相邻 onset 间距推算参考时长；旧对齐数据需要重新对齐。
 
@@ -756,7 +760,7 @@ mapping version 变化时：
 - onset 拖动：dirty，一次手势一个 undo；
 - 直接编辑 match/merge/drop：dirty，一次操作一个 undo；
 - 确认低置信度 operation：dirty，可 undo；
-- 选择 target channel：dirty，可 undo；
+- 选择歌词行 channel：dirty，KRC 结构和锚点变化一起 undo；
 - MIDI 编辑引发的自动重算：由 MIDI 编辑自身承担 undo，派生重算不另加一步；
 - filtered NOTE、颜色、置信度和错误摘要变化：派生状态，不单独 dirty。
 
@@ -768,7 +772,7 @@ mapping version 变化时：
 
 ### 15.1 edit 模式 KRC
 
-只有同时满足以下条件才允许导出映射结果 KRC：
+channel `0` 的 edit mapping 只有同时满足以下条件才允许导出映射结果 KRC；其他 channel 保留原有 KRC 结构：
 
 - target channel 已确定且有 NOTE；
 - 有至少一个自然 Sound；
@@ -786,7 +790,7 @@ mapping version 变化时：
 ASS 必须先通过全部 KRC 门禁，并额外满足：
 
 - 至少一个非 drop Sound；
-- 所有派生 span 确定。
+- 所有派生 span 确定；非 `0` channel 通过各自的 faithful 门禁。
 
 ### 15.3 read-only
 

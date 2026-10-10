@@ -15,26 +15,44 @@ from collections.abc import Sequence
 from itertools import groupby
 
 from namioto.karaoke.model import Group, KrcError, Line, Unit, Word
-from namioto.karaoke.operations import Merge, Operation, partition
+from namioto.karaoke.operations import Merge, Operation, partition, remap_operation
 from namioto.karaoke.parser import parse
 from namioto.karaoke.sounds import SoundLine, _chars, _entries, natural_sounds
 from namioto.karaoke.writer import dumps
 
 
-def rebuild(text: str, operations: Sequence[Operation]) -> str:
+def rebuild(text: str, operations: Sequence[Operation], *, line_indices: Sequence[int] | None = None) -> str:
     """The canonical `.krc` for `text` under `operations`, verified to read back the same Sounds.
 
-    `operations` must already be a partition of the natural Sounds; a mapping that is not one, or one
-    whose written `.N` would move a Sound, raises `KrcError` rather than writing a broken file.
+    `operations` must partition the natural Sounds of `line_indices`, or all lines when omitted.
+    Unselected lines keep their literal KRC structure. An incomplete partition or a written `.N`
+    that would move a Sound raises `KrcError` rather than writing a broken file.
     """
     if not text.strip():
         return ""
     lines = natural_sounds(text)
-    plan = partition(list(operations), [len(line.sounds) for line in lines])
+    if line_indices is None:
+        plan = dict(enumerate(partition(list(operations), [len(line.sounds) for line in lines])))
+    else:
+        indices = tuple(line_indices)
+        local = {index: position for position, index in enumerate(indices)}
+        selected = [op for op in operations if all(ref.line in local for ref in op.sounds)]
+        plan = dict(
+            zip(
+                indices,
+                partition(
+                    [remap_operation(op, local) for op in selected], [len(lines[index].sounds) for index in indices]
+                ),
+                strict=True,
+            )
+        )
     lyrics = parse(text)
     line_index = 0
     for chapter in lyrics.chapters:
         for line in chapter.lines:
+            if line_index not in plan:
+                line_index += 1
+                continue
             pieces = []
             for operation in plan[line_index]:
                 for index, (_container, refs) in enumerate(

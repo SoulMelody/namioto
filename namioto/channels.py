@@ -169,7 +169,7 @@ class Channel:
 
     @property
     def label(self) -> str:
-        return self.name or tr("Channel {number}", number=self.channel + 1)
+        return self.name or tr("Channel {number}", number=self.channel)
 
 
 def set_field(channel: Channel, **fields) -> Channel:
