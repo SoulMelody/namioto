@@ -73,6 +73,7 @@ class AssSettings:
     guide_dot_duration_ms: int = 1000
     offset_ms: int = 0
     font_size: int = 96
+    spacing: float = 5
     border: int = 5
     border_furi: int = 3
     margin_h: int = 64
@@ -244,7 +245,7 @@ def _style(name, *, alignment, margin_v, config: _Config, fontname=None, fontsiz
     return (
         f"Style: {name},{fontname},{fontsize},"
         f"&H00FFFFFF,&H000000FF,&H00{_to_ass(config.settings.base_outline_color)},&H00000000,"
-        f"0,0,0,0,100,100,0,0,1,{outline},{shadow},{alignment},"
+        f"0,0,0,0,100,100,{config.settings.spacing:g},0,1,{outline},{shadow},{alignment},"
         f"{config.settings.margin_h},{config.settings.margin_h},{margin_v},1"
     )
 

@@ -284,6 +284,7 @@ SECTIONS: tuple[Section, ...] = (
             ),
             Field("offset_ms", "int", 0, "Subtitle offset (ms)", low=-2147483647, high=2147483647),
             Field("font_size", "int", 96, "Font size", low=1, high=2147483647),
+            Field("spacing", "float", 5, "Font spacing", low=-2147483647, high=2147483647),
             Field("border", "int", 5, "Text border", high=2147483647),
             Field("border_furi", "int", 3, "Ruby border", high=2147483647),
             Field("margin_h", "int", 64, "Horizontal margin", high=2147483647),

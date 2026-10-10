@@ -23,6 +23,29 @@ def test_the_header_carries_the_styles_and_one_events_section():
     assert "template furi" in ass
 
 
+@pytest.mark.parametrize("spacing", [5, 0, -2.5, 7.5])
+def test_font_spacing_reaches_every_style(spacing):
+    settings = AssSettings() if spacing == 5 else AssSettings(spacing=spacing)
+    ass = generate_ass("あ", [[(0.0, 0.5)]], settings=settings)
+    styles = [line for line in ass.splitlines() if line.startswith("Style:")]
+    assert len(styles) == 5
+    assert all(float(line.split(",")[13]) == spacing for line in styles)
+
+
+@pytest.mark.parametrize(
+    ("text", "duration", "expected"),
+    [
+        ("abc", 1.0, r"{\k34}a{\k33}b{\k33}c"),
+        ("abc", 0.02, r"{\k2}abc"),
+        ("きょ", 1.01, r"{\k51}き{\k50}ょ"),
+        ("abc[あ]", 1.0, r"{\k100}abc|<あ"),
+    ],
+)
+def test_multicharacter_sounds_split_only_without_ruby_and_with_enough_time(text, duration, expected):
+    line = _dialogues(text, [[(0.0, duration)]])[0]
+    assert line.endswith(expected)
+
+
 def test_a_ruby_word_writes_its_base_and_readings():
     line = _dialogues("青[あお]", [[(0.0, 0.5), (0.5, 1.0)]])[0]
     assert "\\k50}青|<あ" in line

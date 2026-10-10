@@ -26,7 +26,7 @@ from namioto.ui.form import add_row, field_editor
 
 GROUPS = (
     ("Timing", ("offset_ms", "lead_time_ms", "fade_in_ms", "fade_out_ms", "guide_dot_duration_ms")),
-    ("Font and layout", ("font", "font_size", "margin_h", "margin_v", "ruby_offset")),
+    ("Font and layout", ("font", "font_size", "spacing", "margin_h", "margin_v", "ruby_offset")),
     (
         "Colours and effects",
         (

@@ -127,6 +127,7 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Colours and effects": "颜色与特效",
         "Subtitle offset (ms)": "字幕偏移（毫秒）",
         "Font size": "字号",
+        "Font spacing": "字间距",
         "Text border": "正文描边",
         "Ruby border": "注音描边",
         "Horizontal margin": "水平边距",
