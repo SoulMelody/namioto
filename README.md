@@ -127,6 +127,41 @@ back with that bar removed, and a file written here carries it again - which is 
 expect. Turn it off to exchange plain MIDI with anything else,
 since a file whose notes start before that bar was never WaveTone's and is read as it stands.
 
+## ASS export and automatic updates
+
+ASS export uses the current KRC and MIDI exports as its inputs. GUI and session exports respect
+the editor's current mapping; file exports use the mapping already written into the KRC. KRC
+track numbers select zero-based MIDI channels.
+
+```bash
+namioto-cli ass --krc song.krc --midi song.mid --out song.ass
+namioto-cli ass --krc song.krc --midi song.mid --out song.ass --watch
+namioto-cli ass --session --out song.ass --watch
+namioto-cli ass --session --out song.ass --save-krc song.krc --save-midi song.mid
+namioto-ctl project.export_ass path=song.ass
+```
+
+Session mode requires an editor started with `namioto --ipc`; `--endpoint`, `--token`, `--run`
+and `--timeout` work as they do for `namioto-ctl`. Session outputs are written on the CLI's
+machine; `namioto-ctl project.export_ass` writes on the editor's machine. Intermediate KRC and
+MIDI files are not saved unless their paths are provided. The ctl method also accepts
+`save_krc=PATH` and `save_midi=PATH`.
+
+`--watch` builds immediately, then rebuilds after changes settle. Invalid inputs leave the last
+successful ASS intact and watching continues. A disconnected session reports an error and exits;
+it does not switch to another editor. Press `Ctrl+C` to stop watching.
+
+For `namioto-cli ass`, settings are resolved per field in this order:
+**command-line option > environment variable > current GUI export setting (session mode only)
+> built-in default**. User preferences saved on disk are not used as the CLI fallback.
+Environment variables use `NAMIOTO_ASS_` followed by the uppercase field name: `--font-size`
+corresponds to `NAMIOTO_ASS_FONT_SIZE`, and `--spacing` to `NAMIOTO_ASS_SPACING` (default: 5).
+Use `namioto-cli ass --help` for all options. GUI and ctl exports use GUI settings and ignore
+these environment variables.
+
+File mode enables WaveTone MIDI compatibility by default, removing its leading bar. Use
+`--no-wavetone` for plain MIDI; session mode follows the editor's MIDI export setting.
+
 ## Settings
 
 The gear at the right end of the Mix row opens the settings window, and it is short on purpose: it

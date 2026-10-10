@@ -14,8 +14,7 @@ from dataclasses import dataclass, replace
 from PySide6.QtCore import QThread, Signal
 
 from namioto.karaoke.operations import Match, Merge, Operation, SoundRef, remap_operation
-from namioto.karaoke.parser import parse
-from namioto.karaoke.writer import dumps
+from namioto.karaoke.sounds import channel_lines, subset_text
 from namioto.lyricmap import confidence, constraints, faithful
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import MappingError
@@ -84,31 +83,6 @@ def map_lyrics(
         return _failed(lines, raw, str(error))
     except Exception as error:  # noqa: BLE001 - the worker reports whatever the mapping raised
         return _failed(lines, raw, f"{type(error).__name__}: {error}")
-
-
-def channel_lines(lines):
-    return {
-        channel: tuple(index for index, line in enumerate(lines) if line.track == channel)
-        for channel in dict.fromkeys(line.track for line in lines)
-    }
-
-
-def subset_text(text, indices):
-    lyrics = parse(text)
-    selected = set(indices)
-    index = 0
-    chapters = []
-    for chapter in lyrics.chapters:
-        kept = []
-        for line in chapter.lines:
-            if index in selected:
-                kept.append(line)
-            index += 1
-        if kept:
-            chapter.lines = kept
-            chapters.append(chapter)
-    lyrics.chapters = chapters
-    return dumps(lyrics, dotted=True)
 
 
 def _channel_result(text, lines, raw, scores, flagged, notes, mode, anchors, previous, use_constraints):

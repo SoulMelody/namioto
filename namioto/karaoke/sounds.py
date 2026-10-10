@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from namioto.karaoke.model import LATIN, Group, KrcError, Line, Unit
 from namioto.karaoke.parser import parse
+from namioto.karaoke.writer import dumps
 from namioto.utils import kana_tokens
 
 SMALL_KANA = frozenset("ャュョァィゥェォゃゅょぁぃぅぇぉゎヮ")
@@ -273,6 +274,31 @@ def _collect(
                 last_atom=high,
             )
         )
+
+
+def channel_lines(lines):
+    return {
+        channel: tuple(index for index, line in enumerate(lines) if line.track == channel)
+        for channel in dict.fromkeys(line.track for line in lines)
+    }
+
+
+def subset_text(text, indices):
+    lyrics = parse(text)
+    selected = set(indices)
+    index = 0
+    chapters = []
+    for chapter in lyrics.chapters:
+        kept = []
+        for line in chapter.lines:
+            if index in selected:
+                kept.append(line)
+            index += 1
+        if kept:
+            chapter.lines = kept
+            chapters.append(chapter)
+    lyrics.chapters = chapters
+    return dumps(lyrics, dotted=True)
 
 
 def _chars(unit: Unit) -> list[str]:

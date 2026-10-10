@@ -8,15 +8,18 @@ pumping `processEvents`; `call` and `failure` below wrap that so a test reads as
 
 from __future__ import annotations
 
+import base64
 import os
 import threading
 import time
 
 import pytest
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-from namioto import ipc
+from namioto import ass_cli, ipc, midi, subtitle
 from namioto import settings as store
+from namioto.karaoke import AssSettings
 from namioto.ui.app import MainWindow
 
 TIMEOUT = 5.0
@@ -35,7 +38,9 @@ def window(qt_app, tmp_path_factory):
     ones to be collected, and a headless run cannot afford a pile of live top-level widgets."""
     root = tmp_path_factory.mktemp("ipc")
     previous = os.environ.get(ipc.ENV_RUN)
+    previous_state = os.environ.get("NAMIOTO_STATE")
     os.environ[ipc.ENV_RUN] = str(root / "run.json")
+    os.environ["NAMIOTO_STATE"] = str(root / "state.json")
     built = MainWindow()
     built.resize(1000, 640)
     built.show()
@@ -50,6 +55,10 @@ def window(qt_app, tmp_path_factory):
         os.environ.pop(ipc.ENV_RUN, None)
     else:
         os.environ[ipc.ENV_RUN] = previous
+    if previous_state is None:
+        os.environ.pop("NAMIOTO_STATE", None)
+    else:
+        os.environ["NAMIOTO_STATE"] = previous_state
 
 
 @pytest.fixture(autouse=True)
@@ -381,3 +390,155 @@ def test_lyrics_get_and_set(qt_app, window, endpoint):
     previous = window.lyrics_text
     assert failure(qt_app, endpoint, "lyrics.set", {"text": "あい"}).code == "failed"
     assert window.lyrics_text == previous
+
+
+def _ready_ass(app, window):
+    window.transport.bpm.setValue(60.0)
+    window.view.set_notes(((60, 0.0, 1.0), (62, 1.0, 1.0)))
+    window.lyrics_text = "あ.2"
+    window._load_sounds()
+    deadline = time.monotonic() + TIMEOUT
+    while window.view.lyric_mapping_pending and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.002)
+    assert not window.view.lyric_mapping_pending
+    assert window._verification(subtitle=True).open()
+
+
+def test_ass_source_and_ctl_share_the_gui_export_pipeline(qt_app, window, endpoint, tmp_path, monkeypatch):
+    _ready_ass(qt_app, window)
+    monkeypatch.setattr(window.settings.ass, "spacing", 3)
+    monkeypatch.setenv("NAMIOTO_ASS_SPACING", "99")
+    source = call(qt_app, endpoint, "project.ass_source")
+    assert source["krc"] == window._verification().canonical
+    assert source["settings"]["spacing"] == 3
+    data = base64.b64decode(source["midi"])
+    assert len(midi.read_bytes(data, wavetone=source["wavetone"]).notes) == 2
+    expected = subtitle.build_ass(
+        source["krc"], data, settings=AssSettings(**source["settings"]), wavetone=source["wavetone"]
+    )
+    assert not list(tmp_path.glob("*.krc"))
+    assert not list(tmp_path.glob("*.mid"))
+    result = call(qt_app, endpoint, "project.export_ass", {"path": str(tmp_path / "ctl")})
+    assert result == {"path": str(tmp_path / "ctl.ass")}
+    assert (tmp_path / "ctl.ass").read_text() == expected
+    assert window.export_ass(tmp_path / "gui.ass")
+    assert (tmp_path / "gui.ass").read_text() == expected
+    assert not list(tmp_path.glob("*.krc"))
+    assert not list(tmp_path.glob("*.mid"))
+    call(
+        qt_app,
+        endpoint,
+        "project.export_ass",
+        {
+            "path": str(tmp_path / "saved.ass"),
+            "save_krc": str(tmp_path / "saved.krc"),
+            "save_midi": str(tmp_path / "saved.mid"),
+        },
+    )
+    assert (tmp_path / "saved.krc").read_text() == source["krc"]
+    assert (tmp_path / "saved.mid").read_bytes() == data
+
+
+def test_session_cli_matches_file_cli_with_saved_exports(qt_app, window, endpoint, tmp_path):
+    _ready_ass(qt_app, window)
+    saved_krc, saved_midi = tmp_path / "saved.krc", tmp_path / "saved.mid"
+    session_ass, file_ass = tmp_path / "session.ass", tmp_path / "file.ass"
+    assert (
+        _run(
+            qt_app,
+            lambda: ass_cli.main(
+                [
+                    "--session",
+                    "--endpoint",
+                    endpoint.address,
+                    "--out",
+                    str(session_ass),
+                    "--save-krc",
+                    str(saved_krc),
+                    "--save-midi",
+                    str(saved_midi),
+                    "--spacing",
+                    "8",
+                ]
+            ),
+        )
+        == 0
+    )
+    compatibility = "--wavetone" if window.settings.midi.wavetone else "--no-wavetone"
+    assert (
+        ass_cli.main(
+            [
+                "--krc",
+                str(saved_krc),
+                "--midi",
+                str(saved_midi),
+                "--out",
+                str(file_ass),
+                "--spacing",
+                "8",
+                compatibility,
+            ]
+        )
+        == 0
+    )
+    assert session_ass.read_bytes() == file_ass.read_bytes()
+
+
+def test_session_watch_rebuilds_after_an_edit_and_exits_on_disconnect(qt_app, window, endpoint, tmp_path):
+    _ready_ass(qt_app, window)
+    target = tmp_path / "watched.ass"
+    seen = []
+
+    def observe():
+        if target.exists():
+            text = target.read_bytes()
+            if not seen:
+                seen.append(text)
+                window.view.set_notes(((60, 0.0, 1.0), (62, 2.0, 1.0)))
+            elif text != seen[0]:
+                seen.append(text)
+                assert not window.view.lyric_mapping_pending
+                window.stop_ipc()
+                return
+        QTimer.singleShot(10, observe)
+
+    QTimer.singleShot(10, observe)
+    result = _run(
+        qt_app,
+        lambda: ass_cli.main(
+            [
+                "--session",
+                "--endpoint",
+                endpoint.address,
+                "--out",
+                str(target),
+                "--watch",
+            ]
+        ),
+    )
+    assert result == 1
+    assert len(seen) == 2
+    assert target.read_bytes() == seen[1]
+
+
+@pytest.mark.parametrize("keep_events", [True, False])
+def test_polling_clients_can_discard_queued_events(qt_app, endpoint, keep_events):
+    with ipc.Client(endpoint, keep_events=keep_events) as client:
+        assert _run(qt_app, lambda: client.request("ping")) == {"pong": True}
+        assert bool(client._events) is keep_events
+
+
+def test_ass_revision_tracks_mapping_readiness_but_not_playback(qt_app, window, endpoint):
+    initial = call(qt_app, endpoint, "state.get")["subtitle"]["revision"]
+    _ready_ass(qt_app, window)
+    state = call(qt_app, endpoint, "state.get")["subtitle"]
+    assert state["revision"] > initial
+    assert state["pending"] is False
+    call(qt_app, endpoint, "transport.seek", {"seconds": 1})
+    assert call(qt_app, endpoint, "state.get")["subtitle"]["revision"] == state["revision"]
+    window.view.lyric_mapping_pending = True
+    assert failure(qt_app, endpoint, "project.ass_source").code == "failed"
+    assert failure(qt_app, endpoint, "project.export_ass", {"path": "unused.ass"}).code == "failed"
+    window._set_lyric_mapping_pending(False)
+    assert call(qt_app, endpoint, "state.get")["subtitle"]["revision"] > state["revision"]

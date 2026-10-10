@@ -15,14 +15,16 @@ broadcast as a fresh `state`, a play, pause or stop as `transport`, and a status
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import math
 from typing import Any
 
-from namioto import __version__, ipc, midi, project
+from namioto import __version__, ipc, midi, project, subtitle
 from namioto.channels import CHANNEL_COUNT, Channel, free_channel
 from namioto.channels import set_field as channel_set_field
 from namioto.ipc import IpcError
+from namioto.karaoke import KrcError
 from namioto.ui.roll import PITCH_MAX, PITCH_MIN
 
 MATCH_SECONDS = 1e-3  # how close two notes have to be to count as the same one when removing
@@ -106,6 +108,7 @@ class WindowBridge:
         self.server = server
         self.dispatcher = server.dispatcher
         self._connections: list[tuple] = []
+        self._subtitle_revision = 0
         self._register()
         self._watch()
 
@@ -258,6 +261,17 @@ class WindowBridge:
             params={"path": "the .krc file"},
         )
         add(
+            "project.export_ass",
+            self.export_ass,
+            summary="Build ASS from the current KRC and MIDI exports using GUI settings",
+            params={"path": "the .ass file", "save_krc?": "KRC export path", "save_midi?": "MIDI export path"},
+        )
+        add(
+            "project.ass_source",
+            self.ass_source,
+            summary="Snapshot the current KRC, base64 MIDI and ASS settings without writing files",
+        )
+        add(
             "audio.open",
             self.open_audio,
             summary="Start an untitled document from an audio file",
@@ -284,6 +298,7 @@ class WindowBridge:
             window.view.channels_changed,
             window.transport.bpm.valueChanged,
             window.view.lyrics_changed,
+            window.subtitle_changed,
         ):
             signal.connect(self._changed)
             self._connections.append((signal, self._changed))
@@ -303,6 +318,7 @@ class WindowBridge:
     # --- events -----------------------------------------------------------
 
     def _changed(self, *_args) -> None:
+        self._subtitle_revision += 1
         self.server.broadcast("state", self.get_state({}))
 
     def _transport_changed(self, _playing: bool) -> None:
@@ -344,6 +360,10 @@ class WindowBridge:
                 "loaded": window.song.is_loaded,
             },
             "transport": self._transport(),
+            "subtitle": {
+                "revision": self._subtitle_revision,
+                "pending": bool(view.lyric_mapping_pending),
+            },
             "document": {
                 "notes": len(view.notes()),
                 "active_channel": view.active_channel,
@@ -718,6 +738,26 @@ class WindowBridge:
         if not self.window.export_krc(path):
             raise IpcError("failed", "the lyrics could not be written")
         return {"path": path}
+
+    def export_ass(self, params: dict) -> dict:
+        path = subtitle.ass_path(_text(params, "path"))
+        paths = {name: _text(params, name) for name in ("save_krc", "save_midi") if name in params}
+        if not self.window.export_ass(path, **paths):
+            raise IpcError("failed", self.window.statusBar().currentMessage())
+        return {"path": str(path), **paths}
+
+    def ass_source(self, _params: dict) -> dict:
+        try:
+            krc, data = self.window.ass_source()
+        except (KrcError, ValueError, OSError) as error:
+            raise IpcError("failed", str(error)) from error
+        return {
+            "krc": krc,
+            "midi": base64.b64encode(data).decode("ascii"),
+            "settings": vars(self.window.settings.ass).copy(),
+            "wavetone": self.window.settings.midi.wavetone,
+            "revision": self._subtitle_revision,
+        }
 
     def open_audio(self, params: dict) -> dict:
         path = _text(params, "path")

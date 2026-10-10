@@ -18,6 +18,7 @@ from WaveTone and is read as it stands.
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 from dataclasses import dataclass
@@ -56,7 +57,19 @@ def read(path: str | Path, *, wavetone: bool = False, limit: int = CHANNEL_COUNT
 
     Raises OSError, EOFError or ValueError for a file that is not MIDI, or is cut short.
     """
-    mid = _load(path)
+    return _read(_load(path), wavetone=wavetone, limit=limit)
+
+
+def read_bytes(data: bytes, *, wavetone: bool = False, limit: int = CHANNEL_COUNT) -> Imported:
+    """Read the same MIDI format from an in-memory export."""
+    try:
+        mid = mido.MidiFile(file=io.BytesIO(data), charset="utf-8")
+    except UnicodeDecodeError:
+        mid = mido.MidiFile(file=io.BytesIO(data), charset="latin1")
+    return _read(mid, wavetone=wavetone, limit=limit)
+
+
+def _read(mid: mido.MidiFile, *, wavetone: bool, limit: int) -> Imported:
     ppq = max(1, int(mid.ticks_per_beat))
     tempos = _tempo_map(mid)
     lead_in = LEAD_IN_BEATS * ppq if wavetone else 0
@@ -143,6 +156,17 @@ def write(path: str | Path, channels, notes, bpm: float, *, wavetone: bool = Fal
     drawn on the roll's grid lands exactly on the tick that grid stands for and one taken from the
     audio keeps the time it has.
     """
+    return _save(path, _build(channels, notes, bpm, wavetone=wavetone))
+
+
+def to_bytes(channels, notes, bpm: float, *, wavetone: bool = False) -> bytes:
+    """Export MIDI without requiring an intermediate file."""
+    stream = io.BytesIO()
+    _build(channels, notes, bpm, wavetone=wavetone).save(file=stream)
+    return stream.getvalue()
+
+
+def _build(channels, notes, bpm: float, *, wavetone: bool) -> mido.MidiFile:
     ppq = PPQ
     grid = max(1.0, float(bpm))
     seconds_per_beat = 60.0 / grid
@@ -185,7 +209,7 @@ def write(path: str | Path, channels, notes, bpm: float, *, wavetone: bool = Fal
         mid.tracks.append(written)
     if not mid.tracks:
         mid.tracks.append(mido.MidiTrack(head))  # a file with no channel still needs the tempo
-    return _save(path, mid)
+    return mid
 
 
 def _tick(seconds: float, seconds_per_beat: float, ppq: int) -> int:

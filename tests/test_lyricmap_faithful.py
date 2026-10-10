@@ -47,6 +47,14 @@ def test_notes_running_out_leave_no_time():
     assert read("あい", _notes((0.0, 1.0))) == [[(0.0, 1.0), None]]
 
 
+def test_a_multi_note_sound_requires_all_of_its_note_slots():
+    notes = _notes((0.0, 1.0))
+    spans, ids = lay_out("あ.2い", notes)
+    assert spans == [[None, None]]
+    assert ids == [[(), ()]]
+    assert faithful_gate(spans, notes).counts() == {"incomplete_alignment": 1}
+
+
 def test_an_input_dot_is_respected_even_where_edit_mode_ignores_it():
     assert read("あ.0", _notes((0.0, 1.0))) == [[None]]
 

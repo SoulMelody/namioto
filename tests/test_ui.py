@@ -4880,6 +4880,26 @@ def subtitle_window(own_window, tmp_path):
     return own_window
 
 
+def test_edit_mode_ass_matches_its_persisted_krc_and_midi(subtitle_window, tmp_path):
+    from namioto import subtitle
+
+    window = subtitle_window
+    assert window._lyric_mode == "edit"
+    krc_path, midi_path = tmp_path / "current.krc", tmp_path / "current.mid"
+    assert window.export_ass(tmp_path / "current.ass", save_krc=krc_path, save_midi=midi_path)
+    assert window.export_krc(tmp_path / "separate.krc")
+    assert window.export_midi(tmp_path / "separate.mid")
+    assert krc_path.read_bytes() == (tmp_path / "separate.krc").read_bytes()
+    assert midi_path.read_bytes() == (tmp_path / "separate.mid").read_bytes()
+    expected = subtitle.build_ass(
+        krc_path.read_text(),
+        midi_path.read_bytes(),
+        settings=window._ass_settings(),
+        wavetone=window.settings.midi.wavetone,
+    )
+    assert (tmp_path / "current.ass").read_text() == expected
+
+
 def test_the_export_button_writes_an_ass_subtitle(subtitle_window, monkeypatch, tmp_path) -> None:
     own_window = subtitle_window
 
@@ -4928,13 +4948,13 @@ def test_cancelled_or_failed_subtitle_export_does_not_remember_options(subtitle_
     monkeypatch.setattr(AssDialog, "exec", options)
     monkeypatch.setattr(QFileDialog, "getSaveFileName", path)
     if stop == "write":
-        monkeypatch.setattr("namioto.ui.app.write_text", fail)
+        monkeypatch.setattr("namioto.subtitle.write_text", fail)
     if stop == "build":
 
         def fail_build(*args, **kwargs):
             raise ValueError("invalid subtitle")
 
-        monkeypatch.setattr("namioto.ui.app.generate_ass", fail_build)
+        monkeypatch.setattr("namioto.subtitle.generate_ass", fail_build)
     assert not subtitle_window._on_export_ass()
     assert seen == (["options"] if stop == "options" else ["options", "path"])
     assert store.to_dict(subtitle_window.settings) == original
@@ -6066,7 +6086,7 @@ def test_faithful_ass_export_uses_krc_spans_without_edit_operations(own_window, 
     own_window._load_sounds()
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_operations == ()
-    assert own_window._derived_spans()[0][0] == (0.0, 2.0)
+    assert own_window.view.lyric_times[0][0] == (0.0, 2.0)
     assert own_window.export_ass(tmp_path / "lyrics.ass")
     assert (tmp_path / "lyrics.ass").exists()
 

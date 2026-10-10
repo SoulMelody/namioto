@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Qt-free task entry point; load only the analysis command selected by the caller."""
+"""Qt-free task entry point; load only the task selected by the caller."""
 
 from __future__ import annotations
 
@@ -13,12 +13,15 @@ COMMANDS = {
     "spectrum": "namioto.analysis.spectrum",
     "game": "namioto.analysis.game",
     "align": "namioto.analysis.align",
+    "ass": "namioto.ass_cli",
 }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="namioto-cli", description="Run Namioto tasks without the GUI")
-    parser.add_argument("command", choices=COMMANDS, help="analysis command to run")
+    parser = argparse.ArgumentParser(
+        prog="namioto-cli", description="Run Namioto tasks and automation without loading the GUI"
+    )
+    parser.add_argument("command", choices=COMMANDS, help="task to run")
     parser.add_argument("args", nargs=argparse.REMAINDER, help="command arguments; use COMMAND --help for details")
     args = parser.parse_args(argv)
     return importlib.import_module(COMMANDS[args.command]).main(args.args)

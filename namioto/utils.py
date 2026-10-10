@@ -62,12 +62,17 @@ def file_stamp(path: str | Path) -> tuple[int, int]:
 
 def write_text(path: str | Path, text: str) -> Path:
     """Write a whole file at once, so a half-written one never exists to be read."""
+    return write_bytes(path, text.encode("utf-8"))
+
+
+def write_bytes(path: str | Path, data: bytes) -> Path:
+    """Atomically replace a file with a complete binary export."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, name = tempfile.mkstemp(dir=target.parent, prefix=f"{target.name}.", suffix=".tmp")
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(text)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
         os.replace(name, target)
     except BaseException:
         Path(name).unlink(missing_ok=True)

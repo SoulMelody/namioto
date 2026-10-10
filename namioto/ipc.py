@@ -345,13 +345,14 @@ class Client:
     """A blocking JSON-lines client over a unix socket or TCP.
 
     One call opens the connection; `request` sends one method and waits for its answer, skipping
-    (and keeping) any event that arrives in between, and `events` yields those and everything the
-    server pushes afterwards.
+    any event that arrives in between. Events are kept unless `keep_events=False`, and `events`
+    yields those and everything the server pushes afterwards.
     """
 
-    def __init__(self, endpoint: Endpoint, timeout: float = CONNECT_TIMEOUT):
+    def __init__(self, endpoint: Endpoint, timeout: float = CONNECT_TIMEOUT, *, keep_events: bool = True):
         self.endpoint = endpoint
         self.timeout = timeout
+        self.keep_events = keep_events
         self._socket: socket.socket | None = None
         self._stream: Any = None
         self._id = 0
@@ -401,7 +402,8 @@ class Client:
                     raise IpcError("closed", "the server closed the connection")
                 reply = decode(line)
                 if "event" in reply:
-                    self._events.append(reply)
+                    if self.keep_events:
+                        self._events.append(reply)
                     continue
                 if reply.get("id") != ident:
                     continue  # a late answer to a request that already timed out

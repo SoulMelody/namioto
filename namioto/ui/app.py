@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from namioto import i18n, ipc, lyrics, midi, params, project
+from namioto import i18n, ipc, lyrics, midi, params, project, subtitle
 from namioto import settings as store
 from namioto import state as window_state
 from namioto.analysis import bpm
@@ -55,13 +55,13 @@ from namioto.analysis.spectrum import CHANNEL_MODES, NoteSpectrum
 from namioto.channels import Channel, free_channel
 from namioto.channels import audible as audible_channels
 from namioto.channels import set_field as channel_set_field
-from namioto.karaoke import AssSettings, KrcError, generate_ass
+from namioto.karaoke import AssSettings, KrcError
 from namioto.karaoke.canonical import rebuild
 from namioto.karaoke.operations import Drop, Match, Merge, SoundRef, remap_operation
 from namioto.karaoke.parser import parse
-from namioto.karaoke.sounds import natural_sounds
+from namioto.karaoke.sounds import channel_lines, natural_sounds, subset_text
 from namioto.karaoke.writer import dumps
-from namioto.lyricmap import Raw, constraints, faithful, faithful_gate, sound_spans, verify
+from namioto.lyricmap import Raw, constraints, faithful, faithful_gate, verify
 from namioto.lyricmap.editing import drop_sound
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import Problem
@@ -77,7 +77,7 @@ from namioto.ui.controls import ControlArea, EditBar, MixBar, TransportBar
 from namioto.ui.ipc_commands import WindowBridge
 from namioto.ui.ipc_server import IpcServer
 from namioto.ui.loading import LoadingThread
-from namioto.ui.lyric_map import LyricMapper, channel_lines, subset_text
+from namioto.ui.lyric_map import LyricMapper
 from namioto.ui.lyrics_dialog import LyricsDialog, LyricsWatcher
 from namioto.ui.midi_dialog import MidiImportDialog
 from namioto.ui.open_dialog import OpenAudioDialog
@@ -88,7 +88,6 @@ from namioto.ui.spectrogram import SpectrumLoader
 from namioto.ui.strips import SoundStrip
 from namioto.ui.text import note_name
 from namioto.ui.transcription_dialog import TranscriptionDialog
-from namioto.utils import write_text
 
 POSITION_INTERVAL_MS = 40
 SPEED_SETTLE_MS = 100
@@ -219,6 +218,7 @@ class SongLoader(LoadingThread):
 
 class MainWindow(QMainWindow):
     transport_changed = Signal(bool)  # whether the transport is running, on every change
+    subtitle_changed = Signal()
 
     def __init__(self, settings=None, overrides: dict | None = None):
         super().__init__()
@@ -721,6 +721,7 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(self, settings) -> None:
         """The settings window applied: the program's own preferences take over at once."""
         self.settings = settings
+        self.subtitle_changed.emit()
         self._seed_bindings(lambda binding: binding.model is None)
         self._apply_theme()
         self._update_status()
@@ -1100,26 +1101,6 @@ class MainWindow(QMainWindow):
         summary = ", ".join(f"{code} ×{count}" for code, count in sorted(counts.items()))
         return i18n.tr("The mapping cannot be exported: {problems}", problems=summary)
 
-    def _derived_spans(self):
-        """The per-Sound times the mapping derives, as the subtitle reads them."""
-        lines = list(self.view.lyric_lines)
-        rows = [()] * len(lines)
-        for channel, indices in channel_lines(lines).items():
-            stream = resolve(tuple(TimedNote(*note) for note in self._target_notes(channel))).stream
-            if self._lyric_mode == "read" or channel != 0:
-                spans = faithful.read(subset_text(self.lyrics_text, indices), stream)
-            else:
-                local = {index: position for position, index in enumerate(indices)}
-                operations = [
-                    remap_operation(op, local)
-                    for op in self.view.lyric_operations
-                    if all(ref.line in local for ref in op.sounds)
-                ]
-                spans = sound_spans([len(lines[index].sounds) for index in indices], operations, stream)
-            for position, index in enumerate(indices):
-                rows[index] = tuple((None, None) if span is None else (span[0], span[1]) for span in spans[position])
-        return [list(row) for row in rows]
-
     def _on_export_ass(self) -> bool:
         """Write the lyrics out as a karaoke subtitle, timed by the mapping the strip shows."""
         if not self.lyrics_text or not self.view.lyric_lines:
@@ -1151,26 +1132,39 @@ class MainWindow(QMainWindow):
             return False
         self.settings.ass = selected.ass
         self.settings_store.flush()
+        self.subtitle_changed.emit()
         return True
 
-    def export_ass(self, path: str | Path, *, settings: AssSettings | None = None) -> bool:
-        """Write the karaoke subtitle to `path`, adding the `.ass` suffix if missing."""
-        target = Path(path)
-        if target.suffix.lower() != ".ass":
-            target = target.with_name(target.name + ".ass")
+    def ass_source(self) -> tuple[str, bytes]:
+        """Export the current KRC first, then MIDI, as one GUI-thread snapshot."""
         gate = self._verification(subtitle=True)
         if not gate.open():
-            self.statusBar().showMessage(self._gate_message(gate))
-            return False
+            raise ValueError(self._gate_message(gate))
+        krc = gate.canonical
+        data = midi.to_bytes(**self._midi_export())
+        return krc, data
+
+    def export_ass(
+        self,
+        path: str | Path,
+        *,
+        settings: AssSettings | None = None,
+        save_krc: str | Path | None = None,
+        save_midi: str | Path | None = None,
+    ) -> bool:
+        """Build the subtitle from the current KRC and MIDI exports, optionally saving both."""
+        target = subtitle.ass_path(path)
         try:
-            text = generate_ass(gate.canonical, self._derived_spans(), settings=settings or self._ass_settings())
-        except (KrcError, ValueError) as error:
+            krc, data = self.ass_source()
+            text = subtitle.build_ass(
+                krc, data, settings=settings or self._ass_settings(), wavetone=self.settings.midi.wavetone
+            )
+            subtitle.save_export(target, krc, data, text, save_krc=save_krc, save_midi=save_midi)
+        except (KrcError, ValueError, EOFError) as error:
             self.statusBar().showMessage(i18n.tr("The subtitle could not be built: {error}", error=error))
             return False
-        try:
-            write_text(target, text)
-        except OSError as failure:
-            self.statusBar().showMessage(i18n.tr("Subtitle file could not be written: {error}", error=failure))
+        except OSError as error:
+            self.statusBar().showMessage(i18n.tr("Subtitle file could not be written: {error}", error=error))
             return False
         self.statusBar().showMessage(i18n.tr("Exported {name}", name=target.name))
         return True
@@ -1370,8 +1364,7 @@ class MainWindow(QMainWindow):
         ]
         self.view.replace(channels.values(), kept + arriving, "Merge MIDI")
 
-    def export_midi(self, path: str | Path) -> bool:
-        """Write every channel out as MIDI, on the project's own tempo."""
+    def _midi_export(self) -> dict:
         notes = tuple(
             project.Note(
                 self.view.to_seconds(note.start),
@@ -1381,18 +1374,24 @@ class MainWindow(QMainWindow):
             )
             for note in self.view.notes()
         )
+        return {
+            "channels": tuple(self.view.channels),
+            "notes": notes,
+            "bpm": self.project_settings.tempo.bpm,
+            "wavetone": self.settings.midi.wavetone,
+        }
+
+    def export_midi(self, path: str | Path) -> bool:
+        """Write every channel out as MIDI, on the project's own tempo."""
+        exported = self._midi_export()
         try:
-            midi.write(
-                path,
-                tuple(self.view.channels),
-                notes,
-                self.project_settings.tempo.bpm,
-                wavetone=self.settings.midi.wavetone,
-            )
+            midi.write(path, **exported)
         except OSError as error:
             self.statusBar().showMessage(i18n.tr("MIDI file could not be written: {error}", error=error))
             return False
-        self.statusBar().showMessage(i18n.tr("Exported {name} — {notes} notes", name=Path(path).name, notes=len(notes)))
+        self.statusBar().showMessage(
+            i18n.tr("Exported {name} — {notes} notes", name=Path(path).name, notes=len(exported["notes"]))
+        )
         return True
 
     def _open_transcription(self) -> None:
@@ -1552,6 +1551,7 @@ class MainWindow(QMainWindow):
         self.transport.export_krc_action.setEnabled(not pending)
         self.transport.export_ass_action.setEnabled(not pending)
         self._lyric_map_status.setVisible(pending)
+        self.subtitle_changed.emit()
 
     def _invalidate_lyric_mapping(self) -> None:
         self._lyric_map_revision += 1
