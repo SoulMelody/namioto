@@ -18,8 +18,8 @@ import contextlib
 import os
 from pathlib import Path
 
-from PyQt6.QtCore import QObject
-from PyQt6.QtNetwork import QHostAddress, QLocalServer, QLocalSocket, QTcpServer, QTcpSocket
+from PySide6.QtCore import QObject
+from PySide6.QtNetwork import QHostAddress, QLocalServer, QLocalSocket, QTcpServer, QTcpSocket
 
 from namioto import __version__
 from namioto.ipc import APP, LINE_LIMIT, PROTOCOL, Dispatcher, Endpoint, decode, encode, error_for, split_tcp

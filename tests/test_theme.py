@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QIcon, QPalette
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QPalette
+from PySide6.QtWidgets import QApplication
 
 from namioto.analysis.spectrum import NOTE_COUNT, NoteSpectrum
 from namioto.ui import icons, theme

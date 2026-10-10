@@ -8,9 +8,9 @@ and the roll owns the single undo step committed when a gesture ends.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPen
-from PyQt6.QtWidgets import QMenu
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtWidgets import QMenu
 
 from namioto.i18n import tr
 from namioto.karaoke.operations import SoundRef
@@ -30,12 +30,12 @@ MAIN_BOTTOM = 36
 class SoundStrip(ViewportStrip):
     """Independent Sound blocks, grouped by NOTE, and position-only grey Drop labels."""
 
-    lyric_action_requested = pyqtSignal(str, int, int)
-    save_map_requested = pyqtSignal()
-    discard_map_requested = pyqtSignal()
-    mapping_drag_started = pyqtSignal()
-    mapping_preview_requested = pyqtSignal(object)
-    mapping_drag_finished = pyqtSignal(bool)
+    lyric_action_requested = Signal(str, int, int)
+    save_map_requested = Signal()
+    discard_map_requested = Signal()
+    mapping_drag_started = Signal()
+    mapping_preview_requested = Signal(object)
+    mapping_drag_finished = Signal(bool)
 
     def __init__(self, view):
         super().__init__(view)

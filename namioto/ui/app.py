@@ -32,9 +32,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from PyQt6.QtCore import QByteArray, QEvent, QLibraryInfo, QProcess, Qt, QThread, QTimer, QTranslator, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QByteArray, QEvent, QLibraryInfo, QProcess, Qt, QThread, QTimer, QTranslator, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
@@ -179,7 +179,7 @@ class _Binding:
 class TempoLoader(LoadingThread):
     """Estimates the tempo of a file off the GUI thread, with the chosen algorithm."""
 
-    loaded = pyqtSignal(object)
+    loaded = Signal(object)
 
     def __init__(
         self,
@@ -208,14 +208,14 @@ class TempoLoader(LoadingThread):
 class SongLoader(LoadingThread):
     """Decodes the file for playback off the GUI thread."""
 
-    loaded = pyqtSignal(object, int)
+    loaded = Signal(object, int)
 
     def load(self) -> None:
         self.loaded.emit(*load_song(self.path))
 
 
 class MainWindow(QMainWindow):
-    transport_changed = pyqtSignal(bool)  # whether the transport is running, on every change
+    transport_changed = Signal(bool)  # whether the transport is running, on every change
 
     def __init__(self, settings=None, overrides: dict | None = None):
         super().__init__()

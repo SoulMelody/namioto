@@ -9,8 +9,8 @@ switch needs no walking of the widget tree.
 from __future__ import annotations
 
 import qtawesome as qta
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QIcon, QIconEngine, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QIcon, QIconEngine, QPainter, QPalette, QPixmap
 
 from namioto.ui import theme
 

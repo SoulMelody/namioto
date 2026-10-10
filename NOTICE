@@ -24,8 +24,8 @@ Two separate obligations force a copyleft, AGPLv3-compatible license on the whol
    (https://essentia.upf.edu, AGPL-3.0). Keeping the program under AGPLv3 stays compliant
    whether or not that module is judged to be a derivative of Essentia's implementation.
 
-In addition, the GUI links PyQt6, which Riverbank licenses under GPL-3.0 (or a commercial
-license), so a permissive license was never an option for this program.
+The GUI uses PySide6, available under LGPL-3.0/GPL-3.0 or a commercial license. The program's
+AGPL-3.0 license is required by the NoteDigger and Essentia-derived code described above.
 
 
 Third-party code and assets
@@ -126,9 +126,9 @@ Third-party code and assets
 ### Dependencies (all AGPL-compatible)
 | Component | License |
 | --- | --- |
-| PyQt6 | GPL-3.0-only (or commercial) |
-| Qt 6 runtime (pyqt6-qt6) | LGPL-3.0 |
-| pyqt6-sip | BSD-2-Clause |
+| PySide6 | LGPL-3.0-only, GPL-3.0-only (or commercial) |
+| Qt 6 runtime | LGPL-3.0 |
+| shiboken6 | LGPL-3.0-only (or commercial) |
 | librosa | ISC |
 | onnxruntime | MIT |
 | numpy, scipy, scikit-learn, joblib, pooch, soundfile | BSD-3-Clause |

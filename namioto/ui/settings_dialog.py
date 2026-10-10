@@ -14,9 +14,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -47,8 +47,8 @@ ADVANCED = {
 class SettingsStore(QObject):
     """The settings the program runs with, written out once the changes stop coming."""
 
-    changed = pyqtSignal(object)
-    failed = pyqtSignal(str)
+    changed = Signal(object)
+    failed = Signal(str)
 
     def __init__(self, settings, path=None, parent=None):
         super().__init__(parent)
@@ -81,7 +81,7 @@ class SettingsStore(QObject):
 class SettingsDialog(QDialog):
     """Every preference, on a page per section, over a copy that is only handed over when applied."""
 
-    applied = pyqtSignal(object)
+    applied = Signal(object)
 
     def __init__(
         self,

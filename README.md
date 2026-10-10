@@ -245,7 +245,7 @@ namioto/karaoke/      the .krc model, its parser, its writer, its timeline and t
 namioto/utils.py      the app's directories, a file's identity, kana to romaji tokens, no Qt
 namioto/i18n.py       the language catalogs and the language in force, no Qt
 LICENSE-CC-BY-NC-SA-4.0.txt  the license text of the downloaded TempoCNN model
-namioto/ui/           PyQt6 editor (app.py: window, controls.py: control bars,
+namioto/ui/           PySide6 editor (app.py: window, controls.py: control bars,
                       roll.py: the view, its items, undo, ruler and keyboard, strips.py: the
                       lyrics strip, lyric_map.py: the lyrics-to-notes mapping and its thread,
                       blocks.py: the pointer grammar both editors share, viewport.py: the strips
@@ -273,8 +273,8 @@ build.sh              packaging script
 
 Namioto is licensed under the **GNU Affero General Public License v3.0** — see [LICENSE](LICENSE).
 The AGPL is required because the program reuses code from the GPL-3.0 licensed NoteDigger
-project, reimplements the AGPL-3.0 licensed Essentia TempoCNN front end, and links PyQt6
-(GPL-3.0 or commercial). See [NOTICE](NOTICE) for the full reasoning and the attributions.
+project and reimplements the AGPL-3.0 licensed Essentia TempoCNN front end. See [NOTICE](NOTICE)
+for the full reasoning and the attributions.
 
 None of the program's models is AGPL, and none of them is part of a build: `deeptemp-k16-3.onnx`
 comes from Essentia/TempoCNN and the aligners are converted from Meta's MMS and NextFire's yohane

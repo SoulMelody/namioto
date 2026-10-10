@@ -8,7 +8,7 @@ import time
 from collections.abc import Sequence
 
 import numpy as np
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from namioto import _audio
 from namioto.playback import A4, SAMPLE_RATE, TAIL, render_notes
@@ -54,7 +54,7 @@ def find_port(port_names: Sequence[str], wanted: str = "") -> int | None:
 class NotePlayer(QObject):
     """What the window drives: a prepared program, a transport and an audition."""
 
-    finished = pyqtSignal()
+    finished = Signal()
     silent = False  # the bars disable the MIDI control around a player that cannot sound
 
     def __init__(self, parent=None):

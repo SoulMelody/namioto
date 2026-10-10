@@ -15,8 +15,8 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -42,9 +42,9 @@ LOG_HEIGHT = 120
 class Aligner(LoadingThread):
     """One pass of the forced aligner over the whole audio: the times, and the lines it doubts."""
 
-    progress = pyqtSignal(int, int)
-    aligned = pyqtSignal(object)
-    message = pyqtSignal(str)
+    progress = Signal(int, int)
+    aligned = Signal(object)
+    message = Signal(str)
 
     def __init__(
         self,
@@ -127,7 +127,7 @@ class Aligner(LoadingThread):
 class AlignDialog(QDialog):
     """The model choice, the run, and what it found. The result is handed over as it arrives."""
 
-    aligned = pyqtSignal(object, str, object)
+    aligned = Signal(object, str, object)
 
     def __init__(self, audio: str, text: str, tempo: float, parent=None, offset: float = 0.0):
         super().__init__(parent)

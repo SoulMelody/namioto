@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from namioto.karaoke.operations import Match, Merge, Operation
 from namioto.lyricmap import confidence, constraints, faithful
@@ -196,8 +196,8 @@ def _tables(lines, operations, readings, stream) -> tuple:
 
 
 class LyricMapper(QThread):
-    mapped = pyqtSignal(object)
-    failed = pyqtSignal(str)
+    mapped = Signal(object)
+    failed = Signal(str)
 
     def __init__(self, revision, request, parent=None):
         super().__init__(parent)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QPointF
+from PySide6.QtCore import QPointF
 
 CLICK_SLOP_PX = 4
 

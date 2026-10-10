@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtGui import QColor, QGuiApplication, QPalette, QStyleHints
-from PyQt6.QtWidgets import QApplication, QStyleFactory
+from PySide6.QtGui import QColor, QGuiApplication, QPalette, QStyleHints
+from PySide6.QtWidgets import QApplication, QStyleFactory
 
 # One body colour per channel, picked by channel number; the first is the default channel's own.
 NOTE_PALETTE = (

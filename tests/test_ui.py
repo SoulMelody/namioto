@@ -16,8 +16,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QProcess, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import (
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QProcess, QRectF, Qt, Signal
+from PySide6.QtGui import (
     QColor,
     QContextMenuEvent,
     QFocusEvent,
@@ -30,8 +30,8 @@ from PyQt6.QtGui import (
     QPalette,
     QWheelEvent,
 )
-from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import (
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
@@ -5003,7 +5003,7 @@ def test_ass_numeric_options_enforce_their_lower_bounds(own_window):
 
 
 def test_ass_options_validate_and_pick_rgb_colours(own_window, monkeypatch):
-    from PyQt6.QtWidgets import QColorDialog
+    from PySide6.QtWidgets import QColorDialog
 
     dialog = AssDialog(own_window.settings, own_window)
     dialog.editors["lead_time_ms"].setValue(0)
@@ -6489,9 +6489,9 @@ def test_exporting_leaves_the_krc_alone(own_window, monkeypatch, tmp_path) -> No
 
 
 class _ManualLyricMapper(QObject):
-    mapped = pyqtSignal(object)
-    failed = pyqtSignal(str)
-    finished = pyqtSignal()
+    mapped = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
     instances: list = []
 
     def __init__(self, revision, request, parent=None):

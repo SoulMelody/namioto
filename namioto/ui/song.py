@@ -13,7 +13,7 @@ from pathlib import Path
 
 import librosa
 import numpy as np
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from namioto import _audio
 
@@ -31,8 +31,8 @@ def load_song(path: str | Path) -> tuple[np.ndarray, int]:
 class SongPlayer(QObject):
     """The loaded audio file, carrying the transport surface the window drives."""
 
-    finished = pyqtSignal()
-    failed = pyqtSignal(str)
+    finished = Signal()
+    failed = Signal(str)
 
     def __init__(self, parent=None, sample_rate: int = ENGINE_RATE):
         super().__init__(parent)

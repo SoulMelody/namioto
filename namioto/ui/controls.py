@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PyQt6.QtCore import QObject, QPoint, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFontMetrics, QPainter, QPalette
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QObject, QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QFontMetrics, QPainter, QPalette
+from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
@@ -161,7 +161,7 @@ class AbsoluteSlider(QSlider):
 class ValueSlider(QWidget):
     """A caption, a horizontal slider and the current value."""
 
-    value_changed = pyqtSignal(float)
+    value_changed = Signal(float)
 
     def __init__(
         self,
@@ -253,8 +253,8 @@ class TempoSuggestion(_Card):
     the first click anywhere else, and the roll is where the work is.
     """
 
-    applied = pyqtSignal(float)
-    dismissed = pyqtSignal()
+    applied = Signal(float)
+    dismissed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -433,19 +433,19 @@ class ControlArea(QWidget):
 class TransportBar(_Group):
     """Playback transport, position, the view toggles, playback speed, tempo and grid offset."""
 
-    rewind_requested = pyqtSignal()
-    play_from_start_requested = pyqtSignal()
-    play_pause_requested = pyqtSignal()
-    stop_requested = pyqtSignal()
-    forward_requested = pyqtSignal()
-    open_requested = pyqtSignal()
-    save_requested = pyqtSignal()
-    export_midi_requested = pyqtSignal()
-    export_krc_requested = pyqtSignal()
-    export_ass_requested = pyqtSignal()
-    auto_page_toggled = pyqtSignal(bool)
-    overtone_toggled = pyqtSignal(bool)
-    division_changed = pyqtSignal(str)
+    rewind_requested = Signal()
+    play_from_start_requested = Signal()
+    play_pause_requested = Signal()
+    stop_requested = Signal()
+    forward_requested = Signal()
+    open_requested = Signal()
+    save_requested = Signal()
+    export_midi_requested = Signal()
+    export_krc_requested = Signal()
+    export_ass_requested = Signal()
+    auto_page_toggled = Signal(bool)
+    overtone_toggled = Signal(bool)
+    division_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -591,12 +591,12 @@ class EditBar(_Group):
     """Tools, snapping and the transcription button. The mode and the tool are one value, and this
     bar is only its input and its display."""
 
-    interaction_changed = pyqtSignal(object)
-    quantize_requested = pyqtSignal()
-    transcribe_requested = pyqtSignal()
-    lyrics_requested = pyqtSignal()
-    align_requested = pyqtSignal()
-    map_channel_requested = pyqtSignal()
+    interaction_changed = Signal(object)
+    quantize_requested = Signal()
+    transcribe_requested = Signal()
+    lyrics_requested = Signal()
+    align_requested = Signal()
+    map_channel_requested = Signal()
 
     def __init__(self, snap_choices, parent=None):
         super().__init__(parent)

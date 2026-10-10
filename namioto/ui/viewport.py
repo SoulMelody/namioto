@@ -9,8 +9,8 @@ keeping one of their own, so a strip and the roll never drift apart. The view is
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint
-from PyQt6.QtWidgets import QGraphicsView, QWidget
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QGraphicsView, QWidget
 
 
 class ViewportStrip(QWidget):

@@ -7,8 +7,8 @@ import colorsys
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QImage
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QImage
 
 from namioto.analysis.spectrum import NoteSpectrum, analyse
 from namioto.ui.loading import LoadingThread
@@ -68,8 +68,8 @@ class SpectrumImage:
 class SpectrumLoader(LoadingThread):
     """Analyses a file off the GUI thread."""
 
-    loaded = pyqtSignal(object)
-    progress = pyqtSignal(int, int)
+    loaded = Signal(object)
+    progress = Signal(int, int)
 
     def __init__(
         self,

@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import soundfile
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from namioto import _audio
 from namioto.ui import theme

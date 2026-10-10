@@ -59,18 +59,26 @@ def isolated_directories(tmp_path_factory):
 
 @pytest.fixture(scope="session", autouse=True)
 def no_blocking_dialogs():
-    """A modal dialog nothing answers hangs the whole run, so one that slips through fails instead.
+    """Unanswered dialogs and menus fail instead of blocking the headless run.
 
-    The tests that walk through a dialog patch `exec` on its class, which shadows this; a test that
-    reaches an unpatched one gets an error naming it rather than a run that never ends.
+    Instance calls dispatch through the class so tests can replace `exec` despite PySide6's
+    instance-level lookup. Unpatched modal widgets raise an error naming the widget.
     """
-    from PyQt6.QtWidgets import QDialog
+    from PySide6.QtWidgets import QDialog, QMenu
 
     def refuse(self, *_args, **_kwargs):
         raise AssertionError(f"{type(self).__name__}.exec() would block a headless test: patch it")
 
     patcher = pytest.MonkeyPatch()
-    patcher.setattr(QDialog, "exec", refuse)
+    for widget_class in (QDialog, QMenu):
+        original_init = widget_class.__init__
+
+        def initialize(self, *args, _init=original_init, **kwargs):
+            _init(self, *args, **kwargs)
+            self.exec = lambda *args, **kwargs: type(self).exec(self, *args, **kwargs)
+
+        patcher.setattr(widget_class, "__init__", initialize)
+        patcher.setattr(widget_class, "exec", refuse)
     yield
     patcher.undo()
 

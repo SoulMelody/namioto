@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QFileSystemWatcher, QObject, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QGuiApplication, QTextCursor
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QFileSystemWatcher, QObject, QSize, Qt, Signal
+from PySide6.QtGui import QGuiApplication, QTextCursor
+from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
@@ -49,8 +49,8 @@ class LyricsConverter(LoadingThread):
     `retry` is what an earlier refusal said, sent with the source for another try.
     """
 
-    converted = pyqtSignal(str)
-    delta = pyqtSignal(str, str)
+    converted = Signal(str)
+    delta = Signal(str, str)
 
     def __init__(self, source: str, config, path, retry: str = "", parent=None):
         super().__init__(path, parent)
@@ -82,7 +82,7 @@ class LyricsWatcher(QObject):
     which keeps our own write from reading back as somebody else's.
     """
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -135,8 +135,8 @@ class LyricsDialog(QDialog):
     work on.
     """
 
-    saved = pyqtSignal(str)
-    open_requested = pyqtSignal()
+    saved = Signal(str)
+    open_requested = Signal()
 
     def __init__(self, path: str | Path, config, parent=None):
         super().__init__(parent)

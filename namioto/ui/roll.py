@@ -30,9 +30,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 
-from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QTransform, QUndoCommand, QUndoStack
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QTransform, QUndoCommand, QUndoStack
+from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -315,19 +315,19 @@ class PianoRollView(QGraphicsView):
     (`lyric_times`) and the note ids each sound was placed on (`mapped`).
     """
 
-    view_changed = pyqtSignal()
-    viewport_changed = pyqtSignal()
-    zoom_changed = pyqtSignal()
-    notes_changed = pyqtSignal()
-    gesture_started = pyqtSignal()
-    gesture_finished = pyqtSignal()
-    channels_changed = pyqtSignal()
-    active_channel_changed = pyqtSignal(int)
-    hover_changed = pyqtSignal(object)
-    note_preview = pyqtSignal(int)
-    seek_requested = pyqtSignal(float)
-    lyrics_changed = pyqtSignal()
-    lyric_highlight_changed = pyqtSignal()
+    view_changed = Signal()
+    viewport_changed = Signal()
+    zoom_changed = Signal()
+    notes_changed = Signal()
+    gesture_started = Signal()
+    gesture_finished = Signal()
+    channels_changed = Signal()
+    active_channel_changed = Signal(int)
+    hover_changed = Signal(object)
+    note_preview = Signal(int)
+    seek_requested = Signal(float)
+    lyrics_changed = Signal()
+    lyric_highlight_changed = Signal()
 
     GRAB_PX = 7
     MIN_ZOOM_X, MAX_ZOOM_X = 12.0, 900.0
@@ -1808,7 +1808,7 @@ class TimelineRuler(ViewportStrip):
 class PianoKeyboard(ViewportStrip):
     """The keys at the left of the roll; clicking one auditions that note."""
 
-    key_preview = pyqtSignal(int)
+    key_preview = Signal(int)
 
     def __init__(self, view: PianoRollView):
         super().__init__(view)

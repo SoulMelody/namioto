@@ -4,7 +4,7 @@
 
 Qt-free on purpose. The editor wraps this into a `QLocalServer` / `QTcpServer` in
 `namioto.ui.ipc_server`, and the client below is its own program, so a script or a remote machine
-can drive the editor without importing PyQt or anything else.
+can drive the editor without importing Qt or anything else.
 
 The protocol is one JSON object per line, UTF-8, with no framing beyond the newline: a request
 `{"id": 1, "method": "transport.play", "params": {}}` is answered by
