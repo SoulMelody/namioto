@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
             self.start_ipc()
 
     def _make_player(self):
-        return open_player(self, a4=self.project_settings.analysis.a4)
+        return open_player(self)
 
     def _player_key(self) -> tuple:
         """What a player is built from: a change to any of it means building a new one."""

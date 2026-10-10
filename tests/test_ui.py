@@ -61,7 +61,7 @@ from namioto.ui.align_dialog import AlignDialog, Aligner
 from namioto.ui.app import MainWindow, TempoLoader
 from namioto.ui.ass_dialog import GROUPS as ASS_GROUPS
 from namioto.ui.ass_dialog import AssDialog
-from namioto.ui.audio import BuiltinSynth, MidiPortOut, find_port, find_synth_port
+from namioto.ui.audio import MidiPortOut, SilentPlayer, find_port, find_synth_port
 from namioto.ui.controls import Cluster, EditBar, TransportBar, ValueSlider
 from namioto.ui.form import WrappedLabel, _show_device_status, field_editor
 from namioto.ui.lyrics_dialog import LyricsConverter, LyricsDialog
@@ -2424,17 +2424,17 @@ def test_a_silent_player_keeps_the_midi_volume_out_of_the_project(window) -> Non
     window._sync_midi_volume()
 
 
-def test_the_built_in_synth_keeps_the_position_without_playing() -> None:
-    synth = BuiltinSynth()
-    synth.set_program([(69, 0.0, 1.0)], 1.0)
-    assert synth.duration == pytest.approx(1.5)  # the note plus its release tail
-    assert synth.position == 0.0 and not synth.is_playing
-    synth.seek(0.75)
-    assert synth.position == pytest.approx(0.75)
-    synth.stop()
-    assert synth.position == 0.0
-    synth.set_program([(69, 0.0, 1.0)], 2.0)
-    assert synth.duration == pytest.approx(1.5)  # the timeline itself does not change
+def test_the_silent_player_keeps_the_position_without_playing() -> None:
+    player = SilentPlayer()
+    player.set_program([(69, 0.0, 1.0)], 1.0)
+    assert player.duration == pytest.approx(1.0)
+    assert player.silent and player.position == 0.0 and not player.is_playing
+    player.seek(0.75)
+    assert player.position == pytest.approx(0.75)
+    player.stop()
+    assert player.position == 0.0
+    player.set_program([(69, 0.0, 1.0)], 2.0)
+    assert player.duration == pytest.approx(1.0)
 
 
 def test_a_synth_port_is_preferred_over_the_loopback() -> None:

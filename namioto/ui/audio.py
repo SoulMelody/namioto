@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Note playback outputs: an external MIDI synth, or the built-in synth on the native engine."""
+"""Note playback through an external MIDI synth, silent when no output is available."""
 
 from __future__ import annotations
 
@@ -7,15 +7,8 @@ import threading
 import time
 from collections.abc import Sequence
 
-import numpy as np
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Signal
 
-from namioto import _audio
-from namioto.playback import A4, SAMPLE_RATE, TAIL, render_notes
-
-BUFFER_FRAMES = 1024
-FINISHED_POLL_MS = 50
-PROGRAM_ID = -1  # the note program's buffer; previews use their pitch as the id
 PREVIEW_SECONDS = 0.6
 NOTE_ON, NOTE_OFF, VELOCITY = 0x90, 0x80, 100
 PROGRAM_CHANGE = 0xC0  # program change per channel: which instrument the synth should use
@@ -94,71 +87,33 @@ class NotePlayer(QObject):
         raise NotImplementedError
 
 
-class BuiltinSynth(NotePlayer):
-    """The built-in synth: the notes rendered by Python and played through the native engine.
+class SilentPlayer(NotePlayer):
+    """Keep the cursor position without producing sound or starting a transport."""
 
-    Nothing here stretches anything - a note program is already rendered at the settled speed - so
-    the engine only has to mix the rendered buffers. Previews are submitted at the playhead, which
-    is what lets them overlap the program the way the old Qt sink mixed them.
-    """
+    silent = True
 
-    def __init__(self, parent=None, sample_rate: int = SAMPLE_RATE, a4: float = A4):
-        self._sample_rate = sample_rate
-        self._output = _audio.Output(sample_rate, BUFFER_FRAMES)
-        self._program = np.zeros(0, dtype=np.float32)
-        self._speed = 1.0
-        self._duration = 0.0
-        self.a4 = a4
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._finished_poll = QTimer(self)
-        self._finished_poll.setInterval(FINISHED_POLL_MS)
-        self._finished_poll.timeout.connect(self._check_finished)
-
-    @property
-    def gain(self) -> float:
-        return self._gain
-
-    @gain.setter
-    def gain(self, value: float) -> None:
-        self._gain = max(0.0, value)
-        if self._program.size:
-            self._output.submit_buffer(self._program, 0.0, self._gain, PROGRAM_ID)
+        self._position = 0.0
+        self._duration = 0.0
 
     def set_program(self, notes, speed, channels=()) -> None:
-        notes = tuple(notes)
-        self._speed = max(0.01, float(speed))
-        self._program = render_notes(
-            notes, sample_rate=self._sample_rate, speed=self._speed, a4=self.a4, channels=channels
-        )
-        end = max((start + duration for _pitch, start, duration, *_rest in notes), default=0.0)
-        self._duration = end + TAIL if notes else 0.0
-        if self._program.size:
-            self._output.submit_buffer(self._program, 0.0, self._gain, PROGRAM_ID)
+        self._duration = max((note[1] + note[2] for note in notes), default=0.0)
 
     def play(self, seconds: float = 0.0) -> None:
-        if not self._program.size or not self._open():
-            return
-        # the program is already stretched into output time, so a source second is 1/speed of it
-        self._output.play(seconds / self._speed)
-        self._finished_poll.start()
+        self.seek(seconds)
 
     def pause(self) -> None:
-        self._finished_poll.stop()
-        self._output.pause()
+        pass
 
     def stop(self) -> None:
-        self._finished_poll.stop()
-        self._output.pause()
-        self._output.seek(0.0)
+        self._position = 0.0
 
     def seek(self, seconds: float) -> None:
-        self._output.seek(seconds / self._speed)
+        self._position = max(0.0, seconds)
 
     def preview(self, pitch: int, seconds: float = PREVIEW_SECONDS) -> None:
-        if not self._open():
-            return
-        voice = render_notes([(pitch, 0.0, seconds)], sample_rate=self._sample_rate, a4=self.a4)
-        self._output.submit_buffer(voice, self._output.position, self._gain, pitch)
+        pass
 
     @property
     def duration(self) -> float:
@@ -166,22 +121,11 @@ class BuiltinSynth(NotePlayer):
 
     @property
     def position(self) -> float:
-        return self._output.position * self._speed
+        return self._position
 
     @property
     def is_playing(self) -> bool:
-        return self._output.playing
-
-    def _open(self) -> bool:
-        return self._output.open(False) if not self._output.is_open else True
-
-    def _check_finished(self) -> None:
-        # the engine holds no song here, so it never ends on its own; the program does
-        if not self._output.playing or self.position < self._duration:
-            return
-        self._finished_poll.stop()
-        self._output.pause()
-        self.finished.emit()
+        return False
 
 
 class MidiPortOut(NotePlayer):
@@ -344,29 +288,19 @@ class MidiPortOut(NotePlayer):
 
 def open_player(
     parent=None,
-    backend: str = "auto",
     port_name: str = "",
     velocity: int = VELOCITY,
     program: int = DEFAULT_PROGRAM,
-    a4: float = A4,
 ) -> tuple[NotePlayer, str]:
-    """A player and a description of where it sends the sound.
+    """An external MIDI player, or a silent player when no MIDI output is available."""
+    try:
+        import rtmidi
 
-    An external synth is preferred because it brings its own patches (TiMidity's piano,
-    FluidSynth's SoundFont), which is what the rest of the machine already sounds like; with no MIDI
-    service the built-in synth takes over, so the notes are still heard. `backend="builtin"` asks
-    for the built-in synth on purpose.
-    """
-    if backend != "builtin":
-        try:
-            import rtmidi
-
-            port = rtmidi.MidiOut()
-            index = find_port(port.get_ports(), port_name)
-        except Exception:  # no MIDI backend on this machine
-            index = None
-            port = None
+        port = rtmidi.MidiOut()
+        index = find_port(port.get_ports(), port_name)
         if index is not None:
             port.open_port(index)
             return MidiPortOut(port, parent, velocity=velocity, program=program), port.get_port_name(index)
-    return BuiltinSynth(parent, a4=a4), "the built-in synth"
+    except Exception:
+        pass
+    return SilentPlayer(parent), "No MIDI output"

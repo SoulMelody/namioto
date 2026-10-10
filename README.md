@@ -230,7 +230,7 @@ namioto/analysis/    the analysis engines, each also a CLI, no Qt
   model_store.py      where a model comes from: one registry, one download, one session
   devices.py          the CPU/GPU device registry the models run on
   choices.py          the values a setting may take
-namioto/playback.py   note synthesis: pitches rendered into one audio buffer, no Qt
+namioto/playback.py   MIDI pitch-to-frequency conversion, no Qt
 namioto/channels.py   the MIDI channels a note plays on, and the values they play with, no Qt
 namioto/interaction.py the roll's normal/edit mode and its tool, as one value, no Qt
 namioto/document.py   the notes and the MIDI channels they play on, in beats, no Qt
@@ -252,7 +252,7 @@ namioto/ui/           PySide6 editor (app.py: window, controls.py: control bars,
                       that share the roll's columns, theme.py: colours, icons.py: glyphs,
                       text.py: shared labels, loading.py: one-shot worker, spectrogram.py:
                       spectrum colour map, image cache and loader, audio.py: note playback
-                      outputs - the external MIDI synth, or the built-in synth on the native engine,
+                      outputs - an external MIDI synth, or silence when none is available,
                       song.py: the audio file streamed to the native engine, channel_panel.py:
                       the sidebar, form.py: the pieces a settings form is built from,
                       ipc_server.py: the remote control's socket on the Qt event loop,
@@ -295,8 +295,8 @@ The window has three control bars, each split into captioned blocks of related c
 
 **Volume** has a slider for each layer: the audio file is streamed at the level of the first one, and
 the second is the note playback - through the machine's external MIDI synth when one is listening,
-sent as control change 7 (channel volume) since that synth does its own mixing, or through the
-built-in synth otherwise.
+sent as control change 7 (channel volume) since that synth does its own mixing. Without a MIDI
+synth, note playback is silent and the MIDI volume control is disabled.
 
 **Channels** are toggled by the layers icon among the playback switches: a sidebar with one card per MIDI channel.
 The notes of each channel are painted in its colour, and the card holds the name (double-click to
@@ -506,7 +506,7 @@ once, carrying on from where they had got to.
 The notes go to a **software MIDI synth** when one is listening on the
 MIDI bus - TiMidity and FluidSynth are recognised by name, and the tooltip of the **MIDI** slider
 says which one is in use, because that is where the sound comes from (patches included). With no
-such synth the notes fall back to a built-in synth, so they are heard either way. **Grid offset (ms)** slides the grid lines - `-` draws them to the left, `+` to
+such synth the notes stay silent; audio-file playback is unaffected. **Grid offset (ms)** slides the grid lines - `-` draws them to the left, `+` to
 the right, and snapping follows them - while the notes and the playback keep their exact
 timestamps. A click in the roll auditions what it lands on - the pitch of the row, whether or
 not it is a note - in either mode, and so does a key on the keyboard: listening and editing are

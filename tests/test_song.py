@@ -7,6 +7,9 @@ No test opens an audio device: the engine is only driven through its non-playing
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 import soundfile
@@ -23,6 +26,23 @@ def qt_app():
     app.setStyle("Fusion")
     theme.apply(app)
     return app
+
+
+def test_song_import_resolves_the_audio_decoder_before_workers_start() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import librosa; from namioto.ui.song import decode_audio; "
+            "assert vars(librosa).get('load') is decode_audio; "
+            "assert 'librosa.core.audio' in sys.modules; "
+            "assert 'soundfile' in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_load_song_resamples_to_the_engine_rate(tmp_path) -> None:

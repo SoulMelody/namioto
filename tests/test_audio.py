@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Checks for the two note players: a preview overlaps what is already sounding."""
+"""Checks for external MIDI playback and silent fallback."""
 
 from __future__ import annotations
 
@@ -9,14 +9,13 @@ import types
 
 import pytest
 
-from namioto import _audio
 from namioto.ui.audio import (
     NOTE_OFF,
     NOTE_ON,
     PROGRAM_CHANGE,
     VELOCITY,
-    BuiltinSynth,
     MidiPortOut,
+    SilentPlayer,
     open_player,
 )
 
@@ -29,67 +28,6 @@ class FakePort:
 
     def send_message(self, message) -> None:
         self.messages.append(list(message))
-
-
-def test_the_built_in_synth_prepares_a_program_without_a_device() -> None:
-    synth = BuiltinSynth()
-    assert not synth.is_playing and synth.duration == 0.0
-
-    synth.set_program([(60, 0.0, 1.0)], 1.0)
-    assert synth.duration == pytest.approx(1.5)  # the note plus its release tail
-    synth.seek(0.75)
-    assert synth.position == pytest.approx(0.75)
-    synth.stop()
-    assert synth.position == 0.0
-
-    synth.set_program([(60, 0.0, 1.0)], 2.0)
-    assert synth.duration == pytest.approx(1.5)  # the timeline itself does not change
-
-
-class FakeBuiltinOutput:
-    """The native engine with no device, to check the synth's source/output time conversion."""
-
-    def __init__(self, *_args) -> None:
-        self.is_open = False
-        self.playing = False
-        self.position = 0.0
-        self.finished = False
-        self.played: list[float] = []
-        self.sought: list[float] = []
-
-    def open(self, _null_backend: bool) -> bool:
-        self.is_open = True
-        return True
-
-    def submit_buffer(self, _data, _start_seconds: float, _gain: float, _buffer_id: int) -> None:
-        pass
-
-    def play(self, seconds: float = 0.0) -> None:
-        self.played.append(seconds)
-        self.playing = True
-
-    def pause(self) -> None:
-        self.playing = False
-
-    def seek(self, seconds: float) -> None:
-        self.sought.append(seconds)
-        self.position = seconds
-
-
-def test_the_built_in_synth_speaks_the_source_timeline(monkeypatch) -> None:
-    fake = FakeBuiltinOutput()
-    monkeypatch.setattr(_audio, "Output", lambda *args: fake)
-    synth = BuiltinSynth()
-
-    synth.set_program([(69, 0.0, 2.0)], 0.5)
-    synth.play(1.0)
-    assert fake.played == [2.0]  # one source second at half speed is two output seconds
-
-    fake.position = 3.0
-    assert synth.position == pytest.approx(1.5)  # three output seconds are one and a half of source
-
-    synth.seek(2.0)
-    assert fake.sought == [4.0]
 
 
 def note_messages(port) -> list[list[int]]:
@@ -203,30 +141,36 @@ def test_a_note_ending_where_the_next_begins_is_released_first() -> None:
 
 def test_the_external_synth_is_preferred_when_one_is_listening() -> None:
     player, name = open_player()
-    assert isinstance(player, MidiPortOut)  # the machine's own patches beat the built-in synth
+    assert isinstance(player, MidiPortOut)
     assert name == "TiMidity:Fake TiMidity port 0 128:0"  # the port the suite is given instead of a real one
 
 
-def test_a_backend_that_was_asked_for_is_honoured() -> None:
-    player, name = open_player(backend="builtin")
-    assert isinstance(player, BuiltinSynth)
-    assert name == "the built-in synth"
-
-
-def test_with_no_midi_synth_the_built_in_one_takes_over(monkeypatch) -> None:
+@pytest.mark.parametrize("unavailable", ["no_ports", "backend_error", "open_error"])
+def test_without_midi_output_playback_and_preview_stay_silent(monkeypatch, unavailable) -> None:
     fake_midi = types.ModuleType("rtmidi")
 
     class NoPorts:
         def get_ports(self) -> list[str]:
-            return []
+            if unavailable == "backend_error":
+                raise RuntimeError("MIDI unavailable")
+            return ["TiMidity"] if unavailable == "open_error" else []
+
+        def open_port(self, index) -> None:
+            raise RuntimeError("Port unavailable")
 
     fake_midi.MidiOut = NoPorts
     monkeypatch.setitem(sys.modules, "rtmidi", fake_midi)
 
     player, name = open_player()
-    assert isinstance(player, BuiltinSynth)
-    assert name == "the built-in synth"
+    assert isinstance(player, SilentPlayer)
+    assert player.silent and name == "No MIDI output"
 
-    player.set_program([(60, 0.0, 1.0)], 1.0)  # a program prepares without opening a device
-    assert player.duration == pytest.approx(1.5)
-    assert not player.is_playing and player.position == 0.0
+    player.set_program([(60, 0.0, 1.0)], 1.0)
+    assert player.duration == pytest.approx(1.0)
+    player.play(0.5)
+    player.preview(60)
+    assert not player.is_playing and player.position == 0.5
+    player.pause()
+    assert player.position == 0.5
+    player.stop()
+    assert player.position == 0.0

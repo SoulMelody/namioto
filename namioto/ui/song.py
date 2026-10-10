@@ -5,6 +5,9 @@ The stretching, the ring and the audio device all live in `namioto._audio`; this
 carries the window's surface - a `finished` signal and the settings - over to them. The position
 stays in the song's own seconds whatever rate it is played at, because the engine counts the source
 timeline and re-anchors on every speed change and seek.
+
+Resolve librosa's audio decoder at import time so its first import does not race across the
+song, spectrum and tempo workers while the GUI restores note items.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from pathlib import Path
 
 import librosa
 import numpy as np
+from librosa import load as decode_audio
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from namioto import _audio
@@ -24,7 +28,7 @@ FINISHED_POLL_MS = 50
 
 def load_song(path: str | Path) -> tuple[np.ndarray, int]:
     """Decode a file into one mono buffer at the engine rate, ready for the native engine."""
-    samples, _sample_rate = librosa.load(path, sr=ENGINE_RATE, mono=True)
+    samples, _sample_rate = decode_audio(path, sr=ENGINE_RATE, mono=True)
     return np.ascontiguousarray(samples, dtype=np.float32), ENGINE_RATE
 
 
