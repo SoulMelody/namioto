@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Convert a FA-Kara forced-alignment model to the ONNX file and dictionary `namioto-align` loads.
+"""Convert a FA-Kara forced-alignment model to the ONNX file and dictionary `namioto-cli align` loads.
 
 A development tool, not a runtime dependency: it needs torch and, per kind, torchaudio or
 transformers, plus ONNX, none of which the program itself imports. It writes `model.onnx` and

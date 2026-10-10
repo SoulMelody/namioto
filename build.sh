@@ -11,15 +11,10 @@ usage() {
 Usage: ./build.sh <target>
 
   wheel            sdist + wheel via uv build          -> dist/*.whl, dist/*.tar.gz
-  cli [tempo|wavetone|tempocnn|spectrum|ctl]
-                   frozen CLI via PyInstaller (default: tempo)
-                                                        -> dist/namioto-tempo/
-                                                           dist/namioto-wavetone/
-                                                           dist/namioto-tempocnn/
-                                                           dist/namioto-spectrum/
-                                                           dist/namioto-ctl/
+  cli              frozen task CLI via PyInstaller      -> dist/namioto-cli/
+  ctl              frozen IPC client via PyInstaller    -> dist/namioto-ctl/
   app              frozen GUI via PyInstaller           -> dist/namioto/
-  all              wheel + both CLIs + app
+  all              wheel + cli + ctl + app
   clean            remove build/ and dist/
 EOF
 }
@@ -36,28 +31,21 @@ build_wheel() {
 }
 
 build_cli() {
-    case "${1:-tempo}" in
-        tempo) freeze_cli namioto/analysis/beats.py namioto-tempo ;;
-        wavetone) freeze_cli namioto/analysis/wavetone.py namioto-wavetone ;;
-        tempocnn) freeze_cli namioto/analysis/tempo.py namioto-tempocnn cpu ;;
-        spectrum) freeze_cli namioto/analysis/spectrum.py namioto-spectrum ;;
-        ctl) freeze_cli namioto/ipc.py namioto-ctl ;;
-        *)
-            echo "Unknown CLI: ${1}. Expected tempo, wavetone, tempocnn, spectrum or ctl." >&2
-            exit 1
-            ;;
-    esac
+    uv sync --extra cpu
+    freeze_cli namioto/cli.py namioto-cli \
+        --collect-submodules namioto.analysis \
+        --collect-all janome
 }
 
 freeze_cli() {
-    if [ -n "${3:-}" ]; then
-        uv sync --extra "$3"
-    fi
+    local entry="$1" name="$2"
+    shift 2
     uv run --with pyinstaller pyinstaller "${pyinstaller_common[@]}" \
-        --name "$2" \
+        --name "$name" \
         --onedir \
-        "$1"
-    copy_licenses "dist/$2"
+        "$@" \
+        "$entry"
+    copy_licenses "dist/$name"
 }
 
 build_app() {
@@ -80,12 +68,13 @@ copy_licenses() {
 
 case "${1:-}" in
     wheel) build_wheel ;;
-    cli) build_cli "${2:-tempo}" ;;
+    cli) build_cli ;;
+    ctl) freeze_cli namioto/ipc.py namioto-ctl ;;
     app) build_app ;;
     all)
         build_wheel
-        build_cli tempo
-        build_cli spectrum
+        build_cli
+        freeze_cli namioto/ipc.py namioto-ctl
         build_app
         ;;
     clean) rm -rf build dist ;;

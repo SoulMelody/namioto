@@ -2,7 +2,7 @@
 """Small helpers shared across the Qt-free modules: the app's own directories, the identity of a
 file under a path, and `kana_tokens()`.
 
-`kana_tokens()` is the ruby `namioto-align` takes: it turns a `.krc` line's bracketed kana into
+`kana_tokens()` is the ruby `namioto-cli align` takes: it turns a `.krc` line's bracketed kana into
 one hepburn token per sound, the unit FA-Kara's models are trained on. It is deliberately small - a
 `.krc` file already carries the kana ruby of every kanji, so the kanji surface and the annotation
 punctuation only have to be dropped, with no kanji lookup and no dictionary. A run of Latin letters

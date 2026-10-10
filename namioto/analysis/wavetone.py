@@ -60,7 +60,7 @@ def estimate(path: str | Path, *, frame: int = FRAME) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="namioto-cli wavetone", description=__doc__)
     parser.add_argument("audio", help="input audio file")
     parser.add_argument("--frame", type=int, default=FRAME, help="volume envelope frame in samples")
     parser.add_argument("--json", action="store_true", help="print the estimate as JSON")

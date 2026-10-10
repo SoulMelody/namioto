@@ -22,20 +22,24 @@ uv run namioto                            # the editor
 uv run namioto song.mp3                   # the editor with the audio analysed into a spectrum
 uv run namioto song.nto                   # open a project (the notes and the audio together)
 uv run namioto song.mp3 --channels both --gain 300   # analysis options
-uv run namioto-wavetone song.mp3          # WaveTone's own volume-envelope analysis (the editor's default)
-uv run namioto-tempo song.mp3             # the librosa beat tracker + least-squares fit
-uv run namioto-tempo song.mp3 --local     # per-window estimates, 12 s wide, 6 s apart
-uv run namioto-tempo song.mp3 --json      # machine readable, includes every beat
-uv run namioto-tempocnn song.mp3          # the TempoCNN model, on the CPU or a GPU backend
-uv run namioto-spectrum song.mp3          # analyse into 84 note bands (C1-B7)
-uv run namioto-spectrum song.mp3 --bench  # plus per-stage timings
-uv run namioto-spectrum song.mp3 --threshold 1.2   # plus auto-filled note spans
-uv run namioto-game song.mp3 --model DIR  # extract the notes of a singing voice (GAME's models)
-uv run namioto-align vocal.wav lines.json # time known lyrics against a separated vocal
+uv run namioto-cli wavetone song.mp3          # WaveTone's own volume-envelope analysis (the editor's default)
+uv run namioto-cli tempo song.mp3             # the librosa beat tracker + least-squares fit
+uv run namioto-cli tempo song.mp3 --local     # per-window estimates, 12 s wide, 6 s apart
+uv run namioto-cli tempo song.mp3 --json      # machine readable, includes every beat
+uv run namioto-cli tempocnn song.mp3          # the TempoCNN model, on the CPU or a GPU backend
+uv run namioto-cli spectrum song.mp3          # analyse into 84 note bands (C1-B7)
+uv run namioto-cli spectrum song.mp3 --bench  # plus per-stage timings
+uv run namioto-cli spectrum song.mp3 --threshold 1.2   # plus auto-filled note spans
+uv run namioto-cli game song.mp3 --model DIR  # extract the notes of a singing voice (GAME's models)
+uv run namioto-cli align vocal.wav lines.json # time known lyrics against a separated vocal
 uv run pytest                             # tests (the beat tracker's slow ones left out)
 uv run pytest -m slow                     # just those, minutes of synthetic audio
 uv run scripts/bench_spectrum.py          # spectrum benchmark
 ```
+
+`namioto` opens the GUI, `namioto-cli` runs tasks without a GUI session, and `namioto-ctl`
+controls an already running editor. Use `namioto-cli --help` to list tasks and
+`namioto-cli COMMAND --help` for a task's options.
 
 `uv` creates the virtual environment and installs the dependencies on first run. `--extra cpu` adds
 ONNX Runtime, which the analysis models need and which is optional: `--extra webgpu` puts the WebGPU
@@ -204,8 +208,8 @@ with `dirty` unless it carries `force=true`.
 
 ```bash
 ./build.sh wheel   # sdist + wheel             -> dist/*.whl, dist/*.tar.gz
-./build.sh cli     # frozen tempo CLI          -> dist/namioto-tempo/
-./build.sh cli spectrum                        # -> dist/namioto-spectrum/
+./build.sh cli     # frozen task CLI           -> dist/namioto-cli/
+./build.sh ctl     # frozen IPC client         -> dist/namioto-ctl/
 ./build.sh app     # frozen editor             -> dist/namioto/
 ./build.sh all
 ./build.sh clean
@@ -347,7 +351,7 @@ discards it; the round arrow estimates again.
 Changing the tempo never re-times the notes: they are timed against the audio, so only the beat
 grid re-divides underneath them (and the roll keeps the audio at the same scale on screen, which is
 how the notes stay where they are relative to the spectrum and to the time ruler).
-TempoCNN (`namioto/analysis/tempo.py`, `namioto-tempocnn`) and the librosa beat tracker are the other
+TempoCNN (`namioto/analysis/tempo.py`, `namioto-cli tempocnn`) and the librosa beat tracker are the other
 two algorithms the **Algorithm** setting offers, each on its own command line too: TempoCNN is strong
 on full mixes, but its 256 integer-BPM classes and its training data (full mixes only) make it a poor
 fit for stems, where the other two win.
@@ -356,11 +360,11 @@ fit for stems, where the other two win.
 [GAME](https://github.com/openvpi/GAME)'s ONNX models:
 
 ```bash
-uv run namioto-game song.wav --language zh          # fetches the small model on first use
-uv run namioto-game song.wav --size medium          # one of small, medium, large
-uv run namioto-game song.wav --device gpu           # on the GPU backend the settings name
-uv run namioto-game song.wav --quantize 4 --tempo 93 --midi out.mid
-uv run namioto-game                                 # only fetch a model, do not transcribe
+uv run namioto-cli game song.wav --language zh          # fetches the small model on first use
+uv run namioto-cli game song.wav --size medium          # one of small, medium, large
+uv run namioto-cli game song.wav --device gpu           # on the GPU backend the settings name
+uv run namioto-cli game song.wav --quantize 4 --tempo 93 --midi out.mid
+uv run namioto-cli game                                 # only fetch a model, do not transcribe
 ```
 
 The editor can do the same over the file it has open: the wand button in the tools opens a
@@ -453,7 +457,7 @@ tempo or the grid offset and running again re-snaps it without touching the mode
 
 ## Aligning lyrics to a vocal
 
-Given a separated vocal and the tokens of each line, `namioto-align` puts a time on every token: the
+Given a separated vocal and the tokens of each line, `namioto-cli align` puts a time on every token: the
 tokens are forced onto the frames of a wav2vec2 CTC model, which never recognises anything, it only
 says where the words it is given fall. The vocal has to be the isolated singing voice and not the
 mix, the tokens its kana romanised, and each line a roughly right window - a list of
@@ -461,7 +465,7 @@ mix, the tokens its kana romanised, and each line a roughly right window - a lis
 cannot find one: it is passed as a whole, only the model's own frames carry the times.
 
 ```bash
-uv run namioto-align vocal.wav lines.json --out aligned.json
+uv run namioto-cli align vocal.wav lines.json --out aligned.json
 ```
 
 Each line comes back with one entry per input token - its onset, its end and the model's probability

@@ -297,7 +297,9 @@ def auto_fill(table: np.ndarray, threshold: float, from_frame: int = 0, to_frame
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Analyse audio into a note-domain spectrum")
+    parser = argparse.ArgumentParser(
+        prog="namioto-cli spectrum", description="Analyse audio into a note-domain spectrum"
+    )
     parser.add_argument("audio", help="input audio file")
     parser.add_argument("--channels", choices=CHANNEL_MODES, default="mono", help="which channels to analyse")
     parser.add_argument("--t-num", type=float, default=40.0, help="analysis frames per second (default: 40)")

@@ -49,7 +49,7 @@ Third-party code and assets
 - The model is an independent work aggregated with the program's output rather than a derivative of
   the AGPL code, and it keeps its own license. Upstream states that all models created by the MTG
   are licensed under CC BY-NC-SA 4.0 and are available under a proprietary license on request.
-- Namioto ships no model at all: `namioto-tempocnn`, and the editor's TempoCNN tempo algorithm,
+- Namioto ships no model at all: `namioto-cli tempocnn`, and the editor's TempoCNN tempo algorithm,
   download `tempocnn-onnx.zip` from this project's `models` release into the data directory
   (`platformdirs.user_data_dir("namioto")/models/tempocnn`, so
   ~/.local/share/namioto/models/tempocnn on Linux). That zip carries this license text, and
@@ -65,7 +65,7 @@ Third-party code and assets
 - Used for: extracting notes from a singing voice. `namioto/game.py` is a port of the standalone
   `infer_onnx.py` that goes with GAME's ONNX model exports - GAME itself is a PyTorch project and
   ships no ONNX inference - so the module keeps GAME's MIT license, while the models stay a separate
-  work under CC BY-NC-SA 4.0. The models are not redistributed here: `namioto-game` downloads the
+  work under CC BY-NC-SA 4.0. The models are not redistributed here: `namioto-cli game` downloads the
   size that was asked for (small 46 MB / medium 180 MB / large 362 MB) from GAME's GitHub release
   into the data directory - `platformdirs.user_data_dir("namioto")/models/game/<size>`, so
   ~/.local/share/namioto/models/game/small on Linux - and a directory of them can also be given

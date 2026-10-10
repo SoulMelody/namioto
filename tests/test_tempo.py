@@ -47,11 +47,11 @@ def model_file() -> str:
     """The real graph, which the program downloads on first use rather than shipping.
 
     A test run has its own data directory, so the model has to be pointed at: either let
-    `namioto-tempocnn` fetch one, or set the model's environment variable to a local copy.
+    `namioto-cli tempocnn` fetch one, or set the model's environment variable to a local copy.
     """
     env = model_store.MODELS["tempocnn"].env
     if not model_store.installed("tempocnn") and not os.environ.get(env):
-        pytest.skip(f"no TempoCNN model installed; set {env} to one, or let namioto-tempocnn fetch it")
+        pytest.skip(f"no TempoCNN model installed; set {env} to one, or let namioto-cli tempocnn fetch it")
     return str(default_model_path())
 
 

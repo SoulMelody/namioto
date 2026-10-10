@@ -30,12 +30,7 @@ webgpu = ["onnxruntime>=1.24.4", "onnxruntime-ep-webgpu"]
 [project.scripts]
 namioto = "namioto.ui.app:main"
 namioto-ctl = "namioto.ipc:main"
-namioto-tempo = "namioto.analysis.beats:main"
-namioto-wavetone = "namioto.analysis.wavetone:main"
-namioto-spectrum = "namioto.analysis.spectrum:main"
-namioto-tempocnn = "namioto.analysis.tempo:main"
-namioto-game = "namioto.analysis.game:main"
-namioto-align = "namioto.analysis.align:main"
+namioto-cli = "namioto.cli:main"
 
 [dependency-groups]
 # the analysis jobs need one of the onnxruntime builds and the tests exercise them, but no default

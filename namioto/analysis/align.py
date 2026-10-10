@@ -850,7 +850,7 @@ def read_segments(path: str | pathlib.Path) -> list[Segment]:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="namioto-cli align", description=__doc__)
     parser.add_argument("audio", help="the separated vocal to align against")
     parser.add_argument("segments", type=pathlib.Path, help="JSON list of {start, end, tokens}, one entry per line")
     parser.add_argument(

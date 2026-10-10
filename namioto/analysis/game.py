@@ -418,7 +418,7 @@ def quantized(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="namioto-game",
+        prog="namioto-cli game",
         description="Extract the notes of a singing voice with GAME's ONNX models.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

@@ -127,7 +127,7 @@ def estimate(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="namioto-cli tempo", description=__doc__)
     parser.add_argument("audio", help="input audio file")
     parser.add_argument("--local", action="store_true", help="also print the per-window tempo")
     parser.add_argument("--json", action="store_true", help="print the estimate as JSON")
