@@ -70,7 +70,7 @@ from namioto.ui.open_dialog import OpenAudioDialog
 from namioto.ui.roll import (
     CONTENT_MARGIN,
     LENGTH_BEATS,
-    NOTE_INSET,
+    NOTE_VISUAL_INSET,
     PITCH_MAX,
     PITCH_MIN,
     RULER_HEIGHT,
@@ -2657,19 +2657,20 @@ def test_notes_are_drawn_over_the_spectrum(window) -> None:
     image = window.view.grab().toImage()
     assert pixel_at(window.view, image, *middle) == note.fill
     beside = pixel_at(window.view, image, note.start - 0.5, middle[1])
-    assert beside != note.fill and beside.red() > 0  # the spectrum is behind the note, dimmed by the mode
+    assert beside != note.fill
+    assert 0 < beside.red() <= 115
     window.view.clear_notes()
     window.view.set_spectrum(None)
     window.edit.mode.click()
 
 
-def test_notes_are_flat_red_with_a_bevel(window) -> None:
+def test_notes_have_a_light_bevel_and_dark_outline(window) -> None:
     window.edit.pen.click()  # a note is only on screen while editing
     window.view.clear_notes()
     window.view.set_spectrum(make_spectrum(frames=400, value=0.0))  # black cells, nothing else is red
     note = window.view.add_note(60, 2.0, 2.0)
-    top = PITCH_MAX - note.pitch + NOTE_INSET
-    bottom = PITCH_MAX - note.pitch + 1.0 - NOTE_INSET
+    top = PITCH_MAX - note.pitch + NOTE_VISUAL_INSET
+    bottom = PITCH_MAX - note.pitch + 1.0 - NOTE_VISUAL_INSET
     window.view.centerOn(QPointF(note.start + note.duration / 2, (top + bottom) / 2))
     image = window.view.grab().toImage()
     top_left = device_point(window.view, note.start, top)
@@ -2677,13 +2678,16 @@ def test_notes_are_flat_red_with_a_bevel(window) -> None:
 
     mid_x = (top_left.x() + bottom_right.x()) // 2
     column = [image.pixelColor(mid_x, y) for y in range(top_left.y(), bottom_right.y())]
-    assert note.edge_light in column[:2]  # the light bevel is on top
-    assert note.edge_dark in column[-2:]  # the dark one below
+    assert note.contains(QPointF(note.duration / 2, 0.01))
+    assert note.rect().height() > 1.0 - 2 * NOTE_VISUAL_INSET
+    outline = QColor(theme.NOTE_OUTLINE)
+    assert note.edge_light in column[:2]
+    assert outline in column[-2:]
     assert {colour.name() for colour in column[2:-2]} == {note.fill.name()}
 
     row = [image.pixelColor(x, (top_left.y() + bottom_right.y()) // 2) for x in range(top_left.x(), bottom_right.x())]
-    assert note.edge_light in row[:2]  # and light on the left, dark on the right
-    assert note.edge_dark in row[-2:]
+    assert note.edge_light in row[:2]
+    assert outline in row[-2:]
     assert {colour.name() for colour in row[2:-2]} == {note.fill.name()}
     window.edit.mode.click()
 
@@ -2692,8 +2696,8 @@ def test_selected_notes_use_the_wavetone_highlight(window) -> None:
     window.edit.pen.click()  # a note is only on screen while editing
     window.view.clear_notes()
     note = window.view.add_note(60, 2.0, 2.0)
-    top = PITCH_MAX - note.pitch + NOTE_INSET
-    bottom = PITCH_MAX - note.pitch + 1.0 - NOTE_INSET
+    top = PITCH_MAX - note.pitch + NOTE_VISUAL_INSET
+    bottom = PITCH_MAX - note.pitch + 1.0 - NOTE_VISUAL_INSET
     window.view.centerOn(QPointF(note.start + note.duration / 2, (top + bottom) / 2))
     note.setSelected(True)
     image = window.view.grab().toImage()
@@ -2706,6 +2710,7 @@ def test_selected_notes_use_the_wavetone_highlight(window) -> None:
     assert {colour.name() for colour in column} == {
         theme.canvas().note_selected.name(),
         theme.canvas().note_selected_edge.name(),
+        theme.NOTE_OUTLINE,
     }
     window.edit.mode.click()
 
@@ -5482,7 +5487,7 @@ def test_note_lyric_font_is_bold_and_tracks_vertical_zoom(own_window, monkeypatc
         painter.end()
 
     assert all(font.bold() for font in fonts)
-    assert fonts[0].pixelSize() >= 12
+    assert [font.pixelSize() for font in fonts] == [9, 31, 62, 62]
     assert fonts[0].pixelSize() < fonts[1].pixelSize() < fonts[2].pixelSize()
     assert fonts[2].pixelSize() > 14
     assert fonts[3].pixelSize() == fonts[2].pixelSize()

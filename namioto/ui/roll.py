@@ -57,6 +57,7 @@ from namioto.ui.viewport import ViewportStrip
 LENGTH_BEATS = 64
 CONTENT_MARGIN = 4.0
 NOTE_INSET = 0.06
+NOTE_VISUAL_INSET = 0.14
 BAR_BEATS = 4.0
 PAGE_TURN_MARGIN = 0.15  # how close to the right edge the playhead may get before the page turns
 PAGE_TURN_LEAD = 0.2  # where on the fresh page the playhead then sits
@@ -68,7 +69,7 @@ SNAP_CHOICES = (("1/1", 4.0), ("1/2", 2.0), ("1/4", 1.0), ("1/8", 0.5), ("1/16",
 SPECTRUM_TOP = PITCH_MAX - (MIDI_OFFSET + NOTE_COUNT - 1)
 MIN_LINE_SPACING = 16.0
 OVERTONES = (2, 3, 4)  # f, 2f, 3f and 4f: the four partials WaveTone marks over the row under the mouse
-EDIT_DIM = 0.65  # the spectrum steps back while editing so the notes stand out over it
+EDIT_DIM = 0.45
 MIN_GRID_SPACING = 9.0
 HISTORY_LIMIT = 50  # snapshots of the whole document, so the depth trades memory for how far back undo goes
 NEW_CHANNEL = -1  # the channel menu's "make one" entry, since no channel number is negative
@@ -202,8 +203,7 @@ class NoteItem(QGraphicsRectItem):
         colors = theme.canvas()
         body = colors.note_selected if selected else self.fill
         light = colors.note_selected_edge if selected else self.edge_light
-        dark = colors.note_selected_edge if selected else self.edge_dark
-        rect = self.rect()
+        rect = self.rect().adjusted(0, NOTE_VISUAL_INSET - NOTE_INSET, 0, NOTE_INSET - NOTE_VISUAL_INSET)
         transform = painter.transform()
         px, py = 1.0 / transform.m11(), 1.0 / transform.m22()  # one device pixel in scene units
         left, top = rect.left() + px / 2, rect.top() + py / 2
@@ -217,7 +217,7 @@ class NoteItem(QGraphicsRectItem):
         painter.setPen(QPen(light, 0))
         painter.drawLine(QPointF(left, top), QPointF(right + px / 2, top))
         painter.drawLine(QPointF(left, top), QPointF(left, bottom + py / 2))
-        painter.setPen(QPen(dark, 0))
+        painter.setPen(QPen(QColor(theme.NOTE_OUTLINE), 0))
         painter.drawLine(QPointF(left - px / 2, bottom), QPointF(right + px / 2, bottom))
         painter.drawLine(QPointF(right, top - py / 2), QPointF(right, bottom + py / 2))
         if self.filtered:
@@ -228,7 +228,7 @@ class NoteItem(QGraphicsRectItem):
             painter.setClipRect(rect)
             painter.scale(px, py)
             font = QFont()
-            font.setPixelSize(max(11, round(rect.height() / py * 0.85)))
+            font.setPixelSize(max(9, round(rect.height() / py * 0.72)))
             font.setBold(True)
             painter.setFont(font)
             metrics = painter.fontMetrics()
@@ -247,7 +247,9 @@ class NoteItem(QGraphicsRectItem):
                     if selected
                     else QColor(theme.LYRIC_TEXT)
                 )
-                painter.drawText(QRectF(x, 0, room, rect.height() / py), int(Qt.AlignmentFlag.AlignVCenter), visible)
+                painter.drawText(
+                    QRectF(x, rect.top() / py, room, rect.height() / py), int(Qt.AlignmentFlag.AlignVCenter), visible
+                )
                 x += metrics.horizontalAdvance(visible)
                 if visible != text:
                     break

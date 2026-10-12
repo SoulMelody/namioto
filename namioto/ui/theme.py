@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from PySide6.QtGui import QColor, QGuiApplication, QPalette, QStyleHints
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
+NOTE_OUTLINE = "#101318"
+
 # One body colour per channel, picked by channel number; the first is the default channel's own.
 NOTE_PALETTE = (
     "#ff2f2f",
