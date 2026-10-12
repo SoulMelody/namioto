@@ -652,12 +652,17 @@ def _line_timings(line, spans: Sequence[tuple | None], offset_ms: int = 0) -> _L
         for sound, item in owned:
             for index in range(cursor, sound.first_atom):
                 channel = container.channels[index]
-                preceding = next((entry for entry in reversed(rendered) if entry.glyph.channel == channel), None)
+                preceding = rendered[-1] if rendered and rendered[-1].glyph.channel == channel else None
                 following = next((entry for entry in timings[sound.index :] if entry.glyph.channel == channel), item)
                 time = preceding.end_ms if preceding else following.start_ms
                 rendered.append(
                     _GlyphTiming(
-                        _Glyph(container.atoms[index], container.atoms[index], channel=channel),
+                        _Glyph(
+                            container.atoms[index],
+                            container.atoms[index],
+                            channel=channel,
+                            color_channel=container.color_channels[index],
+                        ),
                         time,
                         time,
                         (preceding or following).clipped,
@@ -667,7 +672,7 @@ def _line_timings(line, spans: Sequence[tuple | None], offset_ms: int = 0) -> _L
             cursor = sound.last_atom + 1
         for index in range(cursor, len(container.atoms)):
             channel = container.channels[index]
-            preceding = next((entry for entry in reversed(rendered) if entry.glyph.channel == channel), None)
+            preceding = rendered[-1] if rendered and rendered[-1].glyph.channel == channel else None
             following = next(
                 (
                     entry
@@ -680,7 +685,12 @@ def _line_timings(line, spans: Sequence[tuple | None], offset_ms: int = 0) -> _L
             time = preceding.end_ms if preceding else following.start_ms if following else 0
             rendered.append(
                 _GlyphTiming(
-                    _Glyph(container.atoms[index], container.atoms[index], channel=channel),
+                    _Glyph(
+                        container.atoms[index],
+                        container.atoms[index],
+                        channel=channel,
+                        color_channel=container.color_channels[index],
+                    ),
                     time,
                     time,
                     anchor.clipped if anchor else False,
@@ -836,14 +846,18 @@ def _generate_karaoke_text(
             continue
         if durations[index] == 0 and glyph.small:
             for earlier in range(index - 1, -1, -1):
-                if glyphs[earlier].glyph.channel == glyph.channel and durations[earlier] >= 2 * MIN_WORD_DURATION:
+                if glyphs[earlier].glyph.channel != glyph.channel:
+                    break
+                if durations[earlier] >= 2 * MIN_WORD_DURATION:
                     durations[index] = durations[earlier] // 2
                     durations[earlier] -= durations[index]
                     break
         elif durations[index] == 0 and glyph.text.strip(" 　"):
             borrowed = False
             for earlier in range(index - 1, -1, -1):
-                if glyphs[earlier].glyph.channel == glyph.channel and durations[earlier] >= 2 * MIN_WORD_DURATION:
+                if glyphs[earlier].glyph.channel != glyph.channel:
+                    break
+                if durations[earlier] >= 2 * MIN_WORD_DURATION:
                     durations[earlier] -= MIN_WORD_DURATION
                     durations[index] = MIN_WORD_DURATION
                     borrowed = True
@@ -854,25 +868,27 @@ def _generate_karaoke_text(
     for index in range(len(glyphs)):
         if durations[index] == -1:
             for later in range(index + 1, len(durations)):
-                if (
-                    glyphs[later].glyph.channel == glyphs[index].glyph.channel
-                    and durations[later] > 2 * MIN_WORD_DURATION
-                ):
+                if glyphs[later].glyph.channel != glyphs[index].glyph.channel:
+                    break
+                if durations[later] > 2 * MIN_WORD_DURATION:
                     durations[later] -= MIN_WORD_DURATION
                     durations[index] = MIN_WORD_DURATION
                     break
             if durations[index] == -1:
                 durations[index] = 1
 
-    shifts: dict[int, int] = {}
+    shift = 0
+    previous_channel = None
     adjusted = []
     for item, duration in zip(glyphs, durations, strict=True):
         channel = item.glyph.channel
-        shift = shifts.get(channel, 0)
+        if channel != previous_channel:
+            shift = 0
+        previous_channel = channel
         delta = duration * 10 - max(0, item.duration_ms) // 10 * 10
         adjusted.append(_GlyphTiming(item.glyph, item.start_ms + shift, item.end_ms + shift + delta, item.clipped))
         if not item.clipped:
-            shifts[channel] = shift + delta
+            shift += delta
 
     base_ends.clear()
     for item in adjusted:

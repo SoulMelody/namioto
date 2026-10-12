@@ -44,6 +44,20 @@ def test_export_preserves_characters_without_sounds(text, surface, explicit):
     assert re.sub(r"\{[^}]*\}", "", line.split(",", 9)[9]) == surface
 
 
+@pytest.mark.parametrize("text", ["もっと@c1{（もっと）}うまく@c1{（うまく）}なりたいな.2！", "あ@c1{！}"])
+def test_color_only_tags_preserve_punctuation_colors(text):
+    import re
+
+    from namioto.karaoke.sounds import natural_sounds
+
+    sounds = natural_sounds(text)[0].sounds
+    result = generate_ass(text, [[(index, index + 1) for index in range(len(sounds))]])
+    line = next(line for line in result.splitlines() if line.startswith("Dialogue:") and ",LEAD," not in line)
+    punctuation = re.findall(r"\{[^}]*\\-namioto_(\d+)_[^}]*\}([（）！])", line)
+    expected = [("1", "（"), ("1", "）"), ("1", "（"), ("1", "）"), ("0", "！")]
+    assert punctuation == (expected if text.startswith("もっと") else [("1", "！")])
+
+
 def test_punctuation_at_channel_boundary_keeps_its_owner():
     result = generate_ass(
         "@0{Rolling! }@1{Ah—}", [[(0, 1), (1, 2)]], settings=AssSettings(channel_colors={1: "FF0000"})
@@ -88,6 +102,30 @@ def test_new_channel_opening_punctuation_anchors_to_its_first_sound(start):
     first = round(start * 1000)
     assert rf"{{\k8\-namioto_1_{first}_{first + 80}_{first + 80}}}（" in result
     assert rf"\-namioto_1_{first + 80}_" in result
+
+
+@pytest.mark.parametrize("start", [10, 20])
+def test_repeated_channel_opening_punctuation_waits_for_its_own_run(start):
+    import re
+
+    from namioto.karaoke.sounds import natural_sounds
+
+    text = "おとなの@1{（(きゃー).1＞＿＜）}階段[かい,だん]@1{（コワイ！）}"
+    sounds = natural_sounds(text)[0].sounds
+    spans = []
+    channel_one = 0
+    for index, sound in enumerate(sounds):
+        if sound.channel == 1:
+            onset = 4 + channel_one if channel_one < 2 else start + channel_one - 2
+            channel_one += 1
+        else:
+            onset = index
+        spans.append((onset, onset + 1))
+    result = generate_ass(text, [spans], settings=AssSettings(channel_colors={1: "FF0000"}))
+    line = next(line for line in result.splitlines() if line.startswith("Dialogue:") and ",LEAD," not in line)
+    openings = re.findall(r"\{\\k8\\-namioto_1_(\d+)_(\d+)_(\d+)\}（", line)
+    assert openings == [("4000", "4080", "4080"), (str(start * 1000), str(start * 1000 + 80), str(start * 1000 + 80))]
+    assert rf"\-namioto_1_{start * 1000 + 80}_{(start + 1) * 1000}_" in line
 
 
 def test_multiline_scope_and_simultaneous_display_lines_do_not_share_note_cursors():
