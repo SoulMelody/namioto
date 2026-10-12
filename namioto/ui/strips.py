@@ -24,6 +24,7 @@ SOUND_PAD = 3
 SOUND_MARGIN = 5
 SOUND_MAGNET_PX = 4
 MAIN_BOTTOM = 36
+SOUND_DROP_DRAG_PX = 12
 
 
 class SoundStrip(ViewportStrip):
@@ -304,7 +305,7 @@ class SoundStrip(ViewportStrip):
                     candidate = None
             elif not self._lane(row, column) <= y < self._lane(row, column) + SOUND_HEIGHT:
                 candidate = None
-            elif y > main_bottom + SOUND_MARGIN:
+            elif y - self._press_y >= SOUND_DROP_DRAG_PX:
                 candidate = detach(self._base, ref, 0)
             elif y < main_bottom - SOUND_MARGIN:
                 target = next(

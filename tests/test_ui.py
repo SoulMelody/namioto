@@ -5855,8 +5855,8 @@ def test_dropping_a_sound_preserves_other_krc_counts_not_note_identity(own_windo
     before = view.undo_stack.count()
     first = strip._blocks()[(0, 0)]
     sound_mouse(own_window, QEvent.Type.MouseButtonPress, first.center().x(), first.center().y())
-    sound_mouse(own_window, QEvent.Type.MouseMove, first.center().x(), 55)
-    sound_mouse(own_window, QEvent.Type.MouseButtonRelease, first.center().x(), 55)
+    sound_mouse(own_window, QEvent.Type.MouseMove, first.center().x(), 35)
+    sound_mouse(own_window, QEvent.Type.MouseButtonRelease, first.center().x(), 35)
     wait_for_lyric_mapping(own_window)
     assert own_window.lyrics_text == "あ.0い"
     assert view.lyric_mapped == (((), (1,)),)
