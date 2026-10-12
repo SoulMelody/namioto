@@ -32,6 +32,7 @@ LOCALES = {"en": "en_US", "zh": "zh_CN"}
 CATALOGS: dict[str, dict[str, str]] = {
     "zh": {
         # settings window and its pages
+        "Overlapping note: excluded from lyric mapping. Move, shorten or remove the overlapping notes.": "音符重叠：此音符已被排除在歌词映射之外。请移动、缩短或删除相互重叠的音符。",
         "Settings": "设置",
         "Restore defaults": "恢复默认",
         "Advanced": "高级",

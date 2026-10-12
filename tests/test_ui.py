@@ -28,6 +28,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPalette,
+    QPen,
     QWheelEvent,
 )
 from PySide6.QtTest import QTest
@@ -2650,6 +2651,37 @@ def pixel_at(view: PianoRollView, image: QImage, scene_x: float, scene_y: float)
 
 def row_colors(image: QImage, row: int) -> list[int]:
     return [image.pixel(x, row) for x in range(image.width())]
+
+
+def test_filtered_note_has_a_cosmetic_border_and_explanatory_tooltip(window, monkeypatch) -> None:
+    view = window.view
+    note = view.add_note(69, 0.0, 2.0)
+    view.set_filtered_notes((note.id,))
+    assert "Overlapping note" in note.toolTip()
+    view._sync_channel_visuals()
+    assert "excluded from lyric mapping" in note.toolTip()
+
+    pens = []
+    original = QPainter.setPen
+
+    def capture_pen(painter, pen):
+        if isinstance(pen, QPen):
+            pens.append(pen)
+        return original(painter, pen)
+
+    monkeypatch.setattr(QPainter, "setPen", capture_pen)
+    image = QImage(400, 200, QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        painter.scale(100, 20)
+        note.paint(painter, None)
+    finally:
+        painter.end()
+    assert pens[-1].isCosmetic()
+    assert pens[-1].widthF() == 2
+
+    view.set_filtered_notes(())
+    assert note.toolTip() == ""
 
 
 def test_spectrum_image_follows_the_colour_ramp() -> None:

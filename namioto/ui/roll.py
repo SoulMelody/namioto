@@ -222,7 +222,9 @@ class NoteItem(QGraphicsRectItem):
         painter.drawLine(QPointF(left - px / 2, bottom), QPointF(right + px / 2, bottom))
         painter.drawLine(QPointF(right, top - py / 2), QPointF(right, bottom + py / 2))
         if self.filtered:
-            painter.setPen(QPen(QColor(theme.LYRIC_BAD), max(1.0, 2 * px)))
+            pen = QPen(QColor(theme.LYRIC_BAD), 2)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
         if self.lyric_text:
@@ -679,7 +681,7 @@ class PianoRollView(QGraphicsView):
         wanted = set(ids)
         for item in self._items:
             item.filtered = item.id in wanted
-            item.update()
+        self._sync_channel_visuals()
 
     def _add_item(self, note: Note) -> NoteItem:
         item = NoteItem(note)
@@ -897,7 +899,12 @@ class PianoRollView(QGraphicsView):
             text = "".join(text for text, _zero in runs)
             note.lyric_runs = tuple(runs) if self.note_lyrics_visible else ()
             note.lyric_text = text if self.note_lyrics_visible else ""
-            note.setToolTip(text)
+            warning = (
+                tr("Overlapping note: excluded from lyric mapping. Move, shorten or remove the overlapping notes.")
+                if note.filtered
+                else ""
+            )
+            note.setToolTip("\n".join(part for part in (text, warning) if part))
             note.update()
             note.fill, note.edge_light, note.edge_dark = theme.note_shades(self.channel_color(note.channel))
             channel = self._channel(note.channel)
