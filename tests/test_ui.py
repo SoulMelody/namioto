@@ -53,6 +53,7 @@ from namioto.analysis.bpm import BpmEstimate
 from namioto.analysis.spectrum import MIDI_OFFSET, NOTE_COUNT, NoteSpectrum, stft_notes
 from namioto.channels import Channel
 from namioto.interaction import Interaction, Tool
+from namioto.karaoke import AssSettings
 from namioto.karaoke.operations import Drop, Match, Merge, SoundRef
 from namioto.karaoke.sounds import natural_sounds
 from namioto.lyrics import text_key
@@ -4970,7 +4971,8 @@ def test_cancelled_or_failed_subtitle_export_does_not_remember_options(subtitle_
 def test_ass_options_cover_the_single_track_settings_without_mutating_them(own_window):
     original = store.to_dict(own_window.settings)
     dialog = AssDialog(own_window.settings, own_window)
-    assert set(dialog.editors) == set(vars(own_window.settings.ass))
+    assert set(dialog.editors) | {"channel_colors"} == set(vars(own_window.settings.ass))
+    assert set(dialog.channel_editors) == set(range(16))
     assert set(dialog.editors) == {name for _, names in ASS_GROUPS for name in names}
     assert dialog.export_button.isEnabled()
     dialog.editors["font_size"].setValue(40)
@@ -5377,10 +5379,10 @@ def test_moving_a_lyric_line_preserves_its_mapping_as_krc(own_window, tmp_path) 
     before = own_window.view.undo_stack.count()
     own_window._set_lyric_channel(0, 1)
     wait_for_lyric_mapping(own_window)
-    assert own_window.lyrics_text == "{1}(あい).1"
+    assert own_window.lyrics_text == "@1{(あい).1}"
     assert own_window.view.lyric_lines[0].track == 1
     assert own_window.view.lyric_times == (((4.0, 5.0), (5.0, 6.0)),)
-    assert own_window.view.lyric_operations == ()
+    assert own_window.view.lyric_operations == (Merge((SoundRef(0, 0), SoundRef(0, 1)), 2),)
     assert own_window.view.undo_stack.count() == before + 1
     assert own_window.save_project(own_window.project_path)
     own_window.view.undo()
@@ -5390,7 +5392,7 @@ def test_moving_a_lyric_line_preserves_its_mapping_as_krc(own_window, tmp_path) 
     assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)
     own_window.view.redo()
     wait_for_lyric_mapping(own_window)
-    assert own_window.lyrics_text == "{1}(あい).1"
+    assert own_window.lyrics_text == "@1{(あい).1}"
     assert own_window.load_project(own_window.project_path)
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_lines[0].track == 1
@@ -6770,7 +6772,7 @@ def test_time_edit_undo_and_redo_preserve_sparse_note_ids_and_anchors(own_window
 
 
 def _mixed_lyrics(own_window, tmp_path, *, confirmed=True):
-    text = "あ\n{1}い\nう"
+    text = "あ\n@1{い}\nう"
     own_window.project_path = tmp_path / "mixed.nto"
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0), Channel(channel=1), Channel(channel=2)))
@@ -6787,33 +6789,35 @@ def _mixed_lyrics(own_window, tmp_path, *, confirmed=True):
     wait_for_lyric_mapping(own_window)
 
 
-def test_mixed_channels_use_edit_mapping_only_on_zero(own_window, tmp_path):
+def test_mixed_channels_all_use_edit_mapping(own_window, tmp_path):
     _mixed_lyrics(own_window, tmp_path)
-    assert own_window.view.lyric_times == (((0.0, 1.0),), ((4.0, 5.0),), ((2.0, 3.0),))
-    assert {ref.line for op in own_window.view.lyric_operations for ref in op.sounds} == {0, 2}
+    assert own_window.view.lyric_times == (((0.0, 1.0),), ((4.0, 7.0),), ((2.0, 3.0),))
+    assert {ref.line for op in own_window.view.lyric_operations for ref in op.sounds} == {0, 1, 2}
     assert Match(SoundRef(2, 0), (20,), confirmed=True) in own_window.view.lyric_operations
     assert not own_window._lyric_error
+    own_window._on_lyric_action("confirm", 1, 0)
+    wait_for_lyric_mapping(own_window)
     assert own_window.export_krc(tmp_path / "mixed.krc")
     assert natural_sounds((tmp_path / "mixed.krc").read_text())[1].track == 1
     assert own_window.export_ass(tmp_path / "mixed.ass")
 
 
-def test_alignment_adopts_only_channel_zero_rows(own_window, tmp_path):
+def test_alignment_adopts_all_channel_rows(own_window, tmp_path):
     _mixed_lyrics(own_window, tmp_path)
-    own_window._adopt_alignment([[(0.1, 0.9)], [(2.1, 0.9)]], "mms", (True, False))
+    own_window._adopt_alignment([[(0.1, 0.9)], [(4.1, 0.9)], [(2.1, 0.9)]], "mms", (True, False, False))
     wait_for_lyric_mapping(own_window)
-    assert own_window.view.lyric_raw == (((0.1, 0.9),), ((4.0, 1.0),), ((2.1, 0.9),))
+    assert own_window.view.lyric_raw == (((0.1, 0.9),), ((4.1, 0.9),), ((2.1, 0.9),))
     assert own_window._lyric_flags == (True, False, False)
-    assert own_window.view.lyric_mapped[1] == ((30,),)
+    assert own_window.view.lyric_mapped[1] == ((30, 40),)
 
 
-def test_align_dialog_receives_only_channel_zero_text(own_window, tmp_path, monkeypatch):
+def test_align_dialog_receives_all_channel_text(own_window, tmp_path, monkeypatch):
     _mixed_lyrics(own_window, tmp_path)
     own_window.audio_path = Path("/tmp/song.wav")
     seen = []
     monkeypatch.setattr(AlignDialog, "exec", lambda dialog: seen.append(dialog.text))
     own_window._open_align()
-    assert seen == ["あ\nう"]
+    assert seen == ["あ\n@1{い}\nう"]
 
 
 def test_moving_one_line_preserves_other_confirmed_anchors(own_window, tmp_path):
@@ -6822,12 +6826,12 @@ def test_moving_one_line_preserves_other_confirmed_anchors(own_window, tmp_path)
     wait_for_lyric_mapping(own_window)
     assert [line.track for line in own_window.view.lyric_lines] == [1, 1, 0]
     assert Match(SoundRef(2, 0), (20,), confirmed=True) in own_window.view.lyric_operations
-    assert own_window.view.lyric_mapped[:2] == (((30,),), ((40,),))
+    assert own_window.view.lyric_mapped[:2] == (((),), ((30, 40),))
     assert "Channel 0" in own_window._lyric_error
     assert own_window.view.lyric_times[2] == ((2.0, 3.0),)
 
 
-def test_empty_faithful_channel_does_not_block_channel_zero_edits(own_window, tmp_path):
+def test_empty_channel_does_not_block_other_channel_edits(own_window, tmp_path):
     _mixed_lyrics(own_window, tmp_path, confirmed=False)
     own_window._set_lyric_channel(1, 2)
     wait_for_lyric_mapping(own_window)
@@ -6844,26 +6848,28 @@ def test_empty_faithful_channel_does_not_block_channel_zero_edits(own_window, tm
     assert not own_window._lyric_error
 
 
-def test_faithful_rows_reject_edit_anchors(own_window, tmp_path):
+def test_nonzero_channel_accepts_edit_anchors(own_window, tmp_path):
     _mixed_lyrics(own_window, tmp_path)
-    before = own_window.view.lyric_operations
     count = own_window.view.undo_stack.count()
-    own_window._on_lyric_action("drop", 1, 0)
-    assert own_window.view.lyric_operations == before
-    assert own_window.view.undo_stack.count() == count
+    own_window._on_lyric_action("confirm", 1, 0)
+    wait_for_lyric_mapping(own_window)
+    assert Match(SoundRef(1, 0), (30, 40), confirmed=True) in own_window.view.lyric_operations
+    assert own_window.view.undo_stack.count() == count + 1
 
 
-def test_nonzero_only_lyrics_cannot_be_aligned(own_window, tmp_path, monkeypatch):
+def test_nonzero_only_lyrics_can_be_aligned(own_window, tmp_path, monkeypatch):
     _mixed_lyrics(own_window, tmp_path, confirmed=False)
     own_window._set_lyric_channel(0, 1)
     wait_for_lyric_mapping(own_window)
     own_window._set_lyric_channel(2, 1)
     wait_for_lyric_mapping(own_window)
-    assert not own_window.edit.align.isEnabled()
+    assert own_window.edit.align.isEnabled()
+    own_window.view.set_active_channel(1)
     own_window.audio_path = Path("/tmp/song.wav")
-    monkeypatch.setattr(AlignDialog, "exec", lambda dialog: pytest.fail("must not align"))
+    seen = []
+    monkeypatch.setattr(AlignDialog, "exec", lambda dialog: seen.append(dialog.text))
     own_window._open_align()
-    assert own_window.statusBar().currentMessage() == "Only lyrics on channel 0 can be aligned"
+    assert seen == [own_window.lyrics_text]
 
 
 def test_lyric_context_menu_selects_a_channel(own_window, tmp_path, monkeypatch):
@@ -6874,13 +6880,83 @@ def test_lyric_context_menu_selects_a_channel(own_window, tmp_path, monkeypatch)
         submenu = next(action.menu() for action in menu.actions() if action.text() == "Lyric channel")
         menus.append(submenu)
         assert [action.isChecked() for action in submenu.actions()] == [False, True, False]
-        assert not any(action.text() == "Drop this sound" for action in menu.actions())
+        assert any(action.text() == "Drop this sound" for action in menu.actions())
         submenu.actions()[2].trigger()
 
     monkeypatch.setattr(QMenu, "exec", choose)
     strip = own_window.sound_strip
-    point = QPoint(round(strip._x(4.5)), 15)
+    point = QPoint(round(strip._x(4.5)), round(strip._blocks()[(1, 0)].center().y()))
     strip.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, point, strip.mapToGlobal(point)))
     wait_for_lyric_mapping(own_window)
     assert menus
     assert own_window.view.lyric_lines[1].track == 2
+
+
+def test_assigning_one_sound_changes_only_ownership_and_is_one_undo_step(own_window, tmp_path):
+    text = "あい"
+    own_window.project_path = tmp_path / "voices.nto"
+    own_window.transport.bpm.setValue(60.0)
+    own_window.view.set_channels((Channel(channel=0), Channel(channel=1)))
+    own_window.view.set_notes(((60, 0.0, 1.0, 0, 10), (62, 1.0, 1.0, 0, 20), (64, 1.0, 1.0, 1, 30)))
+    own_window._stored_lyrics = project.Lyrics(text=text, key=text_key(text), raw=(((0.0, 1.0), (1.0, 1.0)),))
+    own_window._watch_lyrics()
+    wait_for_lyric_mapping(own_window)
+    before = own_window.view.undo_stack.count()
+    raw = own_window.view.lyric_raw
+    own_window._set_lyric_channel(0, 1, index=1)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "あ@1{い}"
+    assert [sound.channel for sound in own_window.view.lyric_lines[0].sounds] == [0, 1]
+    assert own_window.view.lyric_raw == raw
+    assert own_window.view.lyric_mapped[0][1] == (30,)
+    assert own_window.view.undo_stack.count() == before + 1
+    blocks = own_window.sound_strip._blocks()
+    assert blocks[(0, 0)].bottom() < blocks[(0, 1)].top()
+    own_window.view.undo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == text
+    assert [sound.channel for sound in own_window.view.lyric_lines[0].sounds] == [0, 0]
+    assert own_window.view.lyric_mapped == (((10,), (20,)),)
+
+
+def test_raw_onsets_are_limited_only_by_their_own_channel(own_window):
+    view = own_window.view
+    view.load_lyrics(natural_sounds("@1{あ}@2{い}@1{う}"), (), raw=[[(0.0, 1.0), (0.5, 1.0), (2.0, 1.0)]])
+    assert view.set_sound_onset(0, 0, 1.5)
+    assert view.lyric_raw == (((1.5, 1.0), (0.5, 1.0), (2.0, 1.0)),)
+
+
+def test_channel_alignment_preserves_other_channels_evidence_and_anchors(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path)
+    anchor = Match(SoundRef(2, 0), (20,), confirmed=True)
+    own_window._adopt_alignment([[(4.1, 0.9)]], "mms", channel=1)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_raw == (((0.0, 1.0),), ((4.1, 0.9),), ((2.0, 1.0),))
+    assert anchor in own_window.view.lyric_operations
+
+
+def test_align_dialog_selects_the_active_channel_and_separates_its_cache(own_window, tmp_path, monkeypatch):
+    _mixed_lyrics(own_window, tmp_path)
+    own_window.view.set_active_channel(1)
+    own_window.audio_path = Path("/tmp/song.wav")
+    seen = []
+    monkeypatch.setattr(AlignDialog, "exec", lambda dialog: seen.append((dialog.channel, dialog.cache_text)))
+    own_window._open_align()
+    assert seen == [(1, "# Align channel 1\n" + own_window.lyrics_text)]
+
+
+def test_ass_channel_colour_pickers_validate_and_leave_preferences_untouched(own_window):
+    original = store.to_dict(own_window.settings)
+    dialog = AssDialog(own_window.settings, own_window)
+    dialog.channel_editors[1].setText("FF0000")
+    dialog.channel_editors[2].setText("00FF00")
+    assert dialog.export_button.isEnabled()
+    assert AssSettings(channel_colors=dialog.values().ass.channel_colors).channel_colours() == {
+        1: "FF0000",
+        2: "00FF00",
+    }
+    dialog.channel_editors[1].setText("invalid")
+    assert not dialog.export_button.isEnabled()
+    dialog.restore_defaults()
+    assert dialog.values().ass.channel_colors == ""
+    assert store.to_dict(own_window.settings) == original

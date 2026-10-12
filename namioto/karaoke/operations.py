@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from namioto.karaoke.model import KrcError
 
 # the version of the mapping algorithm whose suggested operations a project may trust
-MAPPING_VERSION = 7
+MAPPING_VERSION = 8
 
 
 @dataclass(frozen=True)
@@ -100,9 +100,13 @@ class Drop:
 Operation = Match | Merge | Drop
 
 
-def remap_operation(operation: Operation, indices) -> Operation:
-    refs = tuple(SoundRef(indices[ref.line], ref.index) for ref in operation.sounds)
+def map_operation(operation: Operation, mapper) -> Operation:
+    refs = tuple(mapper(ref) for ref in operation.sounds)
     return replace(operation, sounds=refs) if isinstance(operation, Merge) else replace(operation, sound=refs[0])
+
+
+def remap_operation(operation: Operation, indices) -> Operation:
+    return map_operation(operation, lambda ref: SoundRef(indices[ref.line], ref.index))
 
 
 def keep_operations(operations: Sequence[Operation], version: int, current: int = MAPPING_VERSION) -> tuple:

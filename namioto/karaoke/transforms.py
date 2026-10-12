@@ -16,7 +16,7 @@ def merge_words(lyrics: Lyrics) -> Lyrics:
     """Fold each run of kanji, or of Latin letters, into the group that carries the ruby."""
     chapters = []
     for chapter in lyrics.chapters:
-        lines = [Line([_merge_ruby(unit) for unit in _fold(line.units)], track=line.track) for line in chapter.lines]
+        lines = [Line([_merge_ruby(unit) for unit in _fold(line.units)]) for line in chapter.lines]
         chapters.append(Chapter(lines))
     merged = Lyrics(chapters)
     validate(merged)
@@ -96,14 +96,12 @@ def _flatten_line(line: Line) -> Line:
                 continue
 
         for part_idx, part in enumerate(unit.ruby.parts):
-            part_text = unit.text if len(unit.ruby.parts) == 1 else unit.text[part_idx]
             for i, inner in enumerate(part):
-                text = ("#" * bool(part_idx != 0) + part_text) if i == 0 else "#"
-                flat = Unit(_base(text))
+                words = _base_words(unit.base)
+                base_words = words if len(unit.ruby.parts) == 1 else words[part_idx : part_idx + 1]
+                placeholder = Word("#", _base_words(inner.base)[0].channel)
+                flat_words = ([placeholder] if part_idx != 0 else []) + base_words if i == 0 else [placeholder]
+                flat = Unit(flat_words[0] if len(flat_words) == 1 else Group(flat_words))
                 flat.set_ruby(Ruby([[inner]]))
                 units.append(flat)
-    return Line(units, track=line.track)
-
-
-def _base(text: str) -> Word | Group:
-    return Word(text) if len(text) == 1 else Group([Word(char) for char in text])
+    return Line(units)

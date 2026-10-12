@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Channel 0's edit mapping and the other tracks' literal KRC NOTE slots."""
+"""Independent channel mappings and literal KRC NOTE slots in read mode."""
 
 import pytest
 
@@ -12,25 +12,26 @@ from namioto.ui.lyric_map import map_lyrics
 
 
 def test_krc_tracks_are_zero_based_without_reinterpreting_explicit_numbers():
-    text = "あ\n{0}い\n{1}う\n{15}え"
+    text = "あ\n@0{い}\n@1{う}\n@15{え}"
     assert [line.track for line in natural_sounds(text)] == [0, 0, 1, 15]
-    assert dumps(parse(text)) == "あ\nい\n{1}う\n{15}え"
+    assert dumps(parse(text)) == "あ\nい\n@1{う}\n@15{え}"
 
 
 @pytest.mark.parametrize(
     "text,expected",
     [
-        ("{1}あ.2い", (((10, 20), (30,)),)),
-        ("{1}あい.+", (((10,), (10,)),)),
-        ("{1}あ.0い", (((), (10,)),)),
+        ("@1{あ.2い}", (((10, 20), (30,)),)),
+        ("@1{あい.+}", (((10,), (10,)),)),
+        ("@1{あ.0い}", (((), (10,)),)),
     ],
 )
-def test_nonzero_channels_read_literal_slots_even_in_edit_mode(text, expected):
+def test_nonzero_channels_read_literal_slots_in_read_mode(text, expected):
     lines = natural_sounds(text)
     result = map_lyrics(
         text,
         lines,
         [[(None, None)] * len(line.sounds) for line in lines],
+        mode="read",
         notes_by_channel={1: ((0.0, 1.0, 60, 10), (1.0, 2.0, 62, 20), (2.0, 3.0, 64, 30))},
     )
     assert result.mapped == expected
@@ -39,11 +40,12 @@ def test_nonzero_channels_read_literal_slots_even_in_edit_mode(text, expected):
 
 
 def test_faithful_cursors_are_independent_per_channel():
-    text = "{1}あ\n{2}い\n{1}う"
+    text = "@1{あ}\n@2{い}\n@1{う}"
     result = map_lyrics(
         text,
         natural_sounds(text),
         [[(None, None)]] * 3,
+        mode="read",
         notes_by_channel={1: ((0.0, 1.0, 60, 10), (2.0, 3.0, 62, 20)), 2: ((0.0, 1.0, 64, 30),)},
     )
     assert result.mapped == (((10,),), ((30,),), ((20,),))
@@ -52,11 +54,12 @@ def test_faithful_cursors_are_independent_per_channel():
 
 
 def test_unmapped_faithful_sounds_keep_raw_times_without_inventing_matches():
-    text = "{1}あい"
+    text = "@1{あい}"
     result = map_lyrics(
         text,
         natural_sounds(text),
         [[(5.0, 0.5), (6.0, 0.5)]],
+        mode="read",
         notes_by_channel={1: ((0.0, 1.0, 60, 10),)},
     )
     assert result.spans == (((0.0, 1.0), (6.0, 6.5)),)
@@ -66,6 +69,77 @@ def test_unmapped_faithful_sounds_keep_raw_times_without_inventing_matches():
 
 
 def test_rebuilding_selected_lines_preserves_other_tracks_literal_structure():
-    text = "あ\n{1}い.2うえ.+\nえ"
+    text = "あ\n@1{い.2うえ.+}\nえ"
     operations = (Match(SoundRef(0, 0), (10, 20)), Match(SoundRef(2, 0), (30,)))
-    assert rebuild(text, operations, line_indices=(0, 2)) == "あ.2\n{1}い.2うえ.+\nえ"
+    assert rebuild(text, operations, line_indices=(0, 2)) == "あ.2\n@1{い.2うえ.+}\nえ"
+
+
+@pytest.mark.parametrize("mode", ["read", "edit"])
+def test_channel_cursors_are_independent_within_one_display_line(mode):
+    text = "@1{あ}@2{い}@1{う}"
+    result = map_lyrics(
+        text,
+        natural_sounds(text),
+        [[(0.0, 1.0), (0.0, 1.0), (2.0, 1.0)]],
+        mode=mode,
+        notes_by_channel={1: ((0.0, 1.0, 60, 10), (2.0, 3.0, 62, 20)), 2: ((0.0, 1.0, 64, 30),)},
+    )
+    assert not result.error
+    assert result.mapped == (((10,), (30,), (20,)),)
+    assert result.spans == (((0.0, 1.0), (0.0, 1.0), (2.0, 3.0)),)
+    if mode == "edit":
+        assert result.operations == (
+            Match(SoundRef(0, 0), (10,)),
+            Match(SoundRef(0, 2), (20,)),
+            Match(SoundRef(0, 1), (30,)),
+        )
+        assert {channel for channel, _result in result.channel_results} == {1, 2}
+
+
+def test_an_invalid_channel_does_not_discard_another_channels_edit_mapping():
+    text = "@1{あ}@2{い}"
+    result = map_lyrics(
+        text, natural_sounds(text), [[(0.0, 1.0), (0.0, 1.0)]], notes_by_channel={1: ((0.0, 1.0, 60, 10),)}
+    )
+    assert result.operations == (Match(SoundRef(0, 0), (10,)),)
+    assert result.mapped == (((10,), ()),)
+    assert dict(result.channel_errors).keys() == {2}
+
+
+@pytest.mark.parametrize("text", ["(@1{あ}@2{い}).1", "@1{あ}@2{い.+}", "@1{し}@2{ょ}"])
+def test_mapping_rejects_indivisible_sounds_or_note_groups_with_multiple_channels(text):
+    result = map_lyrics(
+        text,
+        natural_sounds(text),
+        [[(0.0, 1.0)] * len(natural_sounds(text)[0].sounds)],
+        notes_by_channel={1: ((0.0, 1.0, 60, 10),), 2: ((0.0, 1.0, 64, 20),)},
+    )
+    assert result.error
+    assert not result.operations
+
+
+def test_dropped_group_can_span_channels_without_sharing_a_note():
+    text = "(@1{あ}@2{い}).0@1{う}@2{え}"
+    result = map_lyrics(
+        text,
+        natural_sounds(text),
+        [[(None, None)] * 4],
+        mode="read",
+        notes_by_channel={1: ((0.0, 1.0, 60, 10),), 2: ((0.0, 1.0, 64, 20),)},
+    )
+    assert not result.error
+    assert result.mapped == (((), (), (10,), (20,)),)
+    assert result.zero == ((True, True, False, False),)
+
+
+def test_edit_constraints_keep_explicit_note_counts_on_nonzero_channels():
+    text = "@1{あ.2}@2{い}"
+    result = map_lyrics(
+        text,
+        natural_sounds(text),
+        [[(0.0, 1.0), (0.0, 1.0)]],
+        use_constraints=True,
+        notes_by_channel={1: ((0.0, 1.0, 60, 10), (2.0, 3.0, 62, 20)), 2: ((0.0, 1.0, 64, 30),)},
+    )
+    assert not result.error
+    assert result.mapped == (((10, 20), (30,)),)

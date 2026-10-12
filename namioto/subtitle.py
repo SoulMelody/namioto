@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Qt-free ASS export from canonical KRC and encoded MIDI, shared by every entry point.
 
-KRC tracks select zero-based MIDI channels. Their NOTE slots are read faithfully after MIDI
+KRC channel wrappers select zero-based MIDI channels. Their NOTE slots are read faithfully after MIDI
 serialization, so persistent and in-memory intermediate exports have identical timing.
 """
 
@@ -14,8 +14,9 @@ from pathlib import Path
 from namioto import midi
 from namioto import settings as store
 from namioto.karaoke import AssSettings, generate_ass
-from namioto.karaoke.sounds import channel_lines, natural_sounds, subset_text
+from namioto.karaoke.sounds import natural_sounds
 from namioto.lyricmap import constraints, faithful
+from namioto.lyricmap.channels import split
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.verify import faithful_gate
 from namioto.utils import resolved, write_bytes, write_text
@@ -26,6 +27,9 @@ ASS_FIELDS = next(section.fields for section in store.SECTIONS if section.name =
 def validate_settings(settings: AssSettings) -> None:
     for field in ASS_FIELDS:
         value = getattr(settings, field.name)
+        if field.name == "channel_colors":
+            settings.channel_colours()
+            continue
         if field.kind in ("int", "float"):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise ValueError(f"{field.name} must be a finite number")
@@ -56,9 +60,9 @@ def build_ass(krc: str, data: bytes, *, settings: AssSettings | None = None, wav
     imported = midi.read_bytes(data, wavetone=wavetone)
     if imported.dropped or imported.left_out:
         raise ValueError("the MIDI contains incomplete notes or unsupported channels")
-    spans = [()] * len(lines)
-    for channel, indices in channel_lines(lines).items():
-        text = subset_text(krc, indices)
+    spans = [[None] * len(line.sounds) for line in lines]
+    for channel, part in split(krc).items():
+        text = part.text
         notes = resolve(
             TimedNote(note.start, note.start + note.duration, note.pitch, index)
             for index, note in enumerate(imported.notes)
@@ -69,8 +73,9 @@ def build_ass(krc: str, data: bytes, *, settings: AssSettings | None = None, wav
         gate = faithful_gate(rows, notes.stream, filtered=notes.filtered, subtitle=True, dropped=dropped)
         if not gate.open():
             raise ValueError(f"channel {channel}: " + "; ".join(problem.message for problem in gate.problems))
-        for index, row in zip(indices, rows, strict=True):
-            spans[index] = row
+        for refs, row in zip(part.refs, rows, strict=True):
+            for ref, span in zip(refs, row, strict=True):
+                spans[ref.line][ref.index] = span
     return generate_ass(krc, spans, settings=settings)
 
 

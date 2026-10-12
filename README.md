@@ -130,8 +130,27 @@ since a file whose notes start before that bar was never WaveTone's and is read 
 ## ASS export and automatic updates
 
 ASS export uses the current KRC and MIDI exports as its inputs. GUI and session exports respect
-the editor's current mapping; file exports use the mapping already written into the KRC. KRC
-track numbers select zero-based MIDI channels.
+the editor's current mapping; file exports use the mapping already written into the KRC.
+Use `@N{lyrics}` to assign lyrics to MIDI channel `N` (0–15); unwrapped lyrics use channel 0.
+The number names the MIDI channel, not the order of tracks in the file. Each channel consumes its
+own notes in order, and different channels may sing at the same time.
+
+```text
+@0{あいう} @1{えお}
+@1{
+かき
+くけ
+}
+```
+
+A wrapper only assigns a channel: ruby, groups, NOTE counts, comments, chapter breaks and newlines
+keep their usual meaning. Wrappers may span lines but cannot nest. A newline still starts a new
+subtitle display line; inline wrappers keep the lyrics on the same line. A single Sound or a group
+sharing one NOTE must belong to one channel.
+
+Choose each channel's highlight colour in the export dialog's **Channel colours** tab. Leave a
+colour blank to use the global overlay colour. File exports need only the MIDI, KRC and export
+settings; for example, `--channel-colors '0=FF0000,1=00FF00'` selects red and green.
 
 ```bash
 namioto-cli ass --krc song.krc --midi song.mid --out song.ass
@@ -474,8 +493,11 @@ to faithful mapping, or **Discard lyrics map** to restore the KRC structure from
 Saving the project normally keeps unfinished mapping work so it can be resumed next time.
 
 Once a `.krc` is open and its audio is loaded, the clock button beside the text-box one puts a time
-on every sound: the whole stream is forced onto the frames of a wav2vec2 CTC model in one pass, and
-each sound gets the span of frames it won. The lyrics are drawn above the roll as one row of sounds, on the roll's own columns: each sound
+on every sound of the currently selected channel: its stream is forced onto the frames of a
+wav2vec2 CTC model in one pass, and each sound gets the span of frames it won. Other channels keep
+their alignment and confirmed mapping decisions. The lyrics are drawn above the roll in separate
+channel lanes, on the roll's own columns. Right-click a Sound and choose **Lyric channel** to change
+its ownership in one undo step. Each sound
 starts at a `|` with its label, and its block covers the note span the mapping gives it - green while
 it sits on its notes, red while the mapping doubts it, grey and blockless while it covers none.
 Dragging a `|` slides the boundary between two sounds' raw aligned starts; the drag is smooth and

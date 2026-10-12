@@ -14,7 +14,7 @@ from namioto.karaoke import AssSettings, generate_ass
 
 @pytest.fixture
 def exports():
-    krc = "あ.2\n{1}い\nう.0"
+    krc = "あ.2\n@1{い}\nう.0"
     channels = (Channel(channel=0), Channel(channel=1))
     notes = (project.Note(0, 1, 60, 0), project.Note(2, 1, 62, 0), project.Note(4, 1, 64, 1))
     return krc, channels, notes
@@ -31,7 +31,7 @@ def test_memory_and_file_midi_exports_are_identical(exports, tmp_path, wavetone)
     assert subtitle.build_ass(krc, data, wavetone=wavetone) == expected
 
 
-@pytest.mark.parametrize("krc", ["あ.4", "{2}あ", "あ.0", ""])
+@pytest.mark.parametrize("krc", ["あ.4", "@2{あ}", "あ.0", ""])
 def test_unrenderable_input_is_rejected(exports, krc):
     _, channels, notes = exports
     with pytest.raises(ValueError):

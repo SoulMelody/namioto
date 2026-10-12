@@ -9,7 +9,7 @@ from namioto.karaoke import Group, Lyrics, Unit, Word, flatten_ruby, merge_words
 
 SAMPLE = """青[あお]い(星)[ほし]見[み]つめ
 ねえ# comment
-{2}(手)[て]を伸[の]ばす
+@2{(手)[て]を伸[の]ばす}
 
 ---
 

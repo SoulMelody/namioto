@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import colorsys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from namioto.karaoke.sounds import natural_sounds
 
@@ -87,6 +87,30 @@ class AssSettings:
     base_blur_color: str = ""
     clip_size: int = 24
     track_style: Mapping[int, str] = field(default_factory=dict)
+    channel_colors: Mapping[int, str] | str = ""
+
+    def channel_colours(self) -> dict[int, str]:
+        if isinstance(self.channel_colors, str):
+            colours = {}
+            for entry in self.channel_colors.split(","):
+                if not entry.strip():
+                    continue
+                number, separator, colour = entry.partition("=")
+                if not separator or not number.strip().isdigit():
+                    raise ValueError("channel colours must use channel=RRGGBB pairs")
+                colours[int(number)] = colour.strip()
+        else:
+            colours = dict(self.channel_colors)
+        for channel, colour in colours.items():
+            if isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel < 16:
+                raise ValueError("a colour channel must be between 0 and 15")
+            if not isinstance(colour, str):
+                raise ValueError("channel colours must be six-digit RGB colours")
+            colour = colour.lstrip("#")
+            if len(colour) != 6 or any(char not in "0123456789abcdefABCDEF" for char in colour):
+                raise ValueError("channel colours must be six-digit RGB colours")
+            colours[channel] = colour.upper()
+        return colours
 
     def blur_colours(self) -> tuple[str, str]:
         """The resolved blur colours in RGB order, for the export form's automatic values."""
@@ -287,12 +311,17 @@ def _effect_rows(
     scale: bool = True,
     furi: bool = True,
     sweep: bool = True,
+    explicit: bool = False,
 ) -> list[str]:
     """The karaoke template rows of one style: the sweep's four layers, then the ruby's four."""
 
     def num(value: float) -> str:
         return format(value, "g")
 
+    if explicit:
+        overlay = f"!syl.namioto_overlay or '{overlay}'!"
+        overlay_blur = f"!syl.namioto_overlay_blur or '{overlay_blur}'!"
+        base_blur = f"!syl.namioto_base_blur or '{base_blur}'!"
     size = config.settings.clip_size
     closed_clip = _clip(f"!$sleft-{size}!", 0, f"!$sleft-{size}!", 1080)
     pop = _size_pop() if scale else []
@@ -402,7 +431,24 @@ def _effect_rows(
     return rows
 
 
-def _header(config: _Config) -> str:
+def _timing_code(style: str, config: _Config) -> str:
+    colours = []
+    for channel, colour in config.settings.channel_colours().items():
+        owned = _Config.from_settings(replace(config.settings, overlay_color=colour))
+        colours.append(f"[{channel}]={{'{owned.overlay}','{owned.overlay_blur}','{owned.base_blur}'}}")
+    code = (
+        "local channel, first, last, base_last = (syl.inline_fx or ''):match('^namioto_(%d+)_(%d+)_(%d+)_(%d+)$'); "
+        "if channel then syl.start_time = tonumber(first); "
+        "syl.end_time = tonumber(syl.isfuri and last or base_last); "
+        "syl.duration = syl.end_time - syl.start_time; "
+        f"local colours = ({{{','.join(colours)}}})[tonumber(channel)]; "
+        "if colours then syl.namioto_overlay = colours[1]; syl.namioto_overlay_blur = colours[2]; "
+        "syl.namioto_base_blur = colours[3] end end"
+    )
+    return f"Comment: 0,0:00:00.00,0:00:00.00,{style},,0,0,0,code syl furi,{code}"
+
+
+def _header(config: _Config, *, explicit: bool = False, extra_rows: Sequence[str] = ()) -> str:
     styles = [
         _style("K1", alignment=1, margin_v=config.margin_k1, config=config),
         _style("K2", alignment=3, margin_v=config.settings.margin_v, config=config),
@@ -410,10 +456,22 @@ def _header(config: _Config) -> str:
         _style("H1", alignment=8, margin_v=config.settings.margin_v, config=config),
         _style("H2", alignment=8, margin_v=config.margin_k1, config=config),
     ]
+    for name in extra_rows:
+        styles.append(
+            _style(
+                name,
+                alignment=8 if name.startswith("H") else 1,
+                margin_v=config.settings.margin_v
+                + (int(name[1:]) - 1) * (config.settings.font_size * 2 + config.settings.margin_v),
+                config=config,
+            )
+        )
     base_outline = _to_ass(config.settings.base_outline_color)
     overlay_outline = _to_ass(config.settings.overlay_outline_color)
     effects: list[str] = []
     for name in ("K1", "K2"):
+        if explicit:
+            effects.append(_timing_code(name, config))
         effects += _effect_rows(
             name,
             config=config,
@@ -422,6 +480,7 @@ def _header(config: _Config) -> str:
             base_blur=config.base_blur,
             base_outline=base_outline,
             overlay_outline=overlay_outline,
+            explicit=explicit,
         )
     effects += _effect_rows(
         LEAD_STYLE,
@@ -436,6 +495,8 @@ def _header(config: _Config) -> str:
         sweep=False,
     )
     for name in ("H1", "H2"):
+        if explicit:
+            effects.append(_timing_code(name, config))
         effects += _effect_rows(
             name,
             config=config,
@@ -444,6 +505,20 @@ def _header(config: _Config) -> str:
             base_blur=config.top_base_blur,
             base_outline=base_outline,
             overlay_outline=overlay_outline,
+            explicit=explicit,
+        )
+    for name in extra_rows:
+        if explicit:
+            effects.append(_timing_code(name, config))
+        effects += _effect_rows(
+            name,
+            config=config,
+            overlay=config.overlay,
+            overlay_blur=config.overlay_blur,
+            base_blur=config.base_blur,
+            base_outline=base_outline,
+            overlay_outline=overlay_outline,
+            explicit=explicit,
         )
     return _assemble(styles, effects)
 
@@ -462,6 +537,8 @@ class _Glyph:
     ruby: str | None = None
     small: bool = False
     continuation: bool = False
+    channel: int = 0
+    container: int = -1
 
 
 @dataclass
@@ -498,7 +575,7 @@ class _LineInfo:
 
     @property
     def first_word_start(self) -> int:
-        return self.timing.glyph_timings[0].start_ms
+        return min(item.start_ms for item in self.timing.glyph_timings if not item.clipped)
 
 
 def _ms(seconds: float) -> int:
@@ -508,7 +585,9 @@ def _ms(seconds: float) -> int:
 def _glyph(sound, continuation: bool) -> _Glyph:
     """What one Sound renders as: its own surface without a ruby, its base and reading with one."""
     if not sound.rubied:
-        return _Glyph(text=sound.reading, reading=sound.reading, small=sound.reading in SMALL_KANA)
+        return _Glyph(
+            text=sound.reading, reading=sound.reading, small=sound.reading in SMALL_KANA, channel=sound.channel
+        )
     if continuation:
         text = "#"
     elif sound.first:
@@ -521,6 +600,8 @@ def _glyph(sound, continuation: bool) -> _Glyph:
         ruby=sound.reading,
         small=sound.reading in SMALL_KANA,
         continuation=continuation,
+        channel=sound.channel,
+        container=sound.container,
     )
 
 
@@ -583,10 +664,21 @@ def _assign_row_styles(planned: list[list[_PlannedLine]], track_style: Mapping[i
             rows = TRACK_STYLES.get(style_name)
             if rows is None:
                 raise ValueError(f"unknown track style {style_name!r} (choose from {', '.join(TRACK_STYLES)})")
-            style = rows[counters.get(style_name, 0) % 2]
+            preferred = rows[counters.get(style_name, 0) % 2]
+            first = min(item.start_ms for item in line.timing.glyph_timings if not item.clipped)
+            candidates = [
+                preferred,
+                *(row for row in rows if row != preferred),
+                *(row for row in style_rows if row.startswith(rows[0][0]) and row not in rows),
+            ]
+            style = next(
+                (row for row in candidates if not style_rows.get(row) or style_rows[row][-1].line_end_ms <= first), None
+            )
+            if style is None:
+                style = rows[0][0] + str(3 + sum(row.startswith(rows[0][0]) and row not in rows for row in style_rows))
             counters[style_name] = counters.get(style_name, 0) + 1
             info = _LineInfo(chapter_idx, line_idx, style, line.timing)
-            info.line_end_ms = line.timing.glyph_timings[-1].end_ms
+            info.line_end_ms = max(item.end_ms for item in line.timing.glyph_timings)
             style_rows.setdefault(style, []).append(info)
     return style_rows
 
@@ -643,7 +735,9 @@ def _render_guide_dots(style_rows: dict[str, list[_LineInfo]], duration_ms: int)
     return dialogues
 
 
-def _render_karaoke_dialogues(style_rows: dict[str, list[_LineInfo]], lead_time_ms: int) -> list[str]:
+def _render_karaoke_dialogues(
+    style_rows: dict[str, list[_LineInfo]], lead_time_ms: int, *, explicit: bool = False
+) -> list[str]:
     """Every line as one dialogue, in (chapter, line) order."""
     lines = [line for row in style_rows.values() for line in row]
     lines.sort(key=lambda line: (line.chapter_idx, line.line_idx))
@@ -653,7 +747,7 @@ def _render_karaoke_dialogues(style_rows: dict[str, list[_LineInfo]], lead_time_
         current = next(index for index, other in enumerate(same) if other is line)
         next_start = same[current + 1].line_start_ms if current + 1 < len(same) else None
         actual_lead = line.first_word_start - line.line_start_ms
-        text = _generate_karaoke_text(line.timing, actual_lead, next_start, line.line_end_ms)
+        text = _generate_karaoke_text(line.timing, actual_lead, next_start, line.line_end_ms, explicit=explicit)
         dialogues.append(
             f"Dialogue: 0,{_format_ass_time(max(0, line.line_start_ms))},"
             f"{_format_ass_time(line.line_end_ms)},{line.style},,0,0,0,,{text}"
@@ -661,10 +755,27 @@ def _render_karaoke_dialogues(style_rows: dict[str, list[_LineInfo]], lead_time_
     return dialogues
 
 
-def _generate_karaoke_text(timing: _LineTimings, lead_time_ms: int, next_start_ms: int | None, line_end_ms: int) -> str:
+def _generate_karaoke_text(
+    timing: _LineTimings, lead_time_ms: int, next_start_ms: int | None, line_end_ms: int, *, explicit: bool = False
+) -> str:
     """One line's `\\k` stream, the lead and every Sound's ruby written the way the template reads."""
     parts = [f"{{\\k{lead_time_ms // 10}}}"]
     glyphs = timing.glyph_timings
+    line_start = min(item.start_ms for item in glyphs if not item.clipped) - lead_time_ms
+    base_ends = {}
+    for item in glyphs:
+        if item.glyph.ruby is not None:
+            base_ends[item.glyph.container] = max(base_ends.get(item.glyph.container, 0), item.end_ms)
+
+    def tag(item, duration, start=None, end=None):
+        marker = ""
+        if explicit:
+            start = item.start_ms if start is None else start
+            end = item.end_ms if end is None else end
+            base_end = base_ends.get(item.glyph.container, end) if item.glyph.ruby is not None else end
+            marker = f"\\-namioto_{item.glyph.channel}_{start - line_start}_{end - line_start}_{base_end - line_start}"
+        return f"{{\\k{duration}{marker}}}"
+
     durations = [max(0, item.duration_ms) // 10 for item in glyphs]
 
     for index, item in enumerate(glyphs):
@@ -721,9 +832,11 @@ def _generate_karaoke_text(timing: _LineTimings, lead_time_ms: int, next_start_m
         if glyph.ruby is None and len(text) > 1 and duration >= len(text):
             base, extra = divmod(duration, len(text))
             for position, char in enumerate(text):
-                parts.append(f"{{\\k{base + (1 if position < extra else 0)}}}{char}")
+                start = item.start_ms + item.duration_ms * position // len(text)
+                end = item.start_ms + item.duration_ms * (position + 1) // len(text)
+                parts.append(tag(item, base + (1 if position < extra else 0), start, end) + char)
         else:
-            parts.append(f"{{\\k{duration}}}{text}")
+            parts.append(tag(item, duration) + text)
     if next_start_ms is not None:
         extension = next_start_ms - line_end_ms
         if extension >= lead_time_ms:
@@ -748,5 +861,21 @@ def generate_ass(
         if rows:
             _calculate_lead_times(rows, config, settings.lead_time_ms)
     dialogues = _render_guide_dots(style_rows, settings.guide_dot_duration_ms)
-    dialogues += _render_karaoke_dialogues(style_rows, settings.lead_time_ms)
-    return _header(config) + "\n".join(dialogues) + "\n"
+    explicit = bool(settings.channel_colours()) or any(
+        right.start_ms < left.end_ms
+        for chapter in planned
+        for line in chapter
+        for left, right in zip(line.timing.glyph_timings, line.timing.glyph_timings[1:], strict=False)
+    )
+    dialogues += _render_karaoke_dialogues(style_rows, settings.lead_time_ms, explicit=explicit)
+    return (
+        _header(
+            config,
+            explicit=explicit,
+            extra_rows=tuple(
+                row for row in style_rows if row not in {name for rows in TRACK_STYLES.values() for name in rows}
+            ),
+        )
+        + "\n".join(dialogues)
+        + "\n"
+    )

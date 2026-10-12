@@ -62,8 +62,8 @@ def test_punctuation_stays_between_the_sounds():
 
 
 def test_a_track_and_a_chapter_are_kept():
-    text = "あ\n---\n{2}い"
-    assert rebuild(text, [_match(0, 0, [1]), _match(1, 0, [2, 3])]) == "あ\n---\n{2}い.2"
+    text = "あ\n---\n@2{い}"
+    assert rebuild(text, [_match(0, 0, [1]), _match(1, 0, [2, 3])]) == "あ\n---\n@2{い.2}"
 
 
 def test_a_latin_run_is_written_whole():

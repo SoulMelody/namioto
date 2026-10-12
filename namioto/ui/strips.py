@@ -31,7 +31,7 @@ class SoundStrip(ViewportStrip):
     """Independent Sound blocks, grouped by NOTE, and position-only grey Drop labels."""
 
     lyric_action_requested = Signal(str, int, int)
-    channel_requested = Signal(int, int)
+    channel_requested = Signal(int, int, int)
     save_map_requested = Signal()
     discard_map_requested = Signal()
     mapping_drag_started = Signal()
@@ -55,6 +55,7 @@ class SoundStrip(ViewportStrip):
         self._candidate_y = 0.0
         self._layouts = {}
         self._block_cache = None
+        self._channel_lanes = None
         self.show_raw = False
         view.viewport_changed.connect(self._refresh)
         view.lyrics_changed.connect(self._refresh)
@@ -64,6 +65,19 @@ class SoundStrip(ViewportStrip):
     def _x(self, seconds, origin=None):
         base = self.origin().x() if origin is None else origin
         return base + self.view.mapFromScene(QPointF(self.view.to_beats(seconds), 0)).x()
+
+    def _lanes(self):
+        if self._channel_lanes is None:
+            self._channel_lanes = {
+                channel: at
+                for at, channel in enumerate(
+                    sorted({sound.channel for line in self.view.lyric_lines for sound in line.sounds})
+                )
+            }
+        return self._channel_lanes
+
+    def _lane(self, row, column):
+        return self._lanes().get(self.view.lyric_lines[row].sounds[column].channel, 0) * SOUND_HEIGHT
 
     def _blocks(self):
         if self._block_cache is not None:
@@ -78,9 +92,12 @@ class SoundStrip(ViewportStrip):
                 if start is not None and end is not None:
                     mapped.append((SoundRef(row, column), start, end))
                     blocks[(row, column)] = QRectF(
-                        self._x(start), SOUND_MARGIN, max(1, self._x(end) - self._x(start)), MAIN_BOTTOM - SOUND_MARGIN
+                        self._x(start),
+                        self._lane(row, column) + SOUND_MARGIN,
+                        max(1, self._x(end) - self._x(start)),
+                        MAIN_BOTTOM - SOUND_MARGIN,
                     )
-        label_end = float("-inf")
+        label_ends = {}
         for row, line in enumerate(self.view.lyric_lines):
             for column, sound in enumerate(line.sounds):
                 ref = SoundRef(row, column)
@@ -88,14 +105,24 @@ class SoundStrip(ViewportStrip):
                     continue
                 if not mapped:
                     continue
-                previous = [entry for entry in mapped if (entry[0].line, entry[0].index) < (row, column)]
-                following = [entry for entry in mapped if (entry[0].line, entry[0].index) > (row, column)]
+                same = [
+                    entry
+                    for entry in mapped
+                    if self.view.lyric_lines[entry[0].line].sounds[entry[0].index].channel == sound.channel
+                ]
+                if not same:
+                    continue
+                previous = [entry for entry in same if (entry[0].line, entry[0].index) < (row, column)]
+                following = [entry for entry in same if (entry[0].line, entry[0].index) > (row, column)]
                 seconds = previous[-1][2] if previous else following[0][1]
-                x = max(self._x(seconds), label_end + SOUND_PAD)
+                x = max(self._x(seconds), label_ends.get(sound.channel, float("-inf")) + SOUND_PAD)
                 width = metrics.horizontalAdvance(sound.label) + 2 * SOUND_PAD
-                label_end = x + width
+                label_ends[sound.channel] = x + width
                 blocks[(ref.line, ref.index)] = QRectF(
-                    x, MAIN_BOTTOM + SOUND_MARGIN, width, self.height() - MAIN_BOTTOM - 2 * SOUND_MARGIN
+                    x,
+                    self._lane(row, column) + MAIN_BOTTOM + SOUND_MARGIN,
+                    width,
+                    SOUND_HEIGHT - MAIN_BOTTOM - 2 * SOUND_MARGIN,
                 )
         self._block_cache = blocks
         return blocks
@@ -112,7 +139,7 @@ class SoundStrip(ViewportStrip):
         painter.setFont(font)
         blocks = self._blocks()
         for (row, column), rect in blocks.items():
-            zero = rect.top() > MAIN_BOTTOM
+            zero = rect.top() - self._lane(row, column) > MAIN_BOTTOM
             flags = self.view.lyric_red[row] if row < len(self.view.lyric_red) else ()
             good = not (column < len(flags) and flags[column])
             groups = self.view.lyric_group[row] if row < len(self.view.lyric_group) else ()
@@ -139,6 +166,10 @@ class SoundStrip(ViewportStrip):
                 text_color = theme.LYRIC_SELECT
             painter.setPen(QColor(text_color))
             sound = self.view.lyric_lines[row].sounds[column]
+            if not zero:
+                painter.fillRect(
+                    QRectF(rect.left(), rect.top(), rect.width(), 2), self.view.channel_color(sound.channel)
+                )
             room = max(0, int(rect.width()) - 2 * SOUND_PAD)
             text = self._fit_label(sound, painter.fontMetrics(), room)
             if not text and room:
@@ -150,11 +181,12 @@ class SoundStrip(ViewportStrip):
             )
         if self.show_raw:
             painter.setPen(QPen(QColor(theme.LYRIC_ZERO), 1, Qt.PenStyle.DashLine))
-            for spans in self.view.lyric_raw:
-                for start, _length in spans:
+            for row, spans in enumerate(self.view.lyric_raw):
+                for column, (start, _length) in enumerate(spans):
                     if start is not None:
                         x = self._x(start)
-                        painter.drawLine(QPointF(x, 0), QPointF(x, MAIN_BOTTOM))
+                        lane = self._lane(row, column)
+                        painter.drawLine(QPointF(x, lane), QPointF(x, lane + MAIN_BOTTOM))
         painter.setPen(colors.ruler_line)
         painter.drawLine(QPointF(origin, MAIN_BOTTOM), QPointF(origin + self.view.viewport().width(), MAIN_BOTTOM))
 
@@ -181,8 +213,8 @@ class SoundStrip(ViewportStrip):
         self.setFocus()
         self._press_x = x
         if self.show_raw:
-            found = self._raw_boundary_at(x)
-            if found is None or self.view.lyric_lines[found[0]].track != 0:
+            found = self._raw_boundary_at(x, y)
+            if found is None:
                 return
             row, column = found
             self._drag = ("raw", row, column)
@@ -191,12 +223,12 @@ class SoundStrip(ViewportStrip):
             self.view.begin_gesture(tr("Move lyrics"))
             return
         self._base_blocks = self._blocks()
-        found = self._boundary_at(x) if y <= MAIN_BOTTOM else None
+        found = self._boundary_at(x, y) if y % SOUND_HEIGHT <= MAIN_BOTTOM else None
         kind = "boundary"
         if found is None:
             found = self._sound_at(x, y)
             kind = "body"
-        if found is None or self.view.lyric_lines[found[0]].track != 0 or not self.view.lyric_operations:
+        if found is None or not self.view.lyric_operations:
             return
         self._base = self.view.lyric_operations
         ids = {identifier for spans in self.view.lyric_mapped for chunk in spans for identifier in chunk}
@@ -205,7 +237,7 @@ class SoundStrip(ViewportStrip):
                 (
                     TimedNote(self.view.to_seconds(note.start), self.view.to_seconds(note.end), note.pitch, note.id)
                     for note in self.view.notes()
-                    if note.channel == 0 and note.id in ids
+                    if note.channel == self.view.lyric_lines[found[0]].sounds[found[1]].channel and note.id in ids
                 ),
                 key=lambda note: (note.start, note.end, note.pitch, note.id),
             )
@@ -220,9 +252,10 @@ class SoundStrip(ViewportStrip):
         x, y = event.position().x(), event.position().y()
         if self._drag is None:
             self._update_hover(self._sound_at(x, y))
-            self._set_cursor(self._raw_boundary_at(x) if self.show_raw else self._boundary_at(x))
+            self._set_cursor(self._raw_boundary_at(x, y) if self.show_raw else self._boundary_at(x, y))
             return
         kind, row, column = self._drag
+        main_bottom = self._lane(row, column) + MAIN_BOTTOM
         if not self.view.gesture_active:
             self._drag = None
             return
@@ -248,14 +281,16 @@ class SoundStrip(ViewportStrip):
                     notes,
                     self.view.seconds_at_viewport_x(x - self.origin().x()),
                 )
-            elif y > MAIN_BOTTOM + SOUND_MARGIN:
+            elif y > main_bottom + SOUND_MARGIN:
                 candidate = drop_sound(self._base, ref)
-            elif y < MAIN_BOTTOM - SOUND_MARGIN:
+            elif y < main_bottom - SOUND_MARGIN:
                 target = next(
                     (
                         key
                         for key, rect in self._base_blocks.items()
-                        if rect.top() < MAIN_BOTTOM and rect.left() <= x <= rect.right()
+                        if self._lane(*key) == self._lane(row, column)
+                        and rect.top() < main_bottom
+                        and rect.left() <= x <= rect.right()
                     ),
                     None,
                 )
@@ -328,11 +363,11 @@ class SoundStrip(ViewportStrip):
                     tr("Channel {number}", number=channel.channel) + (f" — {channel.name}" if channel.name else "")
                 )
                 action.setCheckable(True)
-                action.setChecked(channel.channel == self.view.lyric_lines[found[0]].track)
+                action.setChecked(channel.channel == self.view.lyric_lines[found[0]].sounds[found[1]].channel)
                 action.triggered.connect(
-                    lambda _checked=False, number=channel.channel: self.channel_requested.emit(found[0], number)
+                    lambda _checked=False, number=channel.channel: self.channel_requested.emit(*found, number)
                 )
-        if found is not None and not self.view.lyric_mapping_pending and self.view.lyric_lines[found[0]].track == 0:
+        if found is not None and not self.view.lyric_mapping_pending:
             for kind, label in (
                 ("drop", "Drop this sound"),
                 ("keep", "Keep this sound"),
@@ -373,28 +408,37 @@ class SoundStrip(ViewportStrip):
         layout = self._layout(row)
         return layout[index] if index < len(layout) else None
 
-    def _boundary_at(self, x):
+    def _boundary_at(self, x, y=None):
         blocks = self._blocks()
         candidates = []
         for (row, column), rect in blocks.items():
-            if column == 0:
+            if (
+                column == 0
+                or self.view.lyric_lines[row].sounds[column - 1].channel
+                != self.view.lyric_lines[row].sounds[column].channel
+            ):
+                continue
+            lane = self._lane(row, column)
+            if y is not None and not lane <= y < lane + SOUND_HEIGHT:
                 continue
             edge = rect.left()
-            if rect.top() > MAIN_BOTTOM:
+            if rect.top() > lane + MAIN_BOTTOM:
                 previous = blocks.get((row, column - 1))
-                if previous is None or previous.top() > MAIN_BOTTOM:
+                if previous is None or previous.top() > lane + MAIN_BOTTOM:
                     continue
                 edge = previous.right()
             if abs(x - edge) <= SOUND_GRAB_PX:
                 candidates.append((abs(x - edge), (row, column)))
         return min(candidates)[1] if candidates else None
 
-    def _raw_boundary_at(self, x):
+    def _raw_boundary_at(self, x, y=None):
         candidates = [
             (abs(x - self._x(start)), (row, column))
             for row, spans in enumerate(self.view.lyric_raw)
             for column, (start, _length) in enumerate(spans)
-            if start is not None and abs(x - self._x(start)) <= SOUND_GRAB_PX
+            if start is not None
+            and abs(x - self._x(start)) <= SOUND_GRAB_PX
+            and (y is None or self._lane(row, column) <= y < self._lane(row, column) + SOUND_HEIGHT)
         ]
         return min(candidates)[1] if candidates else None
 
@@ -435,7 +479,7 @@ class SoundStrip(ViewportStrip):
         return (row, first, last) if last > first else None
 
     def _set_cursor(self, found):
-        if found is not None and self.view.lyric_editable and self.view.lyric_lines[found[0]].track == 0:
+        if found is not None and self.view.lyric_editable:
             self.setCursor(Qt.CursorShape.SizeHorCursor)
         else:
             self.unsetCursor()
@@ -452,6 +496,8 @@ class SoundStrip(ViewportStrip):
             self.update()
 
     def _refresh(self):
+        self._channel_lanes = None
+        self.setFixedHeight(max(1, len(self._lanes())) * SOUND_HEIGHT)
         self._block_cache = None
         self._layouts.clear()
         self.update()

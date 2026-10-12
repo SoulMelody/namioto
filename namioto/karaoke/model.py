@@ -45,6 +45,7 @@ class Word:
     """One character: the atom a group is made of."""
 
     char: str
+    channel: int = 0
 
     @property
     def text(self) -> str:
@@ -163,10 +164,20 @@ class Ruby:
 
 @dataclass
 class Line:
-    """One line of units, with the track it is sung on."""
+    """One display line; channel ownership belongs to its characters, not its layout."""
 
     units: list[Unit]
-    track: int = 0
+
+    @property
+    def track(self) -> int:
+        channels = {word.channel for unit in self.units for word in unit_words(unit)}
+        return next(iter(channels)) if len(channels) == 1 else -1 if channels else 0
+
+    @track.setter
+    def track(self, channel: int) -> None:
+        for unit in self.units:
+            for word in unit_words(unit):
+                word.channel = channel
 
     @property
     def words(self) -> list[Unit]:
@@ -202,6 +213,13 @@ class Lyrics:
 
     def __str__(self) -> str:
         return "\n----\n".join(str(chapter) for chapter in self.chapters)
+
+
+def unit_words(unit: Unit) -> list[Word]:
+    words = list(unit.base.words) if isinstance(unit.base, Group) else [unit.base]
+    if unit.ruby is not None:
+        words.extend(word for part in unit.ruby.parts for inner in part for word in unit_words(inner))
+    return words
 
 
 def validate(lyrics: Lyrics) -> None:

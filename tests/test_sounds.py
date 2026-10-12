@@ -141,7 +141,7 @@ def test_a_kanji_without_a_ruby_is_refused():
 
 
 def test_the_track_and_every_chapter_become_lines():
-    lines = natural_sounds("あ\n---\n{2}い")
+    lines = natural_sounds("あ\n---\n@2{い}")
     assert [line.text for line in lines] == ["あ", "い"]
     assert natural_tokens(lines) == ["a", "i"]
     assert [sound.line for line in lines for sound in line.sounds] == [0, 1]

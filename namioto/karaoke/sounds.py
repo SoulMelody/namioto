@@ -21,7 +21,6 @@ from dataclasses import dataclass
 
 from namioto.karaoke.model import LATIN, Group, KrcError, Line, Unit
 from namioto.karaoke.parser import parse
-from namioto.karaoke.writer import dumps
 from namioto.utils import kana_tokens
 
 SMALL_KANA = frozenset("ャュョァィゥェォゃゅょぁぃぅぇぉゎヮ")
@@ -41,6 +40,7 @@ class Container:
 
     key: tuple
     atoms: tuple[str, ...]
+    channels: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,7 @@ class Sound:
     container: int = 0
     first_atom: int = 0
     last_atom: int = 0
+    channel: int = 0
 
     @property
     def label(self) -> str:
@@ -217,33 +218,39 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
     containers: list[Container] = []
     sounds: list[Sound] = []
     run: list[str] = []
+    ownership: list[int] = []
     runs = 0
 
     def flush() -> None:
         nonlocal runs
         if not run:
             return
-        containers.append(Container(("top", runs), tuple(run)))
+        containers.append(Container(("top", runs), tuple(run), tuple(ownership)))
         runs += 1
         _collect(sounds, containers, run, line_index, rubied=False, first=True, base="")
         run.clear()
+        ownership.clear()
 
     for top, unit in enumerate(line.units):
         if unit.ruby is None:
             if unit.is_kanji():
                 raise KrcError(f"'{text}' has kanji with no ruby to align: {unit.text}")
             run.extend(_chars(unit))
+            ownership.extend(word.channel for word in _base_words(unit))
             continue
         flush()
         for part_index, part in enumerate(unit.ruby.parts):
-            atoms = [char for inner in part for char in _chars(inner)]
+            words = [word for inner in part for word in _base_words(inner)]
+            atoms = [word.char for word in words]
             if not atoms:
                 continue
             base = unit.text if len(unit.ruby.parts) == 1 else unit.text[part_index : part_index + 1]
-            containers.append(Container(("part", top, part_index), tuple(atoms)))
+            containers.append(Container(("part", top, part_index), tuple(atoms), tuple(word.channel for word in words)))
             _collect(sounds, containers, atoms, line_index, rubied=True, first=part_index == 0, base=base)
     flush()
-    return SoundLine(text, tuple(sounds), tuple(containers), line.track, chapter_index)
+    channels = {sound.channel for sound in sounds}
+    track = next(iter(channels)) if len(channels) == 1 else -1 if channels else 0
+    return SoundLine(text, tuple(sounds), tuple(containers), track, chapter_index)
 
 
 def _collect(
@@ -260,6 +267,8 @@ def _collect(
     tokens = _tokens([reading for reading, _lo, _hi in entries])
     container = len(containers) - 1
     for (reading, low, high), token in zip(entries, tokens, strict=True):
+        channels = set(containers[container].channels[low : high + 1])
+        channel = next(iter(channels)) if len(channels) == 1 else -1
         sounds.append(
             Sound(
                 line=line,
@@ -272,33 +281,36 @@ def _collect(
                 container=container,
                 first_atom=low,
                 last_atom=high,
+                channel=channel,
             )
         )
 
 
-def channel_lines(lines):
-    return {
-        channel: tuple(index for index, line in enumerate(lines) if line.track == channel)
-        for channel in dict.fromkeys(line.track for line in lines)
-    }
+def set_channel(line: Line, index: int, channel: int) -> None:
+    sounds = _line_sounds(line, 0, 0)
+    sound = sounds.sounds[index]
+    key = sounds.containers[sound.container].key
+    if key[0] == "part":
+        unit = line.units[key[1]]
+        words = [word for inner in unit.ruby.parts[key[2]] for word in _base_words(inner)]
+    else:
+        runs, words = [], []
+        for unit in line.units:
+            if unit.ruby is not None:
+                if words:
+                    runs.append(words)
+                    words = []
+            else:
+                words.extend(_base_words(unit))
+        if words:
+            runs.append(words)
+        words = runs[key[1]]
+    for word in words[sound.first_atom : sound.last_atom + 1]:
+        word.channel = channel
 
 
-def subset_text(text, indices):
-    lyrics = parse(text)
-    selected = set(indices)
-    index = 0
-    chapters = []
-    for chapter in lyrics.chapters:
-        kept = []
-        for line in chapter.lines:
-            if index in selected:
-                kept.append(line)
-            index += 1
-        if kept:
-            chapter.lines = kept
-            chapters.append(chapter)
-    lyrics.chapters = chapters
-    return dumps(lyrics, dotted=True)
+def _base_words(unit: Unit):
+    return unit.base.words if isinstance(unit.base, Group) else [unit.base]
 
 
 def _chars(unit: Unit) -> list[str]:

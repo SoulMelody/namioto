@@ -320,8 +320,8 @@ class Lyrics(NamedTuple):
     holds the aligner's own score per sound beside it; `flagged` holds one bool per line, true where
     the aligner itself doubted the times it made; `problems` holds the aligner's line-level
     complaints. `mode` is `edit` while the aligner's times lay the sounds out, or `read` while the
-    `.krc`'s own `.N` and groups do. Each line's KRC track names its MIDI channel; only channel 0
-    has an edit mapping. `operations` is that mapping, and `version` the algorithm that suggested it.
+    `.krc`'s own `.N` and groups do. KRC channel wrappers name each Sound's MIDI channel.
+    `operations` holds all channels' mappings, and `version` the algorithm that suggested them.
     """
 
     text: str = ""

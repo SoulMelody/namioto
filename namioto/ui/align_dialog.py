@@ -32,6 +32,7 @@ from namioto.analysis import align, devices
 from namioto.i18n import tr
 from namioto.karaoke.sounds import natural_sounds, natural_tokens, split_tokens
 from namioto.lyricmap import from_spans, snap_to_beats
+from namioto.lyricmap.channels import split as split_channels
 from namioto.params import Field
 from namioto.ui.form import add_row, field_editor
 from namioto.ui.loading import LoadingThread
@@ -54,9 +55,13 @@ class Aligner(LoadingThread):
         provider: str = "cpu",
         chunk: str = align.DEFAULT_MODE,
         parent=None,
+        *,
+        channel: int | None = None,
     ):
         super().__init__(audio, parent)
         self.text = text
+        self.channel = channel
+        self.cache_text = text if channel is None else f"# Align channel {channel}\n{text}"
         self.model = model
         self.provider = provider
         self.chunk = chunk
@@ -64,7 +69,7 @@ class Aligner(LoadingThread):
 
     def load(self) -> None:
         started = time.monotonic()
-        lines = natural_sounds(self.text)
+        lines = natural_sounds(self.text) if self.channel is None else split_channels(self.text)[self.channel].lines
         sounds = sum(len(line.sounds) for line in lines)
         self.message.emit(tr("Read {lines} lines, {sounds} sounds", lines=len(lines), sounds=sounds))
         audio = align.load_audio(self.path)
@@ -94,7 +99,9 @@ class Aligner(LoadingThread):
         rows = align.correct_times(split_tokens(found.tokens, lines), audio)
         flagged, problems = self._problems(found, lines)
         with suppress(OSError):  # the cache is disposable, and the alignment itself already came back
-            align.save_alignment(self.path, self.model, self.provider, self.text, rows, problems, flagged, self.chunk)
+            align.save_alignment(
+                self.path, self.model, self.provider, self.cache_text, rows, problems, flagged, self.chunk
+            )
         self.message.emit(tr("Alignment took {seconds:.1f}s", seconds=time.monotonic() - started))
         self.aligned.emit((rows, self.model, problems, flagged))
 
@@ -129,11 +136,15 @@ class AlignDialog(QDialog):
 
     aligned = Signal(object, str, object)
 
-    def __init__(self, audio: str, text: str, tempo: float, parent=None, offset: float = 0.0):
+    def __init__(
+        self, audio: str, text: str, tempo: float, parent=None, offset: float = 0.0, *, channel: int | None = None
+    ):
         super().__init__(parent)
         self.setWindowTitle(tr("Align lyrics"))
         self.audio = audio
         self.text = text
+        self.channel = channel
+        self.cache_text = text if channel is None else f"# Align channel {channel}\n{text}"
         self.tempo = tempo
         self.offset = offset
         self._thread: Aligner | None = None
@@ -197,7 +208,7 @@ class AlignDialog(QDialog):
         if self._parameters["device"] == "gpu" and provider == "cpu":
             self.log.appendPlainText(tr("No GPU backend is available; running on the CPU"))
         chunk = self._parameters["chunk"]
-        cached = align.find_alignment(self.audio, model, provider, self.text, chunk)
+        cached = align.find_alignment(self.audio, model, provider, self.cache_text, chunk)
         if cached is not None:
             rows, problems, flagged = cached
             self._done((rows, model, problems, flagged))  # re-snapped with the tempo and grid offset in hand
@@ -205,7 +216,7 @@ class AlignDialog(QDialog):
             return
         self.progress.setRange(0, 0)  # busy until the first chunk of the model's pass comes back
         self.status.setText(tr("Aligning…"))
-        self._thread = Aligner(self.audio, self.text, model, provider, chunk, self)
+        self._thread = Aligner(self.audio, self.text, model, provider, chunk, self, channel=self.channel)
         self._thread.progress.connect(self._show_progress)
         self._thread.message.connect(self.log.appendPlainText)
         self._thread.aligned.connect(self._done)

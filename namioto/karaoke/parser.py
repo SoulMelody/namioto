@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """The parser for a `.krc`: its chapters, lines, words, ruby and mora.
 
-The grammar is the file's whole syntax. `---` splits chapters, `{N}` tags a line with a track,
+`@N{...}` adds channel ownership without changing the enclosed grammar. `---` splits chapters,
 `漢字[かんじ]` and `(word)[ruby]` attach a ruby, a comma splits that ruby per character,
 `.N` overrides a word's mora count, `.+` joins its Sounds to the preceding NOTE, and `#` starts a
 comment. A word carries the mora its ruby gives it; a run of kanji before a ruby is merged into
@@ -14,6 +14,8 @@ is one word of one mora.
 
 from __future__ import annotations
 
+import re
+
 from lark import Lark, Transformer
 from lark.exceptions import LarkError, VisitError
 
@@ -23,8 +25,7 @@ from namioto.karaoke.transforms import merge_words
 GRAMMAR = r"""
 start: _NEWLINE? chapter (_SEP chapter)*
 chapter: chapter_line (_NEWLINE chapter_line)* _NEWLINE?
-chapter_line: line_tag? words
-line_tag: "{" INTEGER "}"
+chapter_line: words
 words: (word|word_ruby|word_mora|word_join)+
 ruby_line: words ("," words)*
 
@@ -52,14 +53,12 @@ _SEP: /\n+-{3,}-*\n*/
 class LyricsTransformer(Transformer):
     """Builds the model out of the parse tree."""
 
-    def line_tag(self, items):
-        return int(items[0].value)
+    def __init__(self, channels):
+        super().__init__()
+        self.channels = channels
 
     def chapter_line(self, items):
-        if len(items) == 1:
-            return Line(items[0])
-        track, units = items
-        return Line(units, track=track)
+        return Line(items[0])
 
     def words(self, items):
         return items
@@ -68,10 +67,14 @@ class LyricsTransformer(Transformer):
         return Ruby(items)
 
     def word(self, items):
-        chars = [str(item) for item in items if item.type not in ("OPEN", "CLOSE")]
+        words = [
+            Word(str(item), channel=self.channels[item.start_pos])
+            for item in items
+            if item.type not in ("OPEN", "CLOSE")
+        ]
         if any(item.type in ("OPEN", "CLOSE") for item in items):
-            return Unit(Group([Word(char) for char in chars], explicit=True))
-        return Unit(Word(chars[0]))
+            return Unit(Group(words, explicit=True))
+        return Unit(words[0])
 
     def chapter(self, items):
         return Chapter(items)
@@ -96,16 +99,63 @@ class LyricsTransformer(Transformer):
 
 
 parser = Lark(GRAMMAR, start="start", parser="lalr")
+CHANNEL_BLOCK = re.compile(r"@(\d+)\{")
+
+
+def _unwrap(text: str) -> tuple[str, list[int], list[int]]:
+    chars, channels, positions = [], [], []
+    channel = 0
+    opened = False
+    at = 0
+    while at < len(text):
+        if text[at] == "#":
+            end = text.find("\n", at)
+            end = len(text) if end < 0 else end
+            chars.extend(text[at:end])
+            channels.extend([channel] * (end - at))
+            positions.extend(range(at, end))
+            at = end
+            continue
+        match = CHANNEL_BLOCK.match(text, at) if text[at] == "@" else None
+        if match:
+            if opened:
+                raise KrcError("channel blocks cannot be nested")
+            channel = int(match[1])
+            if not 0 <= channel < 16:
+                raise KrcError("a channel must be between 0 and 15")
+            opened = True
+            at = match.end()
+            continue
+        if text[at] == "}" and opened:
+            opened = False
+            channel = 0
+            at += 1
+            continue
+        chars.append(text[at])
+        channels.append(channel)
+        positions.append(at)
+        at += 1
+    if opened:
+        raise KrcError("unclosed channel block")
+    positions.append(len(text))
+    return "".join(chars), channels, positions
 
 
 def parse(text: str, merge: bool = True) -> Lyrics:
     """Parse a `.krc` into its model; a malformed file raises `KrcError`."""
+    unwrapped, channels, positions = _unwrap(text)
     try:
-        tree = parser.parse(text)
+        tree = parser.parse(unwrapped)
     except LarkError as error:
+        offset = getattr(error, "pos_in_stream", None)
+        if offset is not None:
+            original = positions[min(offset, len(positions) - 1)] if offset >= 0 else positions[-1]
+            line = text.count("\n", 0, original) + 1
+            column = original - text.rfind("\n", 0, original)
+            raise KrcError(f"line {line}, column {column}: {error}") from None
         raise KrcError(str(error)) from None
     try:
-        lyrics = LyricsTransformer().transform(tree)
+        lyrics = LyricsTransformer(channels).transform(tree)
     except VisitError as error:
         if isinstance(error.orig_exc, ValueError):
             raise error.orig_exc from None

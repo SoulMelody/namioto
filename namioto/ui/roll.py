@@ -627,7 +627,7 @@ class PianoRollView(QGraphicsView):
         self.lyric_highlight_changed.emit()
 
     def set_sound_onset(self, row: int, column: int, seconds: float, base=None) -> bool:
-        """Move one onset between its global neighbours without changing reference durations.
+        """Move one onset between its channel neighbours without changing reference durations.
 
         `base` is the row at the start of the gesture, so dragging home restores its evidence.
         Only confirmed operations containing the edited Sound lose their confirmation.
@@ -637,13 +637,15 @@ class PianoRollView(QGraphicsView):
         sounds = list(self._lyric_raw[row] if base is None else base)
         if not 0 <= column < len(sounds):
             return False
-        preceding = (*self._lyric_raw[:row], sounds[:column])
-        following = (sounds[column + 1 :], *self._lyric_raw[row + 1 :])
-        low = next(
-            (onset for line in reversed(preceding) for onset, _length in reversed(line) if onset is not None),
-            0.0,
-        )
-        high = next((onset for line in following for onset, _length in line if onset is not None), math.inf)
+        channel = self.lyric_lines[row].sounds[column].channel
+        neighbours = [
+            ((line, at), onset)
+            for line, spans in enumerate(self._lyric_raw)
+            for at, (onset, _length) in enumerate(sounds if line == row else spans)
+            if onset is not None and self.lyric_lines[line].sounds[at].channel == channel
+        ]
+        low = next((onset for ref, onset in reversed(neighbours) if ref < (row, column)), 0.0)
+        high = next((onset for ref, onset in neighbours if ref > (row, column)), math.inf)
         value = min(max(0.0, float(seconds), low), high)
         sounds[column] = (value, sounds[column][1])
         if tuple(sounds) == self._lyric_raw[row]:

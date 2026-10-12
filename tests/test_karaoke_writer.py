@@ -7,7 +7,7 @@ import pytest
 
 from namioto.karaoke import Ruby, Unit, Word, dumps, parse
 
-SAMPLE = """{2}春[はる]の(風)[かぜ]が吹[ふ]く
+SAMPLE = """@2{春[はる]の(風)[かぜ]が吹[ふ]く}
 hello.3 world
 (No).1 (Ring!).1
 
@@ -51,7 +51,7 @@ def test_dumping_is_idempotent():
 
 
 def test_a_track_and_a_chapter_separator_are_written():
-    assert dumps(parse("あ\n\n---\n\n{2}い")) == "あ\n---\n{2}い"
+    assert dumps(parse("あ\n\n---\n\n@2{い}")) == "あ\n---\n@2{い}"
 
 
 def test_a_bare_latin_run_gains_no_dot():

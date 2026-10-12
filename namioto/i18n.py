@@ -294,6 +294,9 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Audio": "音频",
         # channel sidebar
         "Channel {number}": "通道 {number}",
+        "Channel colours": "声部颜色",
+        "Use overlay colour": "使用高亮颜色",
+        "Channel=RRGGBB pairs separated by commas; unspecified channels use the overlay colour": "以逗号分隔的通道=RRGGBB；未指定的通道使用高亮颜色",
         "Lock: notes on this channel cannot be edited": "锁定：此通道的音符不可编辑",
         "Show or hide the notes of this channel": "显示或隐藏此通道的音符",
         "Mute this channel during playback": "播放时静音此通道",
@@ -413,7 +416,7 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Show lyrics on MIDI notes": "显示 MIDI 音符上的歌词",
         "Lyric channel": "歌词通道",
         "Change lyric channel": "更改歌词通道",
-        "Only lyrics on channel 0 can be aligned": "只能对齐通道 0 上的歌词",
+        "The selected channel has no lyric sounds": "所选通道没有歌词声音",
         "The current mapping must be valid before moving this line": "移动此行前，当前映射必须有效",
         # main window
         "Namioto project (*{suffix})": "Namioto 工程 (*{suffix})",

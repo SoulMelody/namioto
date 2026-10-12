@@ -247,6 +247,13 @@ SECTIONS: tuple[Section, ...] = (
                 "RGB hex of the karaoke overlay, such as 6EB7E3; its blur and base shades follow from it",
             ),
             Field(
+                "channel_colors",
+                "text",
+                "",
+                "Channel colours",
+                "Channel=RRGGBB pairs separated by commas; unspecified channels use the overlay colour",
+            ),
+            Field(
                 "fade_in_ms",
                 "int",
                 800,

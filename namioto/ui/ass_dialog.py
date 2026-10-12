@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Single-track subtitle export options, edited on a copy until the file is written."""
+"""Subtitle export options and channel colours, edited on a copy until the file is written."""
 
 from __future__ import annotations
 
@@ -75,6 +75,21 @@ class AssDialog(QDialog):
                     editor.valueChanged.connect(self._validate)
             pages.addTab(page, tr(title))
 
+        channel_page = QWidget()
+        channel_form = QFormLayout(channel_page)
+        self.channel_editors = {}
+        try:
+            channel_colours = AssSettings(channel_colors=settings.ass.channel_colors).channel_colours()
+        except ValueError:
+            channel_colours = {}
+        for channel in range(16):
+            editor = QLineEdit(channel_colours.get(channel, ""))
+            editor.setPlaceholderText(tr("Use overlay colour"))
+            editor.textChanged.connect(self._validate)
+            self.channel_editors[channel] = editor
+            channel_form.addRow(tr("Channel {number}", number=channel), self._colour_row(f"channel_{channel}", editor))
+        pages.addTab(channel_page, tr("Channel colours"))
+
         self.hint = QLabel()
         self.hint.setWordWrap(True)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
@@ -120,6 +135,11 @@ class AssDialog(QDialog):
             if name in self.automatic and self.automatic[name].isChecked():
                 value = ""
             store.set_value(self._settings, "ass", name, value)
+        self._settings.ass.channel_colors = ",".join(
+            f"{channel}={editor.text().strip()}"
+            for channel, editor in self.channel_editors.items()
+            if editor.text().strip()
+        )
         return self._settings
 
     def _validate(self, *_):
@@ -141,6 +161,11 @@ class AssDialog(QDialog):
                     error = tr("Enter colours as six-digit RGB hex values")
                     break
         if not error:
+            try:
+                settings.channel_colours()
+            except ValueError:
+                error = tr("Enter colours as six-digit RGB hex values")
+        if not error:
             for name, colour in zip(("overlay_blur_color", "base_blur_color"), settings.blur_colours(), strict=True):
                 if self.automatic[name].isChecked():
                     editor = self.editors[name]
@@ -154,6 +179,8 @@ class AssDialog(QDialog):
         defaults = store.Settings()
         for name, write in self._writers.items():
             write(getattr(defaults.ass, name))
+        for editor in self.channel_editors.values():
+            editor.clear()
         for automatic in self.automatic.values():
             automatic.setChecked(True)
         self._validate()
