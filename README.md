@@ -503,7 +503,9 @@ Drag the boundary between two units to redistribute their NOTE slots without cha
 Shift + left drag resizes a Sound or its whole group: press in the left half to exchange slots with
 its immediate left neighbour, or in the right half to change its count without changing the next
 unit's count. Plain left drag moves a Sound into an adjacent group, retaining the target's NOTE
-count, or pulls an edge Sound out as an independent one-NOTE unit. Sound order never changes.
+count, or pulls an edge Sound out as an independent one-NOTE unit. An edge Sound first splits out
+when it crosses its group's boundary; release there to keep it independent, or continue into the
+middle half of the receiving unit to merge. Sound order never changes.
 Drag to the lower row to drop a Sound, or drag a zero-count label back to upper empty space to
 restore one NOTE. Groups split locally by pulling out edge members. Each gesture changes the KRC
 directly in one undo step; Escape cancels it.

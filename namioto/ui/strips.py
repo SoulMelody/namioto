@@ -311,16 +311,19 @@ class SoundStrip(ViewportStrip):
                     ),
                     None,
                 )
-                candidate = None
+                rect = self._run_rect(run)
+                edge = (ref == run.sounds[0] and x < rect.left()) or (ref == run.sounds[-1] and x > rect.right())
+                grouped = len(run.sounds) > 1
+                candidate = detach(self._base, ref, 1) if grouped and edge else None
                 if target is not None:
                     operation = operation_at(self._base, SoundRef(*target))
                     if operation != run and self._same_channel(ref, operation.sounds[0]):
-                        candidate = insert_sound(self._base, ref, operation)
-                else:
-                    rect = self._run_rect(run)
-                    edge = (ref == run.sounds[0] and x < rect.left()) or (ref == run.sounds[-1] and x > rect.right())
-                    if len(run.sounds) == 1 or edge:
-                        candidate = detach(self._base, ref, 1 if run.slots == 0 or len(run.sounds) > 1 else run.slots)
+                        receiving = self._run_rect(operation)
+                        inset = receiving.width() / 4 if grouped else 0
+                        if receiving.left() + inset <= x <= receiving.right() - inset:
+                            candidate = insert_sound(self._base, ref, operation) or candidate
+                elif not grouped:
+                    candidate = detach(self._base, ref, 1 if run.slots == 0 else run.slots)
             else:
                 return
         if candidate == self._candidate:

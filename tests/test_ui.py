@@ -7348,6 +7348,59 @@ def test_shift_can_resize_a_group_across_ruby_containers(own_window, tmp_path):
     assert own_window.view.lyric_group[0][0] == own_window.view.lyric_group[0][1] >= 0
 
 
+@pytest.mark.parametrize(
+    "text, ref, near, deep, merged",
+    [
+        ("(あい).1う", (0, 1), 1.1, 1.5, "あ(いう).1"),
+        ("あ(いう).1", (0, 1), 0.9, 0.5, "(あい).1う"),
+    ],
+)
+@pytest.mark.parametrize("finish", ["detach", "merge", "cancel"])
+def test_group_edge_drag_previews_detach_before_receiving_neighbor(
+    own_window, tmp_path, text, ref, near, deep, merged, finish
+):
+    _gesture_lyrics(own_window, tmp_path, text)
+    strip = own_window.sound_strip
+    before = own_window.view.undo_stack.count()
+    raw = own_window.view.lyric_raw
+    rect = strip._blocks()[ref]
+    sound_mouse(own_window, QEvent.Type.MouseButtonPress, rect.center().x(), rect.center().y())
+    sound_mouse(own_window, QEvent.Type.MouseMove, strip._x(near), 15.0)
+    assert own_window.lyrics_text == "あいう"
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3,)),)
+    assert own_window.view.undo_stack.count() == before
+    if finish != "detach":
+        sound_mouse(own_window, QEvent.Type.MouseMove, strip._x(deep), 15.0)
+        assert own_window.lyrics_text == merged
+        assert own_window.view.undo_stack.count() == before
+    if finish == "cancel":
+        QTest.keyClick(strip, Qt.Key.Key_Escape)
+        wait_for_lyric_mapping(own_window)
+        assert own_window.lyrics_text == text
+        assert own_window.view.undo_stack.count() == before
+    else:
+        destination = near if finish == "detach" else deep
+        sound_mouse(own_window, QEvent.Type.MouseButtonRelease, strip._x(destination), 15.0)
+        wait_for_lyric_mapping(own_window)
+        expected = "あいう" if finish == "detach" else merged
+        assert own_window.lyrics_text == expected
+        assert own_window.view.undo_stack.count() == before + 1
+        own_window.view.undo_stack.undo()
+        wait_for_lyric_mapping(own_window)
+        assert own_window.lyrics_text == text
+        own_window.view.undo_stack.redo()
+        wait_for_lyric_mapping(own_window)
+        assert own_window.lyrics_text == expected
+    assert own_window.view.lyric_raw == raw
+
+
+def test_group_edge_stays_detached_over_a_nonadjacent_receiving_unit(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あい).1うえ")
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(2.5))
+    assert own_window.lyrics_text == "あいうえ"
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3,), (4,)),)
+
+
 def test_group_edge_can_be_pulled_out_above_an_occupied_neighbor(own_window, tmp_path):
     _gesture_lyrics(own_window, tmp_path, "(あいう).2え")
     drag_sound(own_window, (0, 2), own_window.sound_strip._x(2.1), 0.0)
