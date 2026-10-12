@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Spectrum rendering: the note table turned into a cached QImage, plus a background loader."""
+"""Spectrum rendering: a note-table frame range as a cached QImage, plus a background loader."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from namioto.analysis.spectrum import NoteSpectrum, analyse
 from namioto.ui.loading import LoadingThread
 
 LUT_SIZE = 384
+IMAGE_BLOCK_FRAMES = 256
 BLUE_STEP = 90
 RED_STEP = 240
 
@@ -38,26 +39,27 @@ def color_table() -> np.ndarray:
 
 
 class SpectrumImage:
-    """A `NoteSpectrum` as an image the roll can blit, cached per display parameter set.
+    """A `NoteSpectrum` frame range as an image, cached per range and display parameter set.
 
     Row 0 is the highest note band, so it can be drawn straight down onto the pitch axis.
     """
 
     def __init__(self, spectrum: NoteSpectrum):
         self.spectrum = spectrum
-        self._parameters: tuple[float, float] | None = None
+        self._parameters: tuple[float, float, int, int] | None = None
         self._pixels: np.ndarray | None = None
         self._image: QImage | None = None
 
-    def image(self, gain: float, contrast: float) -> QImage:
-        parameters = (round(gain, 3), round(contrast, 3))
+    def image(self, gain: float, contrast: float, first: int = 0, last: int | None = None) -> QImage:
+        last = self.spectrum.frames if last is None else last
+        parameters = (round(gain, 3), round(contrast, 3), first, last)
         if parameters != self._parameters or self._image is None:
+            self._render(gain, contrast, first, last)
             self._parameters = parameters
-            self._render(gain, contrast)
         return self._image
 
-    def _render(self, gain: float, contrast: float) -> None:
-        amplitude = np.power(np.maximum(self.spectrum.table, 0.0), contrast) * gain
+    def _render(self, gain: float, contrast: float, first: int, last: int) -> None:
+        amplitude = np.power(np.maximum(self.spectrum.table[first:last], 0.0), contrast) * gain
         index = np.clip(np.rint(amplitude * (LUT_SIZE - 1) / 255.0), 0, LUT_SIZE - 1).astype(np.uint32)
         rows = np.ascontiguousarray(color_table()[index].T[::-1])
         height, width = rows.shape

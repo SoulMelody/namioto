@@ -50,7 +50,7 @@ from namioto.karaoke.sounds import SoundLine
 from namioto.lyricmap.raw import from_spans
 from namioto.ui import theme
 from namioto.ui.blocks import CLICK_SLOP_PX, Press, block_part
-from namioto.ui.spectrogram import SpectrumImage
+from namioto.ui.spectrogram import IMAGE_BLOCK_FRAMES, SpectrumImage
 from namioto.ui.text import format_time, note_name
 from namioto.ui.viewport import ViewportStrip
 
@@ -309,6 +309,9 @@ class Gesture:
     view_origin: QPoint = field(default_factory=QPoint)
     rubber_origin: QPoint = field(default_factory=QPoint)
     created: NoteItem | None = None
+    candidate: tuple | None = None
+    collision_index: dict[tuple[int, int], list[Note]] | None = None
+    collision_ignored: frozenset[Note] = frozenset()
 
 
 class PianoRollView(QGraphicsView):
@@ -389,7 +392,7 @@ class PianoRollView(QGraphicsView):
         self.viewport().setMouseTracking(True)  # the row under the mouse is highlighted
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
-        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self.setTransform(QTransform.fromScale(self._zoom_x, self._zoom_y))
@@ -1145,8 +1148,14 @@ class PianoRollView(QGraphicsView):
 
     def set_playhead(self, seconds: float | None) -> None:
         if seconds != self.playhead:
+            viewport = self.viewport()
+            for position in (self.playhead, seconds):
+                if position is not None:
+                    x = self.mapFromScene(QPointF(self.to_beats(position), 0.0)).x()
+                    region = QRect(x - 3, 0, 7, viewport.height()).intersected(viewport.rect())
+                    if not region.isEmpty():
+                        viewport.update(region)
             self.playhead = seconds
-            self.viewport().update()
             self._sync_lyric_highlight()
 
     def pixels_per_beat(self) -> float:
@@ -1341,14 +1350,20 @@ class PianoRollView(QGraphicsView):
         painter.restore()
 
     def _draw_spectrum(self, painter: QPainter, rect: QRectF) -> None:
-        image = self.spectrum.image(self.gain, self.contrast)
         width = self.frame_width()
         first = max(0, int(math.floor(rect.left() / width)))
         last = min(self.spectrum.spectrum.frames, int(math.ceil(rect.right() / width)) + 1)
         if last <= first:
             return
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        image_first = max(0, int(math.floor(visible.left() / width))) // IMAGE_BLOCK_FRAMES * IMAGE_BLOCK_FRAMES
+        image_last = min(
+            self.spectrum.spectrum.frames,
+            math.ceil((int(math.ceil(visible.right() / width)) + 1) / IMAGE_BLOCK_FRAMES) * IMAGE_BLOCK_FRAMES,
+        )
+        image = self.spectrum.image(self.gain, self.contrast, image_first, image_last)
         target = QRectF(first * width, SPECTRUM_TOP, (last - first) * width, float(image.height()))
-        source = QRectF(first, 0.0, last - first, float(image.height()))
+        source = QRectF(first - image_first, 0.0, last - first, float(image.height()))
         painter.setRenderHint(
             QPainter.RenderHint.SmoothPixmapTransform, width * self._zoom_x < 1.0 or self._zoom_y < 1.0
         )
@@ -1374,6 +1389,16 @@ class PianoRollView(QGraphicsView):
 
     def _would_collide(self, item: NoteItem, start: float, pitch: int, duration: float, ignore=(), index=None) -> bool:
         """Whether putting a note there would sound its pitch twice over the same time on its channel."""
+        gesture = self._gesture
+        if index is None and gesture is not None and item in gesture.snapshot:
+            ignored = frozenset(ignore)
+            if gesture.collision_index is None or ignored != gesture.collision_ignored:
+                gesture.collision_index = {
+                    voice: [note for note in notes if note not in ignored]
+                    for voice, notes in self.document.index_by_voice().items()
+                }
+            gesture.collision_ignored = ignored
+            index = gesture.collision_index
         return self.document.collides(pitch, start, duration, item.channel, ignore, index)
 
     def _snap_beats(self, x: float) -> float:
@@ -1618,12 +1643,20 @@ class PianoRollView(QGraphicsView):
             ignore = (gesture.target.note,)
             if gesture.edge is Edge.START:
                 new_start = min(max(0.0, self._snap_beats(scene_pos.x())), start + duration - cell)
+                candidate = (new_start, pitch, start + duration - new_start)
+                if candidate == gesture.candidate:
+                    return
+                gesture.candidate = candidate
                 if self._would_collide(gesture.target, new_start, pitch, start + duration - new_start, ignore):
                     return  # the edge cannot reach over a note of its own pitch
                 gesture.target.set_range(new_start, pitch)
                 gesture.target.set_duration(start + duration - new_start)
             else:
                 new_duration = max(self._snap_beats(scene_pos.x()), start + cell) - start
+                candidate = (start, pitch, new_duration)
+                if candidate == gesture.candidate:
+                    return
+                gesture.candidate = candidate
                 if self._would_collide(gesture.target, start, pitch, new_duration, ignore):
                     return
                 gesture.target.set_duration(new_duration)
@@ -1635,6 +1668,10 @@ class PianoRollView(QGraphicsView):
             left = max(0.0, self._snap_floor_beats(min(anchor, scene_pos.x())))
             right = max(left + self._cell_beats(), self._snap_ceil_beats(max(anchor, scene_pos.x())))
             pitch = self.pitch_at(scene_pos.y())
+            candidate = (left, pitch, right - left)
+            if candidate == gesture.candidate:
+                return
+            gesture.candidate = candidate
             if self._would_collide(gesture.target, left, pitch, right - left, (gesture.target.note,)):
                 return  # the note cannot be drawn over one of its own pitch
             gesture.target.set_range(left, pitch)  # the row follows the pointer too
@@ -1646,10 +1683,13 @@ class PianoRollView(QGraphicsView):
         moved = scene_pos.x() - gesture.origin.x()
         delta_x = self.snap_movement_beats(moved)
         delta_row = round(scene_pos.y() - gesture.origin.y())
-        moving = {item.note for item in gesture.snapshot}
-        index = self.document.index_by_voice()  # one pass, then a lookup per moved note
+        candidate = (delta_x, delta_row)
+        if candidate == gesture.candidate:
+            return
+        gesture.candidate = candidate
+        moving = frozenset(item.note for item in gesture.snapshot)
         for note, (start, pitch, _duration) in gesture.snapshot.items():
-            if self._would_collide(note, start + delta_x, pitch - delta_row, _duration, moving, index):
+            if self._would_collide(note, start + delta_x, pitch - delta_row, _duration, moving):
                 return  # the block cannot be dropped onto a note of one of its own pitches
         for note, (start, pitch, _duration) in gesture.snapshot.items():
             note.set_range(start + delta_x, pitch - delta_row)

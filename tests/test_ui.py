@@ -872,6 +872,65 @@ def test_hover_turns_the_key_of_that_row_red_in_either_mode(window) -> None:
     window.view.overtone_highlight = False
 
 
+def test_playhead_updates_only_old_and_new_columns(qt_app, monkeypatch) -> None:
+    view = PianoRollView()
+    view.resize(800, 400)
+    view.show()
+    qt_app.processEvents()
+    updates = []
+    monkeypatch.setattr(view.viewport(), "update", lambda rect: updates.append(rect))
+    try:
+        for seconds in (2.0, 3.0, None):
+            previous = view.playhead
+            updates.clear()
+            view.set_playhead(seconds)
+            positions = [position for position in (previous, seconds) if position is not None]
+            assert len(updates) == len(positions)
+            for rect, position in zip(updates, positions, strict=True):
+                x = view.mapFromScene(QPointF(view.to_beats(position), 0)).x()
+                assert rect.width() == 7
+                assert rect.height() == view.viewport().height()
+                assert rect.contains(QPoint(x, view.viewport().height() // 2))
+        updates.clear()
+        view.set_playhead(None)
+        assert not updates
+        view.set_playhead(10000.0)
+        assert not updates
+    finally:
+        monkeypatch.undo()
+        view.close()
+
+
+def test_playhead_paints_only_dirty_columns(qt_app) -> None:
+    class RecordingView(PianoRollView):
+        def paintEvent(self, event):
+            regions.append(event.region())
+            super().paintEvent(event)
+
+    regions = []
+    view = RecordingView()
+    view.resize(800, 400)
+    view.show()
+    qt_app.processEvents()
+    try:
+        for seconds in (2.0, 3.0, None):
+            previous = view.playhead
+            regions.clear()
+            view.set_playhead(seconds)
+            qt_app.processEvents()
+            assert regions
+            positions = [position for position in (previous, seconds) if position is not None]
+            for position in positions:
+                x = view.mapFromScene(QPointF(view.to_beats(position), 0)).x()
+                assert any(region.contains(QPoint(x, 10)) for region in regions)
+            assert all(
+                sum(rect.width() * rect.height() for rect in region) <= 14 * view.viewport().height()
+                for region in regions
+            )
+    finally:
+        view.close()
+
+
 def test_playhead_is_drawn_at_the_play_position(window) -> None:
     window.view.set_playhead(2.0)  # 2 s at 120 BPM = 4 beats
     image = window.view.grab().toImage()
@@ -1408,6 +1467,71 @@ def test_shift_dragging_a_note_moves_the_edge_that_was_grabbed(window) -> None:
     assert note.duration == pytest.approx(window.view.snap)  # one snap cell, never nothing
     roll_mouse(window, QEvent.Type.MouseButtonRelease, QPointF(9.0, row), start)
     window.view.clear_notes()
+
+
+@pytest.mark.parametrize(
+    ("press_x", "first_x", "next_x"),
+    [(2.5, 3.5, 4.5), (2.05, 1.5, 1.0), (2.95, 3.5, 4.0), (5.0, 6.0, 7.0)],
+)
+def test_note_gestures_reuse_collisions_and_skip_repeated_targets(
+    own_window, monkeypatch, press_x, first_x, next_x
+) -> None:
+    view = own_window.view
+    own_window.edit.pen.click()
+    view.snap = 0.5
+    view.add_note(69, 2.0, 1.0)
+    row = float(PITCH_MAX - 69) + 0.5
+    view.centerOn(QPointF(4.0, row))
+    checks = []
+    indices = []
+    original_check = view._would_collide
+    original_index = view.document.index_by_voice
+    monkeypatch.setattr(
+        view, "_would_collide", lambda *args, **kwargs: (checks.append(args), original_check(*args, **kwargs))[1]
+    )
+    monkeypatch.setattr(view.document, "index_by_voice", lambda: (indices.append(True), original_index())[1])
+    roll_mouse(own_window, QEvent.Type.MouseButtonPress, QPointF(press_x, row))
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(first_x, row))
+    geometry = [(note.start, note.pitch, note.duration) for note in view.notes()]
+    assert len(checks) == 1
+    assert len(indices) == 1
+    gesture = view._gesture
+    assert gesture is not None
+    assert all(note not in gesture.collision_ignored for notes in gesture.collision_index.values() for note in notes)
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(first_x, row))
+    assert len(checks) == 1
+    assert [(note.start, note.pitch, note.duration) for note in view.notes()] == geometry
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(next_x, row))
+    assert len(checks) == 2
+    assert len(indices) == 1
+    roll_mouse(own_window, QEvent.Type.MouseButtonRelease, QPointF(next_x, row))
+    assert view._gesture is None
+
+
+def test_drag_index_checks_new_pitches_and_skips_repeated_collisions(own_window, monkeypatch) -> None:
+    view = own_window.view
+    own_window.edit.pen.click()
+    view.snap = 0.5
+    moving = view.add_note(69, 2.0, 1.0)
+    view.add_note(70, 4.0, 1.0)
+    row = float(PITCH_MAX - 69) + 0.5
+    view.centerOn(QPointF(4.0, row))
+    checks = []
+    original = view._would_collide
+    monkeypatch.setattr(
+        view, "_would_collide", lambda *args, **kwargs: (checks.append(args), original(*args, **kwargs))[1]
+    )
+    roll_mouse(own_window, QEvent.Type.MouseButtonPress, QPointF(2.5, row))
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(3.5, row - 1))
+    assert (moving.start, moving.pitch) == (3.0, 70)
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(4.5, row - 1))
+    assert (moving.start, moving.pitch) == (3.0, 70)
+    assert len(checks) == 2
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(4.5, row - 1))
+    assert len(checks) == 2
+    roll_mouse(own_window, QEvent.Type.MouseMove, QPointF(4.5, row))
+    assert (moving.start, moving.pitch) == (4.0, 69)
+    roll_mouse(own_window, QEvent.Type.MouseButtonRelease, QPointF(4.5, row))
 
 
 def test_a_note_drag_snaps_the_movement_and_keeps_the_note_off_the_grid(window) -> None:
@@ -2556,6 +2680,49 @@ def test_spectrum_image_is_cached_until_the_parameters_change() -> None:
     first = spectrum.image(240.0, 1.0)
     assert spectrum.image(240.0, 1.0) is first
     assert spectrum.image(300.0, 1.0) is not first
+
+
+@pytest.mark.parametrize(("gain", "contrast"), [(240.0, 1.0), (300.0, 0.2), (10.0, 4.0)])
+def test_spectrum_frame_range_matches_full_image(gain, contrast) -> None:
+    table = np.random.default_rng(0).uniform(-0.1, 1.0, (20, NOTE_COUNT)).astype(np.float32)
+    original = table.copy()
+    data = NoteSpectrum(table, 25.0, 44100, 8192, 1102, 440.0, 1.0)
+    full = SpectrumImage(data).image(gain, contrast)
+    renderer = SpectrumImage(data)
+    cropped = renderer.image(gain, contrast, 3, 12)
+    assert cropped == full.copy(3, 0, 9, NOTE_COUNT)
+    assert renderer.image(gain, contrast, 3, 12) is cropped
+    assert renderer.image(gain, contrast, 4, 13) is not cropped
+    assert np.array_equal(table, original)
+
+
+def test_roll_colours_only_visible_spectrum_frames(own_window) -> None:
+    own_window.show()
+    view = own_window.view
+    spectrum = make_spectrum(frames=5000)
+    spectrum.table[1003] = 9.0
+    view.set_spectrum(spectrum)
+    view.center_on(100.0, 40.5)
+    QApplication.processEvents()
+    rendered = view.grab().toImage()
+    beats = 1003.5 * view.frame_width()
+    assert pixel_at(view, rendered, beats, 40.5) == QColor(255, 0, 0)
+    renderer = view.spectrum
+    first = renderer._parameters[2]
+    last = renderer._parameters[3]
+    assert first > 0
+    assert first % 256 == 0
+    assert last % 256 == 0
+    assert last - first < renderer.spectrum.frames
+    image = renderer._image
+    assert image.width() == last - first
+    view.set_playhead(view.to_seconds(100.0))
+    QApplication.processEvents()
+    assert renderer._image is image
+    bar = view.horizontalScrollBar()
+    bar.setValue(bar.value() + 1)
+    QApplication.processEvents()
+    assert renderer._image is image
 
 
 def test_spectrum_row_zero_is_the_highest_band() -> None:
@@ -5302,6 +5469,91 @@ def test_the_sound_strip_lays_a_row_out_once_per_refresh(window) -> None:
         strip._x = original
         window.view.load_lyrics((), ())
         window.sound_strip.setVisible(False)
+
+
+def test_sound_strip_only_measures_visible_labels(own_window, monkeypatch) -> None:
+    own_window.show()
+    view, strip = own_window.view, own_window.sound_strip
+    view.load_lyrics(natural_sounds("あいう"), [[(1.0, 2.0), (3.0, 4.0), (1000.0, 1001.0)]])
+    view.center_on(2.0, 60.0)
+    strip.show()
+    QApplication.processEvents()
+    calls = []
+    original = strip._fit_label
+    monkeypatch.setattr(
+        strip, "_fit_label", lambda sound, metrics, room: (calls.append(sound), original(sound, metrics, room))[1]
+    )
+    strip.grab()
+    assert calls == list(view.lyric_lines[0].sounds[:2])
+    calls.clear()
+    block = strip._blocks()[(0, 0)]
+    strip.update(block.toAlignedRect())
+    QApplication.processEvents()
+    assert calls == [view.lyric_lines[0].sounds[0]]
+
+
+@pytest.mark.parametrize("modifiers", [Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier])
+def test_sound_strip_hover_queries_each_hit_once(own_window, monkeypatch, modifiers) -> None:
+    view, strip = own_window.view, own_window.sound_strip
+    view.load_lyrics(natural_sounds("あい"), [[(1.0, 2.0), (3.0, 4.0)]])
+    strip.show()
+    QApplication.processEvents()
+    calls = []
+    original = strip._sound_at
+    monkeypatch.setattr(strip, "_sound_at", lambda x, y=None: (calls.append((x, y)), original(x, y))[1])
+    rect = strip._blocks()[(0, 0)]
+    sound_mouse(own_window, QEvent.Type.MouseMove, rect.center().x(), rect.center().y(), modifiers)
+    assert len(calls) == 1
+    assert strip._hover == (0, 0)
+    expected = Qt.CursorShape.SizeHorCursor if modifiers else Qt.CursorShape.OpenHandCursor
+    assert strip.cursor().shape() == expected
+
+
+def test_sound_strip_scroll_reuses_layout_and_runs(own_window, monkeypatch) -> None:
+    view, strip = own_window.view, own_window.sound_strip
+    view.load_lyrics(natural_sounds("あいう"), [[(1.0, 2.0), (None, None), (3.0, 4.0)]])
+    strip.show()
+    QApplication.processEvents()
+    blocks = strip._blocks()
+    runs = strip._note_runs()
+    lanes = strip._lanes()
+    original_x = strip._x(0.0)
+    calls = []
+    original = strip._x
+    monkeypatch.setattr(strip, "_x", lambda seconds, origin=None: (calls.append(seconds), original(seconds, origin))[1])
+    bar = view.horizontalScrollBar()
+    bar.setValue(bar.value() + 20)
+    shifted = strip._blocks()
+    assert calls == [0.0]
+    delta = original(0.0) - original_x
+    assert delta != 0
+    assert shifted == {key: rect.translated(delta, 0) for key, rect in blocks.items()}
+    assert strip._note_runs() is runs
+    assert strip._lanes() is lanes
+    calls.clear()
+    bar = view.verticalScrollBar()
+    bar.setValue(bar.value() + 10)
+    assert calls == [0.0]
+    assert strip._blocks() is shifted
+    view.set_zoom(view.zoom[0] * 2, view.zoom[1])
+    assert strip._block_cache is None
+    rebuilt = strip._blocks()
+    assert rebuilt[(0, 0)].width() > shifted[(0, 0)].width()
+    assert strip._note_runs() is runs
+    assert strip._lanes() is lanes
+
+
+def test_drop_labels_use_nearest_mapped_neighbours_across_lines(own_window) -> None:
+    view, strip = own_window.view, own_window.sound_strip
+    view.load_lyrics(
+        natural_sounds("あい\nうえ\nおか"),
+        [[(None, None), (2.0, 3.0)], [(None, None), (5.0, 6.0)], [(None, None), (None, None)]],
+    )
+    blocks = strip._blocks()
+    assert blocks[(0, 0)].left() == strip._x(2.0)
+    assert blocks[(1, 0)].left() == max(strip._x(3.0), blocks[(0, 0)].right() + 3)
+    assert blocks[(2, 0)].left() == max(strip._x(6.0), blocks[(1, 0)].right() + 3)
+    assert blocks[(2, 1)].left() >= blocks[(2, 0)].right() + 3
 
 
 def test_drop_labels_never_land_on_each_other(window) -> None:

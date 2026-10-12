@@ -55,9 +55,11 @@ class SoundStrip(ViewportStrip):
         self._candidate_y = 0.0
         self._layouts = {}
         self._block_cache = None
+        self._block_origin = 0.0
+        self._block_scale = 0.0
         self._channel_lanes = None
         self.show_raw = False
-        view.viewport_changed.connect(self._refresh)
+        view.viewport_changed.connect(self._refresh_viewport)
         view.lyrics_changed.connect(self._refresh)
         view.notes_changed.connect(self._refresh)
         view.lyric_highlight_changed.connect(self.update)
@@ -86,11 +88,12 @@ class SoundStrip(ViewportStrip):
         font.setPixelSize(14)
         metrics = QFontMetrics(font)
         blocks = {}
-        mapped = []
+        first_start = {}
         for row, spans in enumerate(self.view.lyric_times):
             for column, (start, end) in enumerate(spans):
                 if start is not None and end is not None:
-                    mapped.append((SoundRef(row, column), start, end))
+                    channel = self.view.lyric_lines[row].sounds[column].channel
+                    first_start.setdefault(channel, start)
                     blocks[(row, column)] = QRectF(
                         self._x(start),
                         self._lane(row, column) + SOUND_MARGIN,
@@ -98,19 +101,14 @@ class SoundStrip(ViewportStrip):
                         MAIN_BOTTOM - SOUND_MARGIN,
                     )
         label_ends = {}
+        previous_end = {}
         for row, line in enumerate(self.view.lyric_lines):
             for column, sound in enumerate(line.sounds):
                 ref = SoundRef(row, column)
                 if (row, column) in blocks:
+                    previous_end[sound.channel] = self.view.lyric_times[row][column][1]
                     continue
-                same = [
-                    entry
-                    for entry in mapped
-                    if self.view.lyric_lines[entry[0].line].sounds[entry[0].index].channel == sound.channel
-                ]
-                previous = [entry for entry in same if (entry[0].line, entry[0].index) < (row, column)]
-                following = [entry for entry in same if (entry[0].line, entry[0].index) > (row, column)]
-                seconds = previous[-1][2] if previous else following[0][1] if following else 0.0
+                seconds = previous_end.get(sound.channel, first_start.get(sound.channel, 0.0))
                 x = max(self._x(seconds), label_ends.get(sound.channel, float("-inf")) + SOUND_PAD)
                 width = metrics.horizontalAdvance(sound.label) + 2 * SOUND_PAD
                 label_ends[sound.channel] = x + width
@@ -121,6 +119,8 @@ class SoundStrip(ViewportStrip):
                     SOUND_HEIGHT - MAIN_BOTTOM - 2 * SOUND_MARGIN,
                 )
         self._block_cache = blocks
+        self._block_origin = self._x(0.0)
+        self._block_scale = self.view.pixels_per_second()
         return blocks
 
     def paintEvent(self, event):
@@ -128,14 +128,20 @@ class SoundStrip(ViewportStrip):
         colors = theme.canvas()
         painter.fillRect(self.rect(), colors.panel)
         origin = self.origin().x()
-        painter.setClipRect(QRectF(origin, 0, self.view.viewport().width(), self.height()))
+        visible = QRectF(origin, 0, self.view.viewport().width(), self.height())
+        painter.setClipRect(visible)
+        dirty = visible.intersected(QRectF(event.rect())).adjusted(-2, -2, 2, 2)
         font = QFont()
         font.setPixelSize(14)
         font.setBold(True)
         painter.setFont(font)
         blocks = self._blocks()
         hovered_group = self._group_run(self._hover)
+        highlighted = set(self.view.highlight_sounds)
+        metrics = painter.fontMetrics()
         for (row, column), rect in blocks.items():
+            if not rect.intersects(dirty):
+                continue
             zero = rect.top() - self._lane(row, column) > MAIN_BOTTOM
             flags = self.view.lyric_red[row] if row < len(self.view.lyric_red) else ()
             good = not (column < len(flags) and flags[column])
@@ -158,7 +164,7 @@ class SoundStrip(ViewportStrip):
                     painter.setPen(QPen(QColor(theme.LYRIC_ZERO), 1))
                     painter.drawLine(rect.topLeft(), rect.bottomLeft())
             if (
-                (row, column) in self.view.highlight_sounds
+                (row, column) in highlighted
                 or self._hover == (row, column)
                 or (
                     hovered_group is not None
@@ -172,7 +178,7 @@ class SoundStrip(ViewportStrip):
                 painter.setPen(QPen(QColor(theme.LYRIC_HIGHLIGHT), 2))
                 painter.drawRect(rect)
             text_color = theme.LYRIC_ZERO if zero else theme.LYRIC_TEXT
-            if (row, column) in self.view.highlight_sounds:
+            if (row, column) in highlighted:
                 text_color = theme.LYRIC_SELECT
             painter.setPen(QColor(text_color))
             sound = self.view.lyric_lines[row].sounds[column]
@@ -181,9 +187,9 @@ class SoundStrip(ViewportStrip):
                     QRectF(rect.left(), rect.top(), rect.width(), 2), self.view.channel_color(sound.channel)
                 )
             room = max(0, int(rect.width()) - 2 * SOUND_PAD)
-            text = self._fit_label(sound, painter.fontMetrics(), room)
+            text = self._fit_label(sound, metrics, room)
             if not text and room:
-                text = painter.fontMetrics().elidedText(sound.label, Qt.TextElideMode.ElideRight, room)
+                text = metrics.elidedText(sound.label, Qt.TextElideMode.ElideRight, room)
             painter.drawText(
                 rect.adjusted(SOUND_PAD, 0, -SOUND_PAD, 0),
                 int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
@@ -259,14 +265,15 @@ class SoundStrip(ViewportStrip):
     def mouseMoveEvent(self, event):
         x, y = event.position().x(), event.position().y()
         if self._drag is None:
-            self._update_hover(self._sound_at(x, y))
+            sound = self._sound_at(x, y)
+            self._update_hover(sound)
             found = self._boundary_at(x, y)
             shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-            if shift and self._sound_at(x, y) is not None:
+            if shift and sound is not None:
                 self.setCursor(Qt.CursorShape.SizeHorCursor)
             elif found is not None:
                 self._set_cursor(found)
-            elif self._sound_at(x, y) is not None:
+            elif sound is not None:
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
             else:
                 self.unsetCursor()
@@ -534,6 +541,19 @@ class SoundStrip(ViewportStrip):
         if found != self._hover:
             self._hover = found
             self.update()
+
+    def _refresh_viewport(self):
+        if self._block_cache is not None:
+            origin = self._x(0.0)
+            if self._block_scale != self.view.pixels_per_second():
+                self._block_cache = None
+                self._layouts.clear()
+            elif origin != self._block_origin:
+                delta = origin - self._block_origin
+                self._block_cache = {key: rect.translated(delta, 0) for key, rect in self._block_cache.items()}
+                self._layouts.clear()
+            self._block_origin = origin
+        self.update()
 
     def _refresh(self):
         self._channel_lanes = None
