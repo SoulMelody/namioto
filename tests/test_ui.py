@@ -6056,6 +6056,34 @@ def test_pattern_weights_apply_to_both_aligners_without_changing_evidence(own_wi
     assert (tmp_path / "exported.krc").read_text(encoding="utf-8") == "泣[な]い.+"
 
 
+@pytest.mark.parametrize("raw_count", [1, 3])
+def test_loading_lyrics_discards_evidence_with_a_different_sound_count(own_window, tmp_path, raw_count) -> None:
+    text = "S.2S.2"
+    own_window.transport.bpm.setValue(60.0)
+    own_window.view.set_channels((Channel(channel=0),))
+    own_window.view.set_notes(tuple((60, float(at), 1.0, 0) for at in range(4)))
+    own_window.project_path = tmp_path / "song.nto"
+    own_window._stored_lyrics = project.Lyrics(
+        text=text,
+        key=text_key(text),
+        model="mms",
+        raw=(tuple((float(at), 1.0) for at in range(raw_count)),),
+        scores=(tuple(0.9 for _ in range(raw_count)),),
+        flagged=(True,),
+    )
+
+    own_window._watch_lyrics()
+    wait_for_lyric_mapping(own_window)
+
+    assert own_window.lyrics_text == text
+    assert own_window.view.lyric_raw == (((None, None), (None, None)),)
+    assert own_window.view.lyric_times == (((0.0, 2.0), (2.0, 4.0)),)
+    assert own_window._lyric_model == ""
+    assert own_window._lyric_scores is None
+    assert own_window._lyric_flags == ()
+    assert own_window._lyric_error == ""
+
+
 def test_short_sounds_on_one_note_fall_to_zero(own_window, tmp_path) -> None:
     (tmp_path / "song.krc").write_text("きにく\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"

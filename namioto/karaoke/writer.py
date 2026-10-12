@@ -79,7 +79,11 @@ def _needs_group(unit: Unit) -> bool:
     """Whether the text must be parenthesised to come back as one unit."""
     if isinstance(unit.base, Group) and unit.base.explicit:
         return True
-    if len(unit.text) <= 1 or unit.is_latin():
+    if len(unit.text) <= 1:
+        return False
+    if unit.override is not None or unit.join_previous:
+        return True
+    if unit.is_latin():
         return False
     return not (unit.ruby is not None and unit.is_kanji())
 

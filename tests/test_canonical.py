@@ -67,7 +67,7 @@ def test_a_track_and_a_chapter_are_kept():
 
 
 def test_a_latin_run_is_written_whole():
-    assert rebuild("hello", [_match(0, 0, [1, 2])]) == "hello.2"
+    assert rebuild("hello", [_match(0, 0, [1, 2])]) == "(hello).2"
     assert rebuild("hello world", [_merge(0, 0, 1)]) == "(hello world).1"
 
 

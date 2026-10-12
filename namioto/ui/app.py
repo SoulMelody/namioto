@@ -1504,7 +1504,13 @@ class MainWindow(QMainWindow):
         else:
             self._lyric_error = ""
         stored = self._stored_lyrics
-        if lines and stored is not None and stored.key == key and len(stored.raw) == len(lines):
+        if (
+            lines
+            and stored is not None
+            and stored.key == key
+            and len(stored.raw) == len(lines)
+            and all(len(row) == len(line.sounds) for row, line in zip(stored.raw, lines, strict=True))
+        ):
             self._lyric_model = stored.model
             raw = [list(row) for row in stored.raw]
             self._lyric_flags = stored.flagged if len(stored.flagged) == len(lines) else ()

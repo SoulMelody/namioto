@@ -112,11 +112,26 @@ def test_a_dot_overrides_a_latin_run():
     assert word.mora == 3
 
 
-def test_a_dot_after_a_bare_run_overrides_the_whole_run():
-    word = parse("hello.3").chapters[0].lines[0].words[0]
-    assert word.text == "hello"
-    assert word.base_mora == 5
-    assert word.mora == 3
+def test_an_override_stops_automatic_grouping():
+    words = parse("hello.3").chapters[0].lines[0].words
+    assert [word.text for word in words] == ["hell", "o"]
+    assert [word.mora for word in words] == [1, 3]
+
+
+@pytest.mark.parametrize("text", ["S.2S.2", "Ｓ.2Ｓ.2", "季.2節[せつ]", "季節[せつ].3"])
+def test_overridden_units_are_not_automatically_merged(text):
+    units = parse(text).chapters[0].lines[0].units
+    assert len(units) == 2
+
+
+def test_latin_overrides_keep_separate_mapping_runs():
+    from namioto.karaoke.sounds import natural_sounds, note_groups
+
+    text = "カラダもココロもS.2S.2だけど"
+    sounds = natural_sounds(text)[0]
+    line = parse(text).chapters[0].lines[0]
+    assert [sound.reading for sound in sounds.sounds][8:10] == ["S", "S"]
+    assert note_groups(line, sounds, explicit_only=True) == [(2, [8]), (2, [9])]
 
 
 def test_a_grouped_word_stops_the_latin_merge():
@@ -148,7 +163,7 @@ def test_a_kanji_run_with_a_ruby_is_an_auto_group():
 
 @pytest.mark.parametrize(
     "text",
-    ["泣[な]い.+", "あい.+う.+", "あ(いう).+", "あ字[いう].+", "文字[い,う.+]", "泣[な]、い.+", "あhello.+"],
+    ["泣[な]い.+", "あい.+う.+", "あ(いう).+", "あ字[いう].+", "文字[い,う.+]", "泣[な]、い.+", "あ(hello).+"],
 )
 def test_continuations_reuse_one_note_without_changing_natural_mora(text):
     line = parse(text).chapters[0].lines[0]

@@ -80,7 +80,7 @@ def test_an_input_dot_changes_nothing():
         ("あいう", "あ(いう).+"),
         ("あ字[いう]", "あ字[いう].+"),
         ("文字[い,う]", "文字[い,う.+]"),
-        ("あhello", "あhello.+"),
+        ("あhello", "あ(hello).+"),
     ],
 )
 def test_input_continuations_do_not_change_sounds_or_tokens(plain, linked):

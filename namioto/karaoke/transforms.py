@@ -36,6 +36,9 @@ def _fold(units: list[Unit]) -> list[Unit]:
             merged
             and not _explicit(unit)
             and not _explicit(merged[-1])
+            and unit.override is None
+            and merged[-1].override is None
+            and not unit.join_previous
             and unit.is_latin()
             and merged[-1].is_latin()
             and merged[-1].ruby is None
@@ -59,11 +62,18 @@ def _fold_kanji(units: list[Unit]) -> list[Unit]:
     folded: list[Unit] = []
     while pending:
         unit = pending.pop()
-        if unit.ruby is not None and unit.is_kanji():
+        if unit.ruby is not None and unit.is_kanji() and unit.override is None and not unit.join_previous:
             explicit = _explicit(unit)
             words = _base_words(unit.base)
             grew = False
-            while pending and pending[-1].ruby is None and pending[-1].is_kanji():
+            while (
+                pending
+                and pending[-1].ruby is None
+                and pending[-1].is_kanji()
+                and pending[-1].override is None
+                and not pending[-1].join_previous
+                and not _explicit(pending[-1])
+            ):
                 words = _base_words(pending.pop().base) + words
                 grew = True
             if grew:

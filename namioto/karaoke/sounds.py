@@ -231,6 +231,7 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
     run: list[str] = []
     ownership: list[int] = []
     runs = 0
+    boundaries: set[int] = set()
 
     def flush() -> None:
         nonlocal runs
@@ -238,7 +239,8 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
             return
         containers.append(Container(("top", runs), tuple(run), tuple(ownership)))
         runs += 1
-        _collect(sounds, containers, run, line_index, rubied=False, first=True, base="")
+        _collect(sounds, containers, run, line_index, rubied=False, first=True, base="", boundaries=boundaries)
+        boundaries.clear()
         run.clear()
         ownership.clear()
 
@@ -246,6 +248,8 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
         if unit.ruby is None:
             if unit.is_kanji():
                 raise KrcError(f"'{text}' has kanji with no ruby to align: {unit.text}")
+            if unit.override is not None or unit.join_previous:
+                boundaries.update((len(run), len(run) + len(_chars(unit))))
             run.extend(_chars(unit))
             ownership.extend(word.channel for word in _base_words(unit))
             continue
@@ -257,7 +261,23 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
                 continue
             base = unit.text if len(unit.ruby.parts) == 1 else unit.text[part_index : part_index + 1]
             containers.append(Container(("part", top, part_index), tuple(atoms), tuple(word.channel for word in words)))
-            _collect(sounds, containers, atoms, line_index, rubied=True, first=part_index == 0, base=base)
+            part_boundaries = set()
+            offset = 0
+            for inner in part:
+                end = offset + len(_chars(inner))
+                if inner.override is not None or inner.join_previous:
+                    part_boundaries.update((offset, end))
+                offset = end
+            _collect(
+                sounds,
+                containers,
+                atoms,
+                line_index,
+                rubied=True,
+                first=part_index == 0,
+                base=base,
+                boundaries=part_boundaries,
+            )
     flush()
     channels = {sound.channel for sound in sounds}
     track = next(iter(channels)) if len(channels) == 1 else -1 if channels else 0
@@ -273,8 +293,9 @@ def _collect(
     rubied: bool,
     first: bool,
     base: str,
+    boundaries: set[int],
 ) -> None:
-    entries = _entries(atoms)
+    entries = _entries(atoms, boundaries)
     tokens = _tokens([reading for reading, _lo, _hi in entries])
     container = len(containers) - 1
     for (reading, low, high), token in zip(entries, tokens, strict=True):
@@ -331,7 +352,7 @@ def _chars(unit: Unit) -> list[str]:
     return [unit.base.char]
 
 
-def _entries(atoms: list[str]) -> list[tuple[str, int, int]]:
+def _entries(atoms: list[str], boundaries: set[int] | None = None) -> list[tuple[str, int, int]]:
     """`(reading, first atom, last atom)` per natural Sound of one container, in reading order.
 
     A small kana rides the Sound before it, a run of Latin letters is one Sound, and a character that
@@ -345,7 +366,13 @@ def _entries(atoms: list[str]) -> list[tuple[str, int, int]]:
         if char in SMALL_KANA and entries:
             entries[-1] = (entries[-1][0] + char, entries[-1][1], at)
             continue
-        if _is_latin(char) and entries and _is_latin(entries[-1][0][-1]) and entries[-1][2] == at - 1:
+        if (
+            _is_latin(char)
+            and entries
+            and _is_latin(entries[-1][0][-1])
+            and entries[-1][2] == at - 1
+            and (not boundaries or at not in boundaries)
+        ):
             entries[-1] = (entries[-1][0] + char, entries[-1][1], at)
             continue
         entries.append((char, at, at))
