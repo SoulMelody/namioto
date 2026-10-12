@@ -399,8 +399,8 @@ def quantized(
     """Snap the notes to the beat grid `subdivisions` per quarter note apart, and report what was used.
 
     `offset` is the grid's own zero - the editor's slid grid - and is written into the notes, so they
-    land on the lines that are drawn; `phase`, fitted from the onsets when not given, only decides
-    which cell a note belongs to. Returns the notes, the seconds per cell and the phase.
+    land on the lines that are drawn; `phase`, fitted from the onsets when not given, is retained
+    in the output timestamps. Returns the notes, the seconds per cell and the phase.
     """
     unit = (60.0 / tempo) / subdivisions
     onsets = [note[0] for note in notes]
@@ -411,8 +411,7 @@ def quantized(
     if fit_tempo:
         unit = estimate_grid_period(onsets, phase, unit)
     snapped = quantize_notes(notes, unit, phase)
-    if offset:
-        snapped = [(onset + offset, oset + offset, pitch) for onset, oset, pitch in snapped]
+    snapped = [(onset + phase, oset + phase, pitch) for onset, oset, pitch in snapped]
     return snapped, unit, phase
 
 

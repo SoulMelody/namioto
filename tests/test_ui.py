@@ -3389,6 +3389,21 @@ def test_the_transcription_dialog_snaps_the_raw_notes_on_its_grid(own_window, mo
     assert "offset 250.0 ms" in dialog.log.toPlainText()
 
 
+def test_transcription_phase_estimation_is_optional(own_window) -> None:
+    raw = [(0.15, 0.65, 60.0), (0.65, 1.15, 62.0)]
+    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window)
+    dialog._parameters["quantize"] = 2
+    assert dialog._snapped(raw) == [(0.25, 0.75, 60.0), (0.75, 1.25, 62.0)]
+    assert dialog.offset == 0.0
+    dialog._parameters["estimate_phase"] = True
+    assert dialog._snapped(raw) == pytest.approx(raw)
+    assert dialog.offset == pytest.approx(0.15)
+    assert transcription.run_key("/tmp/song.wav", dialog._parameters) == transcription.run_key(
+        "/tmp/song.wav", dict(dialog._parameters, estimate_phase=False)
+    )
+    dialog.close()
+
+
 def test_the_transcription_dialog_offers_every_parameter(own_window) -> None:
     dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window)
     assert [field.name for field, _read, _write in dialog._fields] == [item.name for item in transcription.PARAMETERS]

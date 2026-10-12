@@ -352,6 +352,8 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Estimate threshold": "估计阈值",
         "D3PM T0": "D3PM T0",
         "D3PM steps": "D3PM 步数",
+        "Estimate phase": "估算网格偏移",
+        "Estimate the quantization grid offset and apply it to the project when accepting the notes": "估算量化网格偏移，并在接受音符时应用到项目",
         "Silence slicing": "静音切分",
         "GAME's ONNX model, downloaded into the data directory on first use": "GAME 的 ONNX 模型，首次使用时下载到数据目录",
         "Where the models run; CUDA falls back to the CPU when it cannot be set up": "模型运行的位置；CUDA 无法配置时回退到 CPU",

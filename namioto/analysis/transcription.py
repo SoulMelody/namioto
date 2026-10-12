@@ -68,6 +68,13 @@ PARAMETERS: tuple[Field, ...] = (
         choices=(0, 1, 2, 4, 8, 16, 32),
         labels=("Off", "1/4", "1/8", "1/16", "1/32", "1/64", "1/128"),
     ),
+    Field(
+        "estimate_phase",
+        "bool",
+        False,
+        "Estimate phase",
+        "Estimate the quantization grid offset and apply it to the project when accepting the notes",
+    ),
     Field("batch_size", "int", 4, "Batch", "Chunks per inference batch", low=1, high=32),
     Field(
         "seg_threshold",
@@ -167,7 +174,11 @@ def run_key(path: Any, parameters: Any) -> str:
     identity = {
         "audio": list(file_stamp(path)),
         "device": devices.resolve(values["device"]),
-        "parameters": {item.name: values[item.name] for item in PARAMETERS if item.name not in ("quantize", "device")},
+        "parameters": {
+            item.name: values[item.name]
+            for item in PARAMETERS
+            if item.name not in ("quantize", "estimate_phase", "device")
+        },
     }
     return hashlib.sha1(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
 

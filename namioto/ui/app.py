@@ -1376,6 +1376,8 @@ class MainWindow(QMainWindow):
             offset=self.view.offset,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            if dialog.notes():
+                self.transport.grid_offset.setValue(dialog.offset * 1000.0)
             self._adopt_transcription(dialog.notes())
 
     def _adopt_transcription(self, notes) -> None:

@@ -292,7 +292,11 @@ class TranscriptionDialog(QDialog):
             return raw
         from namioto.analysis import game
 
-        snapped, unit, phase = game.quantized(raw, self.tempo, cells, offset=self.offset)
+        if self._parameters["estimate_phase"]:
+            unit = (60.0 / self.tempo) / cells
+            phase = game.estimate_grid_phase([note[0] for note in raw], unit)
+            self.offset = round(phase * 1000.0) / 1000.0
+        snapped, unit, phase = game.quantized(raw, self.tempo, cells, phase=self.offset, offset=self.offset)
         self._log_line(f"grid {unit * 1000:.1f} ms, phase {phase * 1000:.1f} ms, offset {self.offset * 1000:.1f} ms")
         return [(float(onset), float(offset), float(pitch)) for onset, offset, pitch in snapped]
 
