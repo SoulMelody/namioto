@@ -1683,7 +1683,12 @@ class MainWindow(QMainWindow):
         path = self._prepare_lyrics_copy()
         if path is None:
             return
-        dialog = LyricsDialog(path, self.settings.lyrics, parent=self)
+        dialog = LyricsDialog(
+            path,
+            self.settings.lyrics,
+            parent=self,
+            source_directory=self.project_path.parent if self.project_path else None,
+        )
         dialog.saved.connect(self._on_lyrics_saved)
         dialog.open_requested.connect(self._open_lyrics_editor)
         dialog.exec()

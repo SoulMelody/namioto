@@ -138,11 +138,12 @@ class LyricsDialog(QDialog):
     saved = Signal(str)
     open_requested = Signal()
 
-    def __init__(self, path: str | Path, config, parent=None):
+    def __init__(self, path: str | Path, config, parent=None, source_directory: str | Path | None = None):
         super().__init__(parent)
         self.setWindowTitle(tr("Lyrics"))
         self.resize(680, 640)
         self.path = Path(path)
+        self.source_directory = Path(source_directory) if source_directory is not None else self.path.parent
         self.config = config
         self.converter: LyricsConverter | None = None
         self._rejected: tuple[str, str] | None = None
@@ -282,7 +283,7 @@ class LyricsDialog(QDialog):
         chosen, _filter = QFileDialog.getOpenFileName(
             self,
             tr("Load plain-text lyrics"),
-            str(self.path.parent),
+            str(self.source_directory),
             tr("Text file ({patterns})", patterns="*.txt *.md *.lrc") + ";;" + tr("All files (*)"),
         )
         if not chosen:
