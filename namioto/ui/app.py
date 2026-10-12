@@ -57,14 +57,14 @@ from namioto.channels import audible as audible_channels
 from namioto.channels import set_field as channel_set_field
 from namioto.karaoke import AssSettings, KrcError
 from namioto.karaoke.canonical import rebuild
-from namioto.karaoke.operations import Drop, Match, Merge, SoundRef
+from namioto.karaoke.operations import SoundRef
 from namioto.karaoke.parser import parse
 from namioto.karaoke.sounds import natural_sounds
 from namioto.karaoke.sounds import set_channel as set_sound_channel
 from namioto.karaoke.writer import dumps
 from namioto.lyricmap import constraints, faithful, faithful_gate
 from namioto.lyricmap.channels import split as split_channels
-from namioto.lyricmap.editing import drop_sound
+from namioto.lyricmap.editing import detach, note_runs, operation_at
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import Problem
 from namioto.lyricmap.verify import Gate
@@ -131,11 +131,6 @@ def _lyrics_filter() -> str:
 
 def _ass_filter() -> str:
     return i18n.tr("ASS subtitle (*.ass)")
-
-
-def _holds(operation, spots) -> bool:
-    """Whether an operation owns any of the `(line, index)` spots."""
-    return any((ref.line, ref.index) == spot for spot in spots for ref in operation.sounds)
 
 
 _translators: list[QTranslator] = []
@@ -1051,7 +1046,12 @@ class MainWindow(QMainWindow):
                 dropped = tuple(ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0)
                 issues.extend(
                     faithful_gate(
-                        spans, resolved.stream, filtered=resolved.filtered, subtitle=True, dropped=dropped
+                        spans,
+                        resolved.stream,
+                        filtered=resolved.filtered,
+                        subtitle=True,
+                        dropped=dropped,
+                        required_slots=faithful.consumes(text, resolved.stream),
                     ).problems
                 )
         if issues:
@@ -1833,8 +1833,30 @@ class MainWindow(QMainWindow):
         else:
             self._start_lyric_mapper(request)
 
-    def _canonical_mapping(self, text, operations, *, channels=None, line_indices=None) -> str:
+    def _canonical_mapping(self, text, operations, *, channels=None, line_indices=None, preserve_groups=False) -> str:
         rebuilt = rebuild(text, operations, line_indices=line_indices)
+        lines = natural_sounds(text)
+        groups = [
+            run
+            for run in note_runs(text)
+            if len(run.sounds) > 1
+            and (
+                preserve_groups
+                or (
+                    channels is not None
+                    and lines[run.sounds[0].line].sounds[run.sounds[0].index].channel not in channels
+                )
+            )
+        ]
+        if groups:
+            plan = list(note_runs(rebuilt))
+            for group in groups:
+                refs = set(group.sounds)
+                covered = [run for run in plan if refs.intersection(run.sounds)]
+                if {ref for run in covered for ref in run.sounds} != refs:
+                    raise KrcError("the mapping does not preserve the existing group boundary")
+                plan = [run for run in plan if run not in covered] + [group]
+            rebuilt = rebuild(rebuilt, plan, line_indices=line_indices)
         for channel, part in split_channels(rebuilt).items():
             if channels is not None and channel not in channels:
                 continue
@@ -1867,6 +1889,7 @@ class MainWindow(QMainWindow):
                 mapping.operations,
                 channels=selected,
                 line_indices=sorted({ref.line for row in refs for ref in row}),
+                preserve_groups=snapshot["use_constraints"],
             )
         except (KrcError, ValueError) as error:
             self._remap_lyrics()
@@ -1940,13 +1963,13 @@ class MainWindow(QMainWindow):
         self.view.begin_gesture(i18n.tr("Move lyrics"))
         self._set_lyric_mapping_pending(False)
 
-    def _preview_lyric_drag(self, anchors) -> None:
+    def _preview_lyric_drag(self, runs) -> None:
         if self._lyric_drag_request is None:
             return
         self._lyric_map_revision += 1
         self._lyric_map_pending = None
         self._lyric_drag_valid = False
-        if anchors is None:
+        if runs is None:
             self.lyrics_text = self._lyric_drag_request["text"]
             self._lyric_key = text_key(self.lyrics_text)
             self._apply_lyric_mapping(self._lyric_drag_result)
@@ -1955,10 +1978,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(i18n.tr("No valid mapping at this position"))
             return
         try:
-            baseline = self._lyric_drag_result.operations
-            changed = set(baseline).symmetric_difference(anchors)
+            baseline = note_runs(self._lyric_drag_request["text"])
+            changed = set(baseline).symmetric_difference(runs)
             affected = sorted({ref.line for operation in changed for ref in operation.sounds})
-            text = rebuild(self._lyric_drag_request["text"], anchors, line_indices=affected)
+            text = rebuild(self._lyric_drag_request["text"], runs, line_indices=affected)
             snapshot = dict(self._lyric_drag_request, text=text, lines=natural_sounds(text))
             mapping = map_lyrics(**snapshot)
         except (KrcError, ValueError) as error:
@@ -1974,7 +1997,7 @@ class MainWindow(QMainWindow):
     def _finish_lyric_drag(self, commit: bool) -> None:
         if self._lyric_drag_request is None:
             return
-        valid = commit and self._lyric_drag_valid
+        valid = commit and self._lyric_drag_valid and self.lyrics_text != self._lyric_drag_request["text"]
         baseline = self._lyric_drag_result
         self._lyric_drag_request = None
         self._lyric_drag_result = None
@@ -1995,68 +2018,16 @@ class MainWindow(QMainWindow):
         if self.view.lyric_mapping_pending:
             self.statusBar().showMessage(i18n.tr("Calculating lyric mapping…"))
             return
-        spots = [(line, index)]
-        if kind == "drop":
-            anchors = drop_sound(self.view.lyric_operations, SoundRef(line, index))
-            if anchors is not None:
-                self._begin_lyric_drag()
-                self._preview_lyric_drag(anchors)
-                self._finish_lyric_drag(True)
-        elif kind == "keep":
-            self._edit_lyric("Keep sound", None, spots, release=Drop)
-        elif kind == "merge":
-            self._merge_with_previous(line, index)
-        elif kind == "dissolve":
-            self._edit_lyric("Dissolve merge", None, spots, release=Merge)
-
-    def _operation_at(self, line: int, index: int):
-        for operation in self.view.lyric_operations:
-            if any(ref.line == line and ref.index == index for ref in operation.sounds):
-                return operation
-        return None
-
-    def _first_note(self, line: int, index: int) -> int | None:
-        operation = self._operation_at(line, index)
-        if isinstance(operation, Match):
-            return operation.notes[0]
-        if isinstance(operation, Merge):
-            return operation.note
-        return None
-
-    def _merge_with_previous(self, line: int, index: int) -> None:
-        sounds = self.view.lyric_lines[line].sounds
-        if index == 0 or sounds[index - 1].channel != sounds[index].channel:
+        ref = SoundRef(line, index)
+        runs = note_runs(self.lyrics_text)
+        run = operation_at(runs, ref)
+        if kind not in ("drop", "keep") or run is None or (kind == "keep" and run.slots != 0):
             return
-        note = self._first_note(line, index - 1)
-        if note is None:
-            return
-        anchor = Merge((SoundRef(line, index - 1), SoundRef(line, index)), note, confirmed=True)
-        self._edit_lyric("Merge sounds", anchor, [(line, index - 1), (line, index)])
-
-    def _edit_lyric(self, text: str, anchor, spots, *, release=None) -> None:
-        """Replace selected KRC runs without solving the surrounding lyrics."""
-        operations = []
-        for operation in self.view.lyric_operations:
-            if (release is None or isinstance(operation, release)) and _holds(operation, spots):
-                if anchor is None:
-                    operations.extend(Match(ref, (0,), confirmed=True) for ref in operation.sounds)
-            else:
-                operations.append(operation)
-        if anchor is not None:
-            operations.append(anchor)
-        try:
-            rebuilt = rebuild(self.lyrics_text, operations, line_indices=sorted({line for line, _index in spots}))
-        except KrcError as error:
-            self.statusBar().showMessage(str(error))
-            return
-        with self.view.lyric_edit(i18n.tr(text)):
-            self.lyrics_text = rebuilt
-            self.view.lyric_text = rebuilt
-            self._lyric_key = text_key(rebuilt)
-            self.view.load_lyrics(natural_sounds(rebuilt), self.view.lyric_times, raw=self.view.lyric_raw)
-        self._remap_lyrics()
-        self._prepare_lyrics_copy()
-        self._mark_dirty()
+        candidate = detach(runs, ref, 0 if kind == "drop" else 1)
+        if candidate is not None:
+            self._begin_lyric_drag()
+            self._preview_lyric_drag(candidate)
+            self._finish_lyric_drag(True)
 
     def _open_audio(self, target: Path | None) -> str:
         """Load the audio a project names, or say why there is none: its notes are worth having either way."""

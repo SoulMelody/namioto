@@ -124,13 +124,14 @@ def faithful_gate(
     filtered: Sequence = (),
     subtitle: bool = False,
     dropped: Sequence[SoundRef] = (),
+    required_slots: int = 0,
 ) -> Gate:
-    """The read-only subtitle's own gate: no edit mapping, only what the input `.krc` already says.
+    """The faithful subtitle gate checks NOTE coverage without solver operations.
 
     The KRC itself may always be copied, so this concerns the subtitle alone: the target channel must
     have notes, no conflict may have filtered one out, and every Sound it is to render must have a
-    definite time - a Sound whose `.N` outran the notes has none. Explicit `.0` Sounds are excluded
-    from the missing-time check.
+    definite time. `required_slots` detects NOTE counts that were truncated for display. Explicit
+    `.0` Sounds are excluded from the missing-time check.
     """
     issues: list[Problem] = []
     if not notes:
@@ -143,8 +144,8 @@ def faithful_gate(
         for index, span in enumerate(row)
         if SoundRef(line, index) not in omitted
     )
-    if missing:
-        issues.append(Problem(codes.INCOMPLETE_ALIGNMENT, "a sound has no time to render"))
+    if missing or required_slots > len(notes):
+        issues.append(Problem(codes.INCOMPLETE_ALIGNMENT, "a sound has unmatched NOTE slots"))
     if subtitle and all(span is None for row in spans for span in row):
         issues.append(Problem(codes.NO_LYRIC_SOUNDS, "the subtitle would have nothing to show"))
     return Gate(tuple(issues))

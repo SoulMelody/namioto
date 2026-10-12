@@ -70,7 +70,14 @@ def build_ass(krc: str, data: bytes, *, settings: AssSettings | None = None, wav
         )
         rows = faithful.read(text, notes.stream)
         dropped = tuple(ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0)
-        gate = faithful_gate(rows, notes.stream, filtered=notes.filtered, subtitle=True, dropped=dropped)
+        gate = faithful_gate(
+            rows,
+            notes.stream,
+            filtered=notes.filtered,
+            subtitle=True,
+            dropped=dropped,
+            required_slots=faithful.consumes(text, notes.stream),
+        )
         if not gate.open():
             raise ValueError(f"channel {channel}: " + "; ".join(problem.message for problem in gate.problems))
         for refs, row in zip(part.refs, rows, strict=True):

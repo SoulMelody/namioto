@@ -12,7 +12,7 @@ from itertools import groupby
 from namioto.karaoke.model import Chapter, Group, KrcError, Line, Lyrics, Ruby, Unit, Word
 from namioto.karaoke.operations import SoundRef, map_operation
 from namioto.karaoke.parser import parse
-from namioto.karaoke.sounds import natural_sounds, note_groups
+from namioto.karaoke.sounds import mapping_runs, natural_sounds, note_groups
 from namioto.karaoke.writer import dumps
 
 
@@ -57,10 +57,11 @@ def split(text: str) -> dict[int, ChannelSlice]:
     chunks = {}
     for row, (line, sounds) in enumerate(zip(parsed, lines, strict=True)):
         annotations = {}
-        for slots, indices in note_groups(line, sounds):
+        for slots, indices in mapping_runs(line, sounds):
             channels = {sounds.sounds[index].channel for index in indices}
             if slots and (len(channels) != 1 or -1 in channels):
                 raise KrcError("one NOTE group cannot belong to multiple channels")
+        for slots, indices in note_groups(line, sounds):
             for at, index in enumerate(indices):
                 annotations[index] = (slots if at == 0 or slots == 0 else None, at > 0 and slots == 1)
         for channel, run in groupby(sounds.sounds, key=lambda sound: sound.channel):

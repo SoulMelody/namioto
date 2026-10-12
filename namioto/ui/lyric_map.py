@@ -15,6 +15,7 @@ from namioto.karaoke.operations import Match, Merge, Operation, SoundRef
 from namioto.lyricmap import confidence, constraints, faithful
 from namioto.lyricmap.channels import split
 from namioto.lyricmap.confidence import Reading
+from namioto.lyricmap.editing import note_runs
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import MappingError
 from namioto.lyricmap.raw import Raw
@@ -161,6 +162,12 @@ def _channel_result(text, lines, raw, scores, flagged, notes, mode, anchors, pre
         if result.error:
             errors.append((channel, result.error))
         group_offset += len(notes.get(channel, ()))
+    if mode == "read":
+        tables["group"] = [[-1 for _sound in line.sounds] for line in lines]
+        for group, run in enumerate(note_runs(text)):
+            if len(run.sounds) > 1 and len({lines[ref.line].sounds[ref.index].channel for ref in run.sounds}) == 1:
+                for ref in run.sounds:
+                    tables["group"][ref.line][ref.index] = group
     return LyricResult(
         lines=tuple(lines),
         **{name: tuple(tuple(row) for row in rows) for name, rows in tables.items()},
@@ -181,10 +188,13 @@ def _read_result(text, lines, raw, notes, scores=(), flagged=()) -> LyricResult:
     zero = tuple(tuple(span is None or span[0] is None for span in row) for row in rows)
     error = "the target channel has no notes" if not resolved.stream else ""
     dropped = {ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0}
-    if not error and any(
-        (span is None or span[0] is None) and SoundRef(index, at) not in dropped
-        for index, row in enumerate(rows)
-        for at, span in enumerate(row)
+    if not error and (
+        faithful.consumes(text, resolved.stream) > len(resolved.stream)
+        or any(
+            (span is None or span[0] is None) and SoundRef(index, at) not in dropped
+            for index, row in enumerate(rows)
+            for at, span in enumerate(row)
+        )
     ):
         error = "the faithful mapping has more NOTE slots than the target channel has notes"
     operations = faithful.operations(text, resolved.stream)
@@ -195,16 +205,21 @@ def _read_result(text, lines, raw, notes, scores=(), flagged=()) -> LyricResult:
             readings = tuple(confidence.read(lines, evidence, resolved.stream, operations, flagged))
         except MappingError:
             readings = ()
-    red, _zero, groups, _mapped = _tables(
+    red, _zero, _groups, _mapped = _tables(
         lines, operations, readings or (Reading(0.0, 1.0, 0.0, False),) * len(operations), resolved.stream
     )
+    groups = [[-1 for _sound in line.sounds] for line in lines]
+    for group, run in enumerate(note_runs(text)):
+        if len(run.sounds) > 1:
+            for ref in run.sounds:
+                groups[ref.line][ref.index] = group
     return LyricResult(
         lines=tuple(lines),
         spans=_pairs(rows),
         red=red,
         raw=_pairs(raw),
         zero=zero,
-        group=groups,
+        group=tuple(tuple(row) for row in groups),
         mapped=tuple(tuple(tuple(chunk) for chunk in row) for row in ids),
         operations=operations,
         readings=readings,

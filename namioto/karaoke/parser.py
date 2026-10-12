@@ -3,7 +3,7 @@
 
 `@N{...}` adds channel ownership without changing the enclosed grammar. `---` splits chapters,
 `漢字[かんじ]` and `(word)[ruby]` attach a ruby, a comma splits that ruby per character,
-`.N` overrides a word's mora count, `.+` joins its Sounds to the preceding NOTE, and `#` starts a
+`.N` overrides a word's mora count, `.+` joins its Sounds to the preceding mapping unit, and `#` starts a
 comment. A word carries the mora its ruby gives it; a run of kanji before a ruby is merged into
 the word the ruby belongs to, so a bare
 `季節[き,せつ]` reads the same as `(季節)[き,せつ]`, and a run of Latin letters (half- or full-width)

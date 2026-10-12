@@ -15,13 +15,13 @@ from collections.abc import Sequence
 from itertools import groupby
 
 from namioto.karaoke.model import Group, KrcError, Line, Unit, Word
-from namioto.karaoke.operations import Merge, Operation, partition, remap_operation
+from namioto.karaoke.operations import NoteRun, Operation, partition, remap_operation
 from namioto.karaoke.parser import parse
 from namioto.karaoke.sounds import SoundLine, _base_words, _entries, natural_sounds
 from namioto.karaoke.writer import dumps
 
 
-def rebuild(text: str, operations: Sequence[Operation], *, line_indices: Sequence[int] | None = None) -> str:
+def rebuild(text: str, operations: Sequence[Operation | NoteRun], *, line_indices: Sequence[int] | None = None) -> str:
     """The canonical `.krc` for `text` under `operations`, verified to read back the same Sounds.
 
     `operations` must partition the natural Sounds of `line_indices`, or all lines when omitted.
@@ -59,8 +59,9 @@ def rebuild(text: str, operations: Sequence[Operation], *, line_indices: Sequenc
                     groupby(operation.sounds, key=lambda ref: lines[line_index].sounds[ref.index].container)
                 ):
                     count = len(list(refs))
-                    joined = isinstance(operation, Merge) and index > 0
-                    override = None if joined or (isinstance(operation, Merge) and count == 1) else operation.dot
+                    shared = len(operation.sounds) > 1
+                    joined = shared and index > 0
+                    override = None if joined or (shared and count == 1 and operation.slots == 1) else operation.dot
                     pieces.append((count, override, joined))
             _rebuild_line(line, pieces)
             line_index += 1

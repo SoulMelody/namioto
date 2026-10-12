@@ -145,7 +145,7 @@ own notes in order, and different channels may sing at the same time.
 A wrapper only assigns a channel: ruby, groups, NOTE counts, comments, chapter breaks and newlines
 keep their usual meaning. Wrappers may span lines but cannot nest. A newline still starts a new
 subtitle display line; inline wrappers keep the lyrics on the same line. A single Sound or a group
-sharing one NOTE must belong to one channel.
+sharing NOTE slots must belong to one channel.
 
 Choose each channel's highlight colour in the export dialog's **Channel colours** tab. Leave a
 colour blank to use the global overlay colour. File exports need only the MIDI, KRC and export
@@ -499,9 +499,17 @@ channel lanes, on the roll's own columns. Right-click a Sound and choose **Lyric
 its ownership in one undo step. Each sound
 starts at a `|` with its label, and its block covers the note span the mapping gives it - green while
 it sits on its notes, red while the mapping doubts it, grey and blockless while it covers none.
-Dragging a boundary changes how adjacent sounds divide NOTE slots; dropping, keeping, merging and
-dissolving sounds also change the KRC directly, without rerunning automatic mapping. Each gesture
-is one undo step. Hovering a sound that shares a note with its neighbours lights the whole run.
+Drag the boundary between two units to redistribute their NOTE slots without changing the total.
+Shift + left drag resizes a Sound or its whole group: press in the left half to exchange slots with
+its immediate left neighbour, or in the right half to change its count without changing the next
+unit's count. Plain left drag moves a Sound into an adjacent group, retaining the target's NOTE
+count, or pulls an edge Sound out as an independent one-NOTE unit. Sound order never changes.
+Drag to the lower row to drop a Sound, or drag a zero-count label back to upper empty space to
+restore one NOTE. Groups split locally by pulling out edge members. Each gesture changes the KRC
+directly in one undo step; Escape cancels it.
+Zero-count and unmatched labels share the lower row, with dashed outlines for unmatched labels.
+When notes run out, the display uses only the remaining notes and keeps the requested `.N` counts
+for later; incomplete mappings can be edited and saved, but cannot be exported as subtitles. Hovering a sound that shares a note with its neighbours lights the whole run.
 The raw timing overlay shows alignment evidence without editing it. Low-confidence results are
 highlighted for review rather than blocking the update. The KRC text and alignment evidence ride
 in the `.nto` beside the notes, saved and undone with them. `Export lyrics` writes that KRC, including

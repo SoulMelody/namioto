@@ -43,7 +43,7 @@ def lay_out(text: str, notes: Sequence[Note]) -> tuple[list[list[Span]], list[li
         for slots, indices in note_groups(line, sound_line):
             taken = list(notes[at : at + slots])
             at += len(taken)
-            if not taken or len(taken) < slots:
+            if not taken:
                 continue
             if slots == 1:
                 width = (taken[0].end - taken[0].start) / len(indices)

@@ -97,15 +97,35 @@ class Drop:
         return 0
 
 
+@dataclass(frozen=True)
+class NoteRun:
+    """A literal KRC unit with a NOTE count, independent of available note identities."""
+
+    sounds: tuple[SoundRef, ...]
+    slots: int
+
+    def __post_init__(self) -> None:
+        if not self.sounds or self.slots < 0:
+            raise KrcError("a NOTE run needs sounds and a non-negative count")
+
+    @property
+    def dot(self) -> int | None:
+        return None if len(self.sounds) == 1 and self.slots == 1 else self.slots
+
+
 Operation = Match | Merge | Drop
 
 
-def map_operation(operation: Operation, mapper) -> Operation:
+def map_operation(operation: Operation | NoteRun, mapper) -> Operation | NoteRun:
     refs = tuple(mapper(ref) for ref in operation.sounds)
-    return replace(operation, sounds=refs) if isinstance(operation, Merge) else replace(operation, sound=refs[0])
+    return (
+        replace(operation, sounds=refs)
+        if isinstance(operation, (Merge, NoteRun))
+        else replace(operation, sound=refs[0])
+    )
 
 
-def remap_operation(operation: Operation, indices) -> Operation:
+def remap_operation(operation: Operation | NoteRun, indices) -> Operation | NoteRun:
     return map_operation(operation, lambda ref: SoundRef(indices[ref.line], ref.index))
 
 
@@ -120,13 +140,13 @@ def keep_operations(operations: Sequence[Operation], version: int, current: int 
     return tuple(operation for operation in operations if operation.confirmed)
 
 
-def partition(operations: list[Operation], sounds_per_line: list[int]) -> list[list[Operation]]:
+def partition(operations: list[Operation | NoteRun], sounds_per_line: list[int]) -> list[list[Operation | NoteRun]]:
     """The operations sorted by line, one list per line, checked to cover every Sound exactly once.
 
     Raises `KrcError` when an operation leaves a Sound out, repeats one, crosses lines, holds
     non-consecutive Sounds, or does not follow the Sounds' order.
     """
-    rows: list[list[Operation]] = [[] for _ in sounds_per_line]
+    rows: list[list[Operation | NoteRun]] = [[] for _ in sounds_per_line]
     for operation in operations:
         refs = operation.sounds
         lines = {ref.line for ref in refs}
@@ -139,7 +159,7 @@ def partition(operations: list[Operation], sounds_per_line: list[int]) -> list[l
         if indices != list(range(min(indices), min(indices) + len(indices))):
             raise KrcError(f"a {type(operation).__name__.lower()} names sounds of line {line} that do not run on")
         rows[line].append(operation)
-    found: list[list[Operation]] = []
+    found: list[list[Operation | NoteRun]] = []
     for line, (here, count) in enumerate(zip(rows, sounds_per_line, strict=True)):
         ordered = sorted(here, key=lambda operation: min(ref.index for ref in operation.sounds))
         cursor = 0

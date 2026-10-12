@@ -82,7 +82,7 @@ class Group:
 
 @dataclass
 class Unit:
-    """A base with its reading, `.N` override or `.+` continuation onto the preceding NOTE."""
+    """A base with its reading, `.N` override or `.+` continuation of the preceding mapping unit."""
 
     base: Word | Group
     ruby: Ruby | None = None

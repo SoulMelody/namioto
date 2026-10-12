@@ -194,7 +194,15 @@ def ruler_click(window, beats: float) -> None:
     ruler_mouse(window, QEvent.Type.MouseButtonRelease, x)
 
 
-def sound_mouse(window, kind, x: float, y: float = 10.0) -> None:
+def drag_sound(window, ref, x, y=15.0):
+    rect = window.sound_strip._blocks()[ref]
+    sound_mouse(window, QEvent.Type.MouseButtonPress, rect.center().x(), rect.center().y())
+    sound_mouse(window, QEvent.Type.MouseMove, x, y)
+    sound_mouse(window, QEvent.Type.MouseButtonRelease, x, y)
+    wait_for_lyric_mapping(window)
+
+
+def sound_mouse(window, kind, x: float, y: float = 10.0, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
     """Send a mouse event to the lyrics strip, whose columns line up with the roll's."""
     position = QPointF(x, y)
     event = QMouseEvent(
@@ -203,7 +211,7 @@ def sound_mouse(window, kind, x: float, y: float = 10.0) -> None:
         window.sound_strip.mapToGlobal(position),
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
+        modifiers,
     )
     if kind == QEvent.Type.MouseButtonPress:
         window.sound_strip.mousePressEvent(event)
@@ -5540,7 +5548,7 @@ def test_lyric_mapping_preview_is_cancelled_by_escape(own_window, tmp_path) -> N
     assert not view.gesture_active
 
 
-def test_lyric_drop_layer_drag_can_merge_or_displace(own_window, tmp_path) -> None:
+def test_lyric_drop_layer_drag_joins_the_target_without_displacing_it(own_window, tmp_path) -> None:
     _mapped_pair(own_window, tmp_path)
     view, strip = own_window.view, own_window.sound_strip
     view.set_notes(((60, 0.0, 2.0, 0),))
@@ -5569,7 +5577,8 @@ def test_lyric_drop_layer_drag_can_merge_or_displace(own_window, tmp_path) -> No
     sound_mouse(own_window, QEvent.Type.MouseMove, strip._x(0.3), 15)
     sound_mouse(own_window, QEvent.Type.MouseButtonRelease, strip._x(0.3), 15)
     wait_for_lyric_mapping(own_window)
-    assert view.lyric_zero == ((True, False),)
+    assert own_window.lyrics_text == "(あい).1"
+    assert view.lyric_zero == ((False, False),)
     assert view.lyric_raw == raw
 
 
@@ -5685,8 +5694,7 @@ def test_undo_alignment_restores_literal_krc_continuations(own_window, tmp_path)
 
 def test_merging_two_sounds_confirms_the_pair(own_window, tmp_path) -> None:
     _mapped_pair(own_window, tmp_path, raw=((0.0, 0.5), (0.5, 0.5)))
-    own_window.sound_strip.lyric_action_requested.emit("merge", 0, 1)
-    wait_for_lyric_mapping(own_window)
+    drag_sound(own_window, (0, 1), own_window.sound_strip._blocks()[(0, 0)].center().x())
 
     assert any(
         isinstance(operation, Merge) and operation.confirmed and len(operation.sounds) == 2
@@ -5695,13 +5703,11 @@ def test_merging_two_sounds_confirms_the_pair(own_window, tmp_path) -> None:
     assert own_window.view.lyric_times == (((0.0, 0.5), (0.5, 1.0)),)
 
 
-def test_a_merge_can_be_dissolved_again(own_window, tmp_path) -> None:
+def test_a_group_edge_member_can_be_dragged_out_again(own_window, tmp_path) -> None:
     _mapped_pair(own_window, tmp_path, raw=((0.0, 0.5), (0.5, 0.5)))
-    own_window.sound_strip.lyric_action_requested.emit("merge", 0, 1)
-    wait_for_lyric_mapping(own_window)
-    assert any(operation.confirmed for operation in own_window.view.lyric_operations)
-    own_window.sound_strip.lyric_action_requested.emit("dissolve", 0, 0)
-    wait_for_lyric_mapping(own_window)
+    drag_sound(own_window, (0, 1), own_window.sound_strip._blocks()[(0, 0)].center().x())
+    assert own_window.lyrics_text == "(あい).1"
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(2.2))
 
     assert all(isinstance(operation, Match) and operation.slots == 1 for operation in own_window.view.lyric_operations)
     assert own_window.lyrics_text == "あい"
@@ -5838,10 +5844,7 @@ def test_a_lyric_drag_is_kept_in_the_project(own_window, tmp_path) -> None:
     own_window.sound_strip.setVisible(True)
     QApplication.processEvents()
 
-    sound_mouse(own_window, QEvent.Type.MouseButtonPress, own_window.sound_strip._x(1.0))
-    sound_mouse(own_window, QEvent.Type.MouseMove, own_window.sound_strip._x(1.8))
-    sound_mouse(own_window, QEvent.Type.MouseButtonRelease, own_window.sound_strip._x(1.8))
-    wait_for_lyric_mapping(own_window)
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(1.5), 55)
 
     assert own_window.project_dirty is True
     assert own_window.save_project(project_path) is True
@@ -6700,7 +6703,7 @@ def test_pending_mapping_blocks_lyric_actions_and_exports_but_not_saving_or_midi
     assert not (tmp_path / "pending.krc").exists()
     assert not (tmp_path / "pending.ass").exists()
     assert own_window._verification().counts() == {"mapping_pending": 1}
-    own_window._on_lyric_action("merge", 0, 1)
+    own_window._on_lyric_action("drop", 0, 1)
     assert own_window.view.lyric_operations == operations
     assert own_window.view.undo_stack.count() == before
     assert own_window.save_project(tmp_path / "pending.nto")
@@ -6988,11 +6991,9 @@ def test_ass_channel_colour_pickers_validate_and_leave_preferences_untouched(own
 def test_hand_edits_and_note_changes_never_call_the_solver(own_window, tmp_path, monkeypatch):
     _mapped_pair(own_window, tmp_path)
     monkeypatch.setattr("namioto.ui.lyric_map.solve", lambda *args, **kwargs: pytest.fail("must not solve"))
-    own_window._on_lyric_action("merge", 0, 1)
-    wait_for_lyric_mapping(own_window)
+    drag_sound(own_window, (0, 1), own_window.sound_strip._blocks()[(0, 0)].center().x())
     assert own_window.lyrics_text == "(あい).1"
-    own_window._on_lyric_action("dissolve", 0, 0)
-    wait_for_lyric_mapping(own_window)
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(2.2))
     assert own_window.lyrics_text == "あい"
     own_window._on_lyric_action("drop", 0, 0)
     wait_for_lyric_mapping(own_window)
@@ -7150,3 +7151,205 @@ def test_text_edits_to_note_counts_keep_valid_alignment_evidence(own_window, tmp
     own_window.view.undo()
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_raw == raw
+
+
+def _gesture_lyrics(window, tmp_path, text, count=6):
+    window.project_path = tmp_path / "gestures.nto"
+    window.transport.bpm.setValue(60)
+    window.view.set_notes(tuple((60 + index, index, 1, 0, index + 1) for index in range(count)))
+    window._stored_lyrics = project.Lyrics(text=text)
+    window._lyric_key = ""
+    window._watch_lyrics()
+    wait_for_lyric_mapping(window)
+
+
+def _shift_lyric(window, seconds, target, *, cancel=False):
+    strip = window.sound_strip
+    shift = Qt.KeyboardModifier.ShiftModifier
+    sound_mouse(window, QEvent.Type.MouseButtonPress, strip._x(seconds), modifiers=shift)
+    sound_mouse(window, QEvent.Type.MouseMove, strip._x(target), modifiers=shift)
+    if cancel:
+        QTest.keyClick(strip, Qt.Key.Key_Escape)
+    else:
+        sound_mouse(window, QEvent.Type.MouseButtonRelease, strip._x(target), modifiers=shift)
+    wait_for_lyric_mapping(window)
+
+
+def test_plain_sound_drag_merges_and_moves_following_lyrics_forward(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あいう")
+    before = own_window.view.undo_stack.count()
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(0.5))
+    assert own_window.lyrics_text == "(あい).1う"
+    assert own_window.view.lyric_mapped == (((1,), (1,), (2,)),)
+    assert own_window.view.undo_stack.count() == before + 1
+    own_window.view.undo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "あいう"
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3,)),)
+    own_window.view.redo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "(あい).1う"
+
+
+def test_shift_right_resizes_the_whole_group_without_changing_its_neighbor(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あい).1う.2")
+    before = own_window.view.undo_stack.count()
+    _shift_lyric(own_window, 0.75, 1.75)
+    assert own_window.lyrics_text == "(あい).2う.2"
+    assert own_window.view.lyric_group[0][0] == own_window.view.lyric_group[0][1] >= 0
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3, 4)),)
+    assert own_window.view.undo_stack.count() == before + 1
+    own_window.view.undo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "(あい).1う.2"
+
+
+def test_shift_left_only_exchanges_counts_with_the_left_neighbor(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あ.3い.2う")
+    _shift_lyric(own_window, 3.25, 2.25)
+    assert own_window.lyrics_text == "あ.2い.3う"
+    assert own_window.view.lyric_mapped == (((1, 2), (3, 4, 5), (6,)),)
+    _shift_lyric(own_window, 2.25, -1.0)
+    assert own_window.lyrics_text == "あ.0い.5う"
+    assert own_window.view.lyric_mapped == (((), (1, 2, 3, 4, 5), (6,)),)
+
+
+def test_shift_left_cannot_move_the_first_unit_start(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あ.2い")
+    before = own_window.view.undo_stack.count()
+    _shift_lyric(own_window, 0.25, -1.0)
+    assert own_window.lyrics_text == "あ.2い"
+    assert own_window.view.undo_stack.count() == before
+
+
+def test_unit_boundary_drag_keeps_the_total_without_merging(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あ.2い.2う")
+    strip = own_window.sound_strip
+    sound_mouse(own_window, QEvent.Type.MouseButtonPress, strip._x(2.0))
+    sound_mouse(own_window, QEvent.Type.MouseMove, strip._x(3.0))
+    sound_mouse(own_window, QEvent.Type.MouseButtonRelease, strip._x(3.0))
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "あ.3いう"
+    assert own_window.view.lyric_mapped == (((1, 2, 3), (4,), (5,)),)
+    assert own_window.view.lyric_group == ((-1, -1, -1),)
+
+
+def test_internal_group_boundary_is_a_body_drag_not_a_resize(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あい).2う")
+    strip = own_window.sound_strip
+    assert strip._boundary_at(strip._x(1.0), 15) is None
+    sound_mouse(own_window, QEvent.Type.MouseButtonPress, strip._x(1.0))
+    assert strip._drag[0] == "body"
+    QTest.keyClick(strip, Qt.Key.Key_Escape)
+    assert own_window.lyrics_text == "(あい).2う"
+
+
+def test_shift_group_can_shrink_to_zero_without_losing_its_members(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あい).1う")
+    _shift_lyric(own_window, 0.75, 0.0)
+    assert own_window.lyrics_text == "(あい).0う"
+    blocks = own_window.sound_strip._blocks()
+    assert all(blocks[(0, index)].top() > 36 for index in (0, 1))
+    assert own_window.view.lyric_group[0][0] == own_window.view.lyric_group[0][1] >= 0
+
+
+def test_group_edge_drag_keeps_remaining_count_and_moves_following_lyrics_back(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あいう).2え")
+    drag_sound(own_window, (0, 2), own_window.sound_strip._x(3.5))
+    assert own_window.lyrics_text == "(あい).2うえ"
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3,), (4,)),)
+
+
+def test_plain_drag_keeps_receiver_count_and_does_not_reorder_sounds(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あ.2い.3う")
+    drag_sound(own_window, (0, 0), own_window.sound_strip._x(4.0))
+    assert own_window.lyrics_text == "(あい).3う"
+    assert own_window.view.lyric_mapped[0][-1] == (4,)
+    before = own_window.view.undo_stack.count()
+    drag_sound(own_window, (0, 0), own_window.sound_strip._x(3.5))
+    assert own_window.lyrics_text == "(あい).3う"
+    assert own_window.view.undo_stack.count() == before
+
+
+def test_zero_sound_drag_to_upper_blank_restores_one_sequential_note(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あ.0い")
+    drag_sound(own_window, (0, 0), own_window.sound_strip._x(2.5))
+    assert own_window.lyrics_text == "あい"
+    assert own_window.view.lyric_mapped == (((1,), (2,)),)
+
+
+def test_unmatched_labels_are_visible_even_when_the_channel_has_no_notes(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あ.0(いう).2", count=0)
+    blocks = own_window.sound_strip._blocks()
+    assert set(blocks) == {(0, 0), (0, 1), (0, 2)}
+    assert all(rect.top() > 36 and rect.width() > 0 for rect in blocks.values())
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(5.0))
+    assert own_window.lyrics_text == "あ.0(いう).2"
+
+
+def test_unmatched_sound_keeps_its_requested_count_when_dragged_to_upper_blank(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あい.3", count=1)
+    drag_sound(own_window, (0, 1), own_window.sound_strip._x(4.0))
+    assert own_window.lyrics_text == "あい.3"
+    assert own_window.view.lyric_mapped == (((1,), ()),)
+
+
+def test_shift_resize_truncates_only_the_display_and_is_persisted(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "あい.3", count=3)
+    _shift_lyric(own_window, 0.75, 2.75)
+    assert own_window.lyrics_text == "あ.3い.3"
+    assert own_window.view.lyric_mapped == (((1, 2, 3), ()),)
+    assert own_window.save_project(own_window.project_path)
+    assert project.load(own_window.project_path).lyrics.text == "あ.3い.3"
+    assert not own_window.export_ass(tmp_path / "incomplete.ass")
+    own_window.view.set_notes(tuple((60 + index, index, 1, 0, index + 1) for index in range(6)))
+    wait_for_lyric_mapping(own_window)
+    assert own_window.view.lyric_mapped == (((1, 2, 3), (4, 5, 6)),)
+    assert own_window.lyrics_text == "あ.3い.3"
+
+
+def test_escape_restores_shift_resize_and_does_not_add_an_undo_step(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あい).1う.2")
+    before = own_window.view.undo_stack.count()
+    raw = own_window.view.lyric_raw
+    _shift_lyric(own_window, 0.75, 1.75, cancel=True)
+    assert own_window.lyrics_text == "(あい).1う.2"
+    assert own_window.view.lyric_raw == raw
+    assert own_window.view.undo_stack.count() == before
+
+
+@pytest.mark.parametrize("text, count", [("(あい).2う", 3), ("(あい).0う", 1), ("泣[な.2]い.+う", 3)])
+def test_auto_mapping_preserves_literal_groups_and_their_counts(own_window, tmp_path, text, count):
+    _gesture_lyrics(own_window, tmp_path, text, count=count)
+    own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0), (2.0, 1.0)]], "mms")
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == text
+    assert own_window._lyric_model == "mms"
+    assert own_window.view.lyric_group[0][0] == own_window.view.lyric_group[0][1] >= 0
+
+
+def test_channel_rebuild_preserves_another_channels_literal_multi_note_group(own_window, tmp_path):
+    text = "@1{(あい).2}@0{う}"
+    _gesture_lyrics(own_window, tmp_path, text, count=1)
+    own_window.view.set_channels((Channel(channel=0), Channel(channel=1)))
+    own_window.view.set_notes(((60, 0, 1, 1, 10), (62, 1, 1, 1, 20), (64, 0, 1, 0, 30)))
+    wait_for_lyric_mapping(own_window)
+    own_window._adopt_alignment([[(0.0, 1.0)]], "mms", use_constraints=False, channel=0)
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "@1{(あい).2}う"
+    assert own_window.view.lyric_mapped == (((10,), (20,), (30,)),)
+
+
+def test_shift_can_resize_a_group_across_ruby_containers(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "泣[な]い.+う", count=3)
+    _shift_lyric(own_window, 0.75, 1.75)
+    assert own_window.lyrics_text == "泣[な.2]い.+う"
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3,)),)
+    assert own_window.view.lyric_group[0][0] == own_window.view.lyric_group[0][1] >= 0
+
+
+def test_group_edge_can_be_pulled_out_above_an_occupied_neighbor(own_window, tmp_path):
+    _gesture_lyrics(own_window, tmp_path, "(あいう).2え")
+    drag_sound(own_window, (0, 2), own_window.sound_strip._x(2.1), 0.0)
+    assert own_window.lyrics_text == "(あい).2うえ"
+    assert own_window.view.lyric_mapped == (((1,), (2,), (3,), (4,)),)

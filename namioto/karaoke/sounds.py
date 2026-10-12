@@ -119,20 +119,32 @@ def split_tokens(tokens: Sequence, lines: list[SoundLine]) -> list[list[tuple[fl
     return rows
 
 
-def note_groups(line: Line, sound_line: SoundLine, *, explicit_only: bool = False) -> list[tuple[int, list[int]]]:
-    """NOTE slots and Sound indices; optionally only explicit overrides and continuations."""
-    groups: list[tuple[int, list[int]]] = []
-    explicit: list[bool] = []
+def mapping_runs(line: Line, sound_line: SoundLine, *, explicit_only: bool = False) -> list[tuple[int, list[int]]]:
+    """Literal KRC units before their NOTE counts are distributed over Sounds."""
+    runs: list[tuple[int, list[int]]] = []
+    explicit = []
     for unit, indices in _leaves(line, sound_line):
-        if unit.join_previous:
-            if not groups or groups[-1][0] != 1:
-                raise KrcError(".+ requires a preceding Sound mapped to exactly one NOTE in the same line")
-            groups[-1][1].extend(indices)
-            explicit[-1] = True
+        if not indices:
             continue
-        slots = unit.override if unit.override is not None else len(indices)
+        if unit.join_previous:
+            if not runs:
+                raise KrcError(".+ requires a preceding mapping unit in the same line")
+            runs[-1][1].extend(indices)
+            explicit[-1] = True
+        elif unit.override is not None:
+            runs.append((unit.override, indices))
+            explicit.append(True)
+        else:
+            runs.extend((1, [index]) for index in indices)
+            explicit.extend([False] * len(indices))
+    return [run for run, marked in zip(runs, explicit, strict=True) if marked or not explicit_only]
+
+
+def note_groups(line: Line, sound_line: SoundLine, *, explicit_only: bool = False) -> list[tuple[int, list[int]]]:
+    """NOTE slots distributed over Sounds; optionally only explicit mapping units."""
+    groups = []
+    for slots, indices in mapping_runs(line, sound_line, explicit_only=explicit_only):
         count = len(indices)
-        before = len(groups)
         if slots == 0:
             groups.append((0, indices))
         elif slots >= count:
@@ -142,8 +154,7 @@ def note_groups(line: Line, sound_line: SoundLine, *, explicit_only: bool = Fals
         else:
             for slot in range(slots):
                 groups.append((1, indices[slot * count // slots : (slot + 1) * count // slots]))
-        explicit.extend([unit.override is not None] * (len(groups) - before))
-    return [group for group, marked in zip(groups, explicit, strict=True) if marked or not explicit_only]
+    return groups
 
 
 def _leaves(line: Line, sound_line: SoundLine) -> list[tuple[Unit, list[int]]]:

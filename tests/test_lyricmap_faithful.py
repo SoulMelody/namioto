@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Checks for read-only mode: the `.krc`'s own `.N` and groups, and nothing estimated."""
+"""Checks the KRC's faithful NOTE-slot reading without estimation."""
 
 from __future__ import annotations
 
@@ -47,12 +47,13 @@ def test_notes_running_out_leave_no_time():
     assert read("あい", _notes((0.0, 1.0))) == [[(0.0, 1.0), None]]
 
 
-def test_a_multi_note_sound_requires_all_of_its_note_slots():
+def test_a_multi_note_sound_displays_remaining_slots_without_reducing_its_request():
     notes = _notes((0.0, 1.0))
     spans, ids = lay_out("あ.2い", notes)
-    assert spans == [[None, None]]
-    assert ids == [[(), ()]]
-    assert faithful_gate(spans, notes).counts() == {"incomplete_alignment": 1}
+    assert spans == [[(0.0, 1.0), None]]
+    assert ids == [[(1,), ()]]
+    assert consumes("あ.2い", notes) == 3
+    assert faithful_gate(spans, notes, required_slots=3).counts() == {"incomplete_alignment": 1}
 
 
 def test_an_input_dot_is_respected_even_where_edit_mode_ignores_it():

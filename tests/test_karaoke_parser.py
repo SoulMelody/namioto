@@ -172,9 +172,6 @@ def test_a_continuation_suffix_binds_only_the_preceding_unit():
         "い.+",
         "あ\nい.+",
         "あ\n---\nい.+",
-        "あ.0い.+",
-        "あ.2い.+",
-        "(あい).3う.+",
         "あい.1.+",
         "あい.+.1",
         "あい.+.+",
@@ -191,6 +188,18 @@ def test_a_continuation_suffix_binds_only_the_preceding_unit():
 def test_invalid_continuations_are_rejected(text):
     with pytest.raises(ValueError):
         parse(text)
+
+
+@pytest.mark.parametrize("text, slots", [("あ.0い.+", 0), ("あ.2い.+", 2), ("(あい).3う.+", 3)])
+def test_continuations_keep_the_preceding_mapping_unit_count(text, slots):
+    from namioto.lyricmap.editing import note_runs
+
+    line = parse(text).chapters[0].lines[0]
+    assert line.total_mora() == slots
+    runs = note_runs(text)
+    assert len(runs) == 1
+    assert runs[0].slots == slots
+    assert len(runs[0].sounds) >= 2
 
 
 def test_parentheses_around_one_word_change_nothing():
