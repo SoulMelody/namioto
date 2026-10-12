@@ -46,6 +46,7 @@ class Word:
 
     char: str
     channel: int = 0
+    color_channel: int | None = None
 
     @property
     def text(self) -> str:

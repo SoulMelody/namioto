@@ -41,6 +41,7 @@ class Container:
     key: tuple
     atoms: tuple[str, ...]
     channels: tuple[int, ...] = ()
+    color_channels: tuple[int | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class Sound:
     first_atom: int = 0
     last_atom: int = 0
     channel: int = 0
+    color_channel: int | None = None
 
     @property
     def label(self) -> str:
@@ -230,6 +232,7 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
     sounds: list[Sound] = []
     run: list[str] = []
     ownership: list[int] = []
+    colors: list[int | None] = []
     runs = 0
     boundaries: set[int] = set()
 
@@ -237,12 +240,13 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
         nonlocal runs
         if not run:
             return
-        containers.append(Container(("top", runs), tuple(run), tuple(ownership)))
+        containers.append(Container(("top", runs), tuple(run), tuple(ownership), tuple(colors)))
         runs += 1
         _collect(sounds, containers, run, line_index, rubied=False, first=True, base="", boundaries=boundaries)
         boundaries.clear()
         run.clear()
         ownership.clear()
+        colors.clear()
 
     for top, unit in enumerate(line.units):
         if unit.ruby is None:
@@ -252,6 +256,7 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
                 boundaries.update((len(run), len(run) + len(_chars(unit))))
             run.extend(_chars(unit))
             ownership.extend(word.channel for word in _base_words(unit))
+            colors.extend(word.color_channel for word in _base_words(unit))
             continue
         flush()
         for part_index, part in enumerate(unit.ruby.parts):
@@ -260,7 +265,14 @@ def _line_sounds(line: Line, line_index: int, chapter_index: int) -> SoundLine:
             if not atoms:
                 continue
             base = unit.text if len(unit.ruby.parts) == 1 else unit.text[part_index : part_index + 1]
-            containers.append(Container(("part", top, part_index), tuple(atoms), tuple(word.channel for word in words)))
+            containers.append(
+                Container(
+                    ("part", top, part_index),
+                    tuple(atoms),
+                    tuple(word.channel for word in words),
+                    tuple(word.color_channel for word in words),
+                )
+            )
             part_boundaries = set()
             offset = 0
             for inner in part:
@@ -301,6 +313,8 @@ def _collect(
     for (reading, low, high), token in zip(entries, tokens, strict=True):
         channels = set(containers[container].channels[low : high + 1])
         channel = next(iter(channels)) if len(channels) == 1 else -1
+        colors = set(containers[container].color_channels[low : high + 1])
+        color = next(iter(colors)) if len(colors) == 1 else None
         sounds.append(
             Sound(
                 line=line,
@@ -314,6 +328,7 @@ def _collect(
                 first_atom=low,
                 last_atom=high,
                 channel=channel,
+                color_channel=color,
             )
         )
 
@@ -339,6 +354,7 @@ def set_channel(line: Line, index: int, channel: int) -> None:
         words = runs[key[1]]
     for word in words[sound.first_atom : sound.last_atom + 1]:
         word.channel = channel
+        word.color_channel = None
 
 
 def _base_words(unit: Unit):

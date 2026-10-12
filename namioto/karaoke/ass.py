@@ -538,6 +538,7 @@ class _Glyph:
     small: bool = False
     continuation: bool = False
     channel: int = 0
+    color_channel: int | None = None
     container: int = -1
 
 
@@ -586,7 +587,11 @@ def _glyph(sound, continuation: bool) -> _Glyph:
     """What one Sound renders as: its own surface without a ruby, its base and reading with one."""
     if not sound.rubied:
         return _Glyph(
-            text=sound.reading, reading=sound.reading, small=sound.reading in SMALL_KANA, channel=sound.channel
+            text=sound.reading,
+            reading=sound.reading,
+            small=sound.reading in SMALL_KANA,
+            channel=sound.channel,
+            color_channel=sound.color_channel,
         )
     if continuation:
         text = "#"
@@ -601,6 +606,7 @@ def _glyph(sound, continuation: bool) -> _Glyph:
         small=sound.reading in SMALL_KANA,
         continuation=continuation,
         channel=sound.channel,
+        color_channel=sound.color_channel,
         container=sound.container,
     )
 
@@ -818,7 +824,8 @@ def _generate_karaoke_text(
             start = item.start_ms if start is None else start
             end = item.end_ms if end is None else end
             base_end = base_ends.get(item.glyph.container, end) if item.glyph.ruby is not None else end
-            marker = f"\\-namioto_{item.glyph.channel}_{start - line_start}_{end - line_start}_{base_end - line_start}"
+            color = item.glyph.color_channel if item.glyph.color_channel is not None else item.glyph.channel
+            marker = f"\\-namioto_{color}_{start - line_start}_{end - line_start}_{base_end - line_start}"
         return f"{{\\k{duration}{marker}}}"
 
     durations = [max(0, item.duration_ms) // 10 for item in glyphs]
@@ -924,11 +931,20 @@ def generate_ass(
         if rows:
             _calculate_lead_times(rows, config, settings.lead_time_ms)
     dialogues = _render_guide_dots(style_rows, settings.guide_dot_duration_ms)
-    explicit = bool(settings.channel_colours()) or any(
-        right.start_ms < left.end_ms
-        for chapter in planned
-        for line in chapter
-        for left, right in zip(line.timing.glyph_timings, line.timing.glyph_timings[1:], strict=False)
+    explicit = (
+        bool(settings.channel_colours())
+        or any(
+            item.glyph.color_channel is not None
+            for chapter in planned
+            for line in chapter
+            for item in line.timing.glyph_timings
+        )
+        or any(
+            right.start_ms < left.end_ms
+            for chapter in planned
+            for line in chapter
+            for left, right in zip(line.timing.glyph_timings, line.timing.glyph_timings[1:], strict=False)
+        )
     )
     dialogues += _render_karaoke_dialogues(style_rows, settings.lead_time_ms, explicit=explicit)
     return (

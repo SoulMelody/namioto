@@ -109,7 +109,7 @@ def _flatten_line(line: Line) -> Line:
             for i, inner in enumerate(part):
                 words = _base_words(unit.base)
                 base_words = words if len(unit.ruby.parts) == 1 else words[part_idx : part_idx + 1]
-                placeholder = Word("#", _base_words(inner.base)[0].channel)
+                placeholder = Word("#", _base_words(inner.base)[0].channel, _base_words(inner.base)[0].color_channel)
                 flat_words = ([placeholder] if part_idx != 0 else []) + base_words if i == 0 else [placeholder]
                 flat = Unit(flat_words[0] if len(flat_words) == 1 else Group(flat_words))
                 flat.set_ruby(Ruby([[inner]]))

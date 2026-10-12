@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """The parser for a `.krc`: its chapters, lines, words, ruby and mora.
 
-`@N{...}` adds channel ownership without changing the enclosed grammar. `---` splits chapters,
+`@N{...}` adds channel ownership; `@cN{...}` changes only its colour. `---` splits chapters,
 `漢字[かんじ]` and `(word)[ruby]` attach a ruby, a comma splits that ruby per character,
 `.N` overrides a word's mora count, `.+` joins its Sounds to the preceding mapping unit, and `#` starts a
 comment. A word carries the mora its ruby gives it; a run of kanji before a ruby is merged into
@@ -68,9 +68,7 @@ class LyricsTransformer(Transformer):
 
     def word(self, items):
         words = [
-            Word(str(item), channel=self.channels[item.start_pos])
-            for item in items
-            if item.type not in ("OPEN", "CLOSE")
+            Word(str(item), *self.channels[item.start_pos]) for item in items if item.type not in ("OPEN", "CLOSE")
         ]
         if any(item.type in ("OPEN", "CLOSE") for item in items):
             return Unit(Group(words, explicit=True))
@@ -99,12 +97,12 @@ class LyricsTransformer(Transformer):
 
 
 parser = Lark(GRAMMAR, start="start", parser="lalr")
-CHANNEL_BLOCK = re.compile(r"@(\d+)\{")
+CHANNEL_BLOCK = re.compile(r"@(c?)(\d+)\{")
 
 
-def _unwrap(text: str) -> tuple[str, list[int], list[int]]:
+def _unwrap(text: str) -> tuple[str, list[tuple[int, int | None]], list[int]]:
     chars, channels, positions = [], [], []
-    channel = 0
+    channel = (0, None)
     opened = False
     at = 0
     while at < len(text):
@@ -124,15 +122,16 @@ def _unwrap(text: str) -> tuple[str, list[int], list[int]]:
         if match:
             if opened:
                 raise KrcError("channel blocks cannot be nested")
-            channel = int(match[1])
-            if not 0 <= channel < 16:
+            number = int(match[2])
+            if not 0 <= number < 16:
                 raise KrcError("a channel must be between 0 and 15")
+            channel = (0, number) if match[1] else (number, None)
             opened = True
             at = match.end()
             continue
         if text[at] == "}" and opened:
             opened = False
-            channel = 0
+            channel = (0, None)
             at += 1
             continue
         chars.append(text[at])

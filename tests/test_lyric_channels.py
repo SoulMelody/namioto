@@ -11,6 +11,39 @@ from namioto.karaoke.writer import dumps
 from namioto.ui.lyric_map import map_lyrics
 
 
+@pytest.mark.parametrize("text", ["@c0{あい}", "@c2{あい}", "@c15{文字[あ,い]}"])
+def test_color_tags_preserve_mapping_and_roundtrip(text):
+    lines = natural_sounds(text)
+    assert all(sound.channel == 0 for sound in lines[0].sounds)
+    assert all(sound.color_channel == int(text[2 : text.index("{")]) for sound in lines[0].sounds)
+    assert dumps(parse(text)) == text
+    result = map_lyrics(
+        text,
+        lines,
+        [[(None, None), (None, None)]],
+        mode="read",
+        notes_by_channel={0: ((0.0, 1.0, 60, 10), (1.0, 2.0, 62, 20)), 2: ((3.0, 4.0, 64, 30),)},
+    )
+    assert result.mapped == (((10,), (20,)),)
+    assert not result.error
+    assert rebuild(text, result.operations) == text
+
+
+def test_color_tag_ass_uses_color_channel_without_changing_track():
+    from namioto.karaoke.ass import generate_ass
+
+    output = generate_ass("@c2{あ}", [[(0.0, 1.0)]])
+    assert "\\-namioto_2_" in output
+
+
+@pytest.mark.parametrize("text", ["@c16{あ}", "@c2{あ", "@c1{@2{あ}}"])
+def test_invalid_color_tags(text):
+    from namioto.karaoke.model import KrcError
+
+    with pytest.raises(KrcError):
+        parse(text)
+
+
 def test_krc_tracks_are_zero_based_without_reinterpreting_explicit_numbers():
     text = "あ\n@0{い}\n@1{う}\n@15{え}"
     assert [line.track for line in natural_sounds(text)] == [0, 0, 1, 15]

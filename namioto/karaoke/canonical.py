@@ -172,4 +172,7 @@ def _verify(before: list[SoundLine], rebuilt: str) -> None:
 
 
 def _shape(line: SoundLine) -> list[tuple]:
-    return [(sound.reading, sound.base, sound.token, sound.rubied, sound.first, sound.channel) for sound in line.sounds]
+    return [
+        (sound.reading, sound.base, sound.token, sound.rubied, sound.first, sound.channel, sound.color_channel)
+        for sound in line.sounds
+    ]

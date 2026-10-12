@@ -41,8 +41,8 @@ def _line_text(line: Line, dotted: bool = False) -> str:
     )
 
 
-def _channel(unit: Unit) -> int | None:
-    channels = {word.channel for word in unit_words(unit)}
+def _channel(unit: Unit) -> tuple[int, int | None] | None:
+    channels = {(word.channel, word.color_channel) for word in unit_words(unit)}
     return next(iter(channels)) if len(channels) == 1 else None
 
 
@@ -50,10 +50,15 @@ def _owned_text(parts) -> str:
     result = []
     for channel, run in groupby(parts, key=lambda part: part[1]):
         text = "".join(part[0] for part in run)
-        if channel:
-            if not 0 <= channel < 16:
+        if channel is not None:
+            owner, color = channel
+            number = color if color is not None else owner
+            if not 0 <= number < 16:
                 raise KrcError("a channel must be between 0 and 15")
-            text = f"@{channel}{{{text}}}"
+            if color is not None:
+                text = f"@c{color}{{{text}}}"
+            if owner:
+                text = f"@{owner}{{{text}}}"
         result.append(text)
     return "".join(result)
 
@@ -63,7 +68,7 @@ def _unit_text(unit: Unit, dotted: bool = False, *, ownership: bool = True) -> s
     if ownership and _channel(unit) is not None:
         return _owned_text([(_unit_text(unit, dotted, ownership=False), _channel(unit))])
     words = unit.base.words if isinstance(unit.base, Group) else [unit.base]
-    base = _owned_text((word.char, word.channel) for word in words) if ownership else unit.text
+    base = _owned_text((word.char, (word.channel, word.color_channel)) for word in words) if ownership else unit.text
     text = f"({base})" if _needs_group(unit) else base
     if unit.ruby is not None:
         ruby = ",".join(_ruby_text(part, dotted, ownership=ownership) for part in unit.ruby.parts)
