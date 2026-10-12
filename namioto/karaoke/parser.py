@@ -111,6 +111,10 @@ def _unwrap(text: str) -> tuple[str, list[int], list[int]]:
         if text[at] == "#":
             end = text.find("\n", at)
             end = len(text) if end < 0 else end
+            line_start = text.rfind("\n", 0, at) + 1
+            if not text[line_start:at].strip():
+                at = end + (end < len(text))
+                continue
             chars.extend(text[at:end])
             channels.extend([channel] * (end - at))
             positions.extend(range(at, end))

@@ -53,6 +53,11 @@ def test_a_comment_runs_to_the_end_of_its_line():
     assert [word.text for word in lyrics.chapters[0].lines[1].words] == ["き", "み"]
 
 
+def test_a_standalone_comment_line_does_not_break_the_chapter():
+    lyrics = parse("ねえ\n# コメント\nきみ")
+    assert [[word.text for word in line.words] for line in lyrics.chapters[0].lines] == [["ね", "え"], ["き", "み"]]
+
+
 def test_a_ruby_with_the_wrong_number_of_parts_is_rejected():
     with pytest.raises(ValueError):
         parse("(幾千)[いく,せん,の]")
