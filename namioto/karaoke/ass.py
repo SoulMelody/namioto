@@ -438,10 +438,10 @@ def _timing_code(style: str, config: _Config) -> str:
         colours.append(f"[{channel}]={{'{owned.overlay}','{owned.overlay_blur}','{owned.base_blur}'}}")
     code = (
         "local channel, first, last, base_last = (syl.inline_fx or ''):match('^namioto_(%d+)_(%d+)_(%d+)_(%d+)$'); "
-        "if channel then syl.start_time = tonumber(first); "
-        "syl.end_time = tonumber(syl.isfuri and last or base_last); "
+        "if channel then syl.start_time = first + 0; "
+        "syl.end_time = (syl.isfuri and last or base_last) + 0; "
         "syl.duration = syl.end_time - syl.start_time; "
-        f"local colours = ({{{','.join(colours)}}})[tonumber(channel)]; "
+        f"local colours = ({{{','.join(colours)}}})[channel + 0]; "
         "if colours then syl.namioto_overlay = colours[1]; syl.namioto_overlay_blur = colours[2]; "
         "syl.namioto_base_blur = colours[3] end end"
     )
@@ -632,7 +632,55 @@ def _line_timings(line, spans: Sequence[tuple | None], offset_ms: int = 0) -> _L
         last = end
         timings.append(_GlyphTiming(_glyph(sound, continuation), start, end, clipped))
         previous = sound.container
-    return _LineTimings(timings) if seen else None
+    rendered = []
+    for container_index, container in enumerate(line.containers):
+        owned = [
+            (sound, item)
+            for sound, item in zip(line.sounds, timings, strict=True)
+            if sound.container == container_index
+        ]
+        if container.key[0] != "top":
+            rendered.extend(item for _, item in owned)
+            continue
+        cursor = 0
+        for sound, item in owned:
+            for index in range(cursor, sound.first_atom):
+                channel = container.channels[index]
+                preceding = next((entry for entry in reversed(rendered) if entry.glyph.channel == channel), None)
+                following = next((entry for entry in timings[sound.index :] if entry.glyph.channel == channel), item)
+                time = preceding.end_ms if preceding else following.start_ms
+                rendered.append(
+                    _GlyphTiming(
+                        _Glyph(container.atoms[index], container.atoms[index], channel=channel),
+                        time,
+                        time,
+                        (preceding or following).clipped,
+                    )
+                )
+            rendered.append(item)
+            cursor = sound.last_atom + 1
+        for index in range(cursor, len(container.atoms)):
+            channel = container.channels[index]
+            preceding = next((entry for entry in reversed(rendered) if entry.glyph.channel == channel), None)
+            following = next(
+                (
+                    entry
+                    for sound, entry in zip(line.sounds, timings, strict=True)
+                    if sound.container > container_index and entry.glyph.channel == channel
+                ),
+                None,
+            )
+            anchor = preceding or following
+            time = preceding.end_ms if preceding else following.start_ms if following else 0
+            rendered.append(
+                _GlyphTiming(
+                    _Glyph(container.atoms[index], container.atoms[index], channel=channel),
+                    time,
+                    time,
+                    anchor.clipped if anchor else False,
+                )
+            )
+    return _LineTimings(rendered) if seen else None
 
 
 def _plan(lines: Sequence, times: Sequence[Sequence[tuple | None]], offset_ms: int = 0) -> list[list[_PlannedLine]]:
@@ -763,9 +811,6 @@ def _generate_karaoke_text(
     glyphs = timing.glyph_timings
     line_start = min(item.start_ms for item in glyphs if not item.clipped) - lead_time_ms
     base_ends = {}
-    for item in glyphs:
-        if item.glyph.ruby is not None:
-            base_ends[item.glyph.container] = max(base_ends.get(item.glyph.container, 0), item.end_ms)
 
     def tag(item, duration, start=None, end=None):
         marker = ""
@@ -784,14 +829,14 @@ def _generate_karaoke_text(
             continue
         if durations[index] == 0 and glyph.small:
             for earlier in range(index - 1, -1, -1):
-                if durations[earlier] >= 2 * MIN_WORD_DURATION:
+                if glyphs[earlier].glyph.channel == glyph.channel and durations[earlier] >= 2 * MIN_WORD_DURATION:
                     durations[index] = durations[earlier] // 2
                     durations[earlier] -= durations[index]
                     break
-        elif durations[index] == 0:
+        elif durations[index] == 0 and glyph.text.strip(" 　"):
             borrowed = False
             for earlier in range(index - 1, -1, -1):
-                if durations[earlier] >= 2 * MIN_WORD_DURATION:
+                if glyphs[earlier].glyph.channel == glyph.channel and durations[earlier] >= 2 * MIN_WORD_DURATION:
                     durations[earlier] -= MIN_WORD_DURATION
                     durations[index] = MIN_WORD_DURATION
                     borrowed = True
@@ -802,17 +847,35 @@ def _generate_karaoke_text(
     for index in range(len(glyphs)):
         if durations[index] == -1:
             for later in range(index + 1, len(durations)):
-                if durations[later] > 2 * MIN_WORD_DURATION:
+                if (
+                    glyphs[later].glyph.channel == glyphs[index].glyph.channel
+                    and durations[later] > 2 * MIN_WORD_DURATION
+                ):
                     durations[later] -= MIN_WORD_DURATION
                     durations[index] = MIN_WORD_DURATION
                     break
             if durations[index] == -1:
                 durations[index] = 1
 
-    for index, (item, duration) in enumerate(zip(glyphs, durations, strict=True)):
+    shifts: dict[int, int] = {}
+    adjusted = []
+    for item, duration in zip(glyphs, durations, strict=True):
+        channel = item.glyph.channel
+        shift = shifts.get(channel, 0)
+        delta = duration * 10 - max(0, item.duration_ms) // 10 * 10
+        adjusted.append(_GlyphTiming(item.glyph, item.start_ms + shift, item.end_ms + shift + delta, item.clipped))
+        if not item.clipped:
+            shifts[channel] = shift + delta
+
+    base_ends.clear()
+    for item in adjusted:
+        if item.glyph.ruby is not None:
+            base_ends[item.glyph.container] = max(base_ends.get(item.glyph.container, 0), item.end_ms)
+
+    for index, (item, duration) in enumerate(zip(adjusted, durations, strict=True)):
         glyph = item.glyph
         if index > 0:
-            gap = item.start_ms - glyphs[index - 1].end_ms
+            gap = glyphs[index].start_ms - glyphs[index - 1].end_ms
             if gap > 0:
                 gap_cs = gap // 10
                 if "|" in parts[-1] and glyph.continuation:

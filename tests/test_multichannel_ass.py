@@ -23,7 +23,71 @@ def test_inline_overlapping_channels_keep_explicit_syllable_times():
     assert "[1]={'0000FF'" in result
     assert "[2]={'00FF00'" in result
     assert "syl.namioto_overlay" in result
+    assert "tonumber" not in result
+    assert "syl.start_time = first + 0" in result
     assert len([line for line in result.splitlines() if line.startswith("Dialogue:") and ",K1," in line]) == 1
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize(
+    "text, surface", [("Show you guts（cool）!", "Show you guts（cool）!"), ("「青[あお]」！", "「青|<あ#|お」！")]
+)
+def test_export_preserves_characters_without_sounds(text, surface, explicit):
+    import re
+
+    from namioto.karaoke.sounds import natural_sounds
+
+    sounds = natural_sounds(text)[0].sounds
+    settings = AssSettings(channel_colors={1: "FF0000"} if explicit else {})
+    result = generate_ass(text, [[(index, index + 1) for index in range(len(sounds))]], settings=settings)
+    line = next(line for line in result.splitlines() if line.startswith("Dialogue:") and ",LEAD," not in line)
+    assert re.sub(r"\{[^}]*\}", "", line.split(",", 9)[9]) == surface
+
+
+def test_punctuation_at_channel_boundary_keeps_its_owner():
+    result = generate_ass(
+        "@0{Rolling! }@1{Ah—}", [[(0, 1), (1, 2)]], settings=AssSettings(channel_colors={1: "FF0000"})
+    )
+    assert "}g" in result
+    assert r"{\k8\-namioto_0_920_1000_1000}!" in result
+    assert "}A" in result
+    assert "}! A" not in result
+    assert "}h" in result
+    assert "}—" in result
+
+
+@pytest.mark.parametrize(
+    "text, spans, expected",
+    [
+        ("Ah—", [(0, 1)], r"{\k46\-namioto_0_0_460_460}A{\k46\-namioto_0_460_920_920}h{\k8\-namioto_0_920_1000_1000}—"),
+        ("！あ", [(0, 1)], r"{\k8\-namioto_0_0_80_80}！{\k92\-namioto_0_80_1000_1000}あ"),
+        ("あい.0", [(0, 1), (1, 1)], r"{\k92\-namioto_0_0_920_920}あ{\k8\-namioto_0_920_1000_1000}い"),
+    ],
+)
+def test_borrowed_durations_update_explicit_timing(text, spans, expected):
+    result = generate_ass(text, [spans], settings=AssSettings(channel_colors={1: "FF0000"}))
+    assert expected in result
+
+
+@pytest.mark.parametrize("start", [0.5, 2])
+def test_new_channel_opening_punctuation_anchors_to_its_first_sound(start):
+    result = generate_ass(
+        "よ！@1{（(ハイ).1 い・く・よ）}",
+        [
+            [
+                (0, 1),
+                (start, start + 0.5),
+                (start + 0.5, start + 1),
+                (start + 1, start + 2),
+                (start + 2, start + 3),
+                (start + 3, start + 4),
+            ]
+        ],
+        settings=AssSettings(channel_colors={1: "FF0000"}),
+    )
+    first = round(start * 1000)
+    assert rf"{{\k8\-namioto_1_{first}_{first + 80}_{first + 80}}}（" in result
+    assert rf"\-namioto_1_{first + 80}_" in result
 
 
 def test_multiline_scope_and_simultaneous_display_lines_do_not_share_note_cursors():
