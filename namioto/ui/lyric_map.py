@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QThread, Signal
 
-from namioto.karaoke.operations import Match, Merge, Operation, SoundRef
+from namioto.karaoke.operations import Match, Merge, Operation
 from namioto.lyricmap import confidence, constraints, faithful
 from namioto.lyricmap.channels import split
 from namioto.lyricmap.confidence import Reading
@@ -187,16 +187,6 @@ def _read_result(text, lines, raw, notes, scores=(), flagged=()) -> LyricResult:
     rows = _rows(lines, spans)
     zero = tuple(tuple(span is None or span[0] is None for span in row) for row in rows)
     error = "the target channel has no notes" if not resolved.stream else ""
-    dropped = {ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0}
-    if not error and (
-        faithful.consumes(text, resolved.stream) > len(resolved.stream)
-        or any(
-            (span is None or span[0] is None) and SoundRef(index, at) not in dropped
-            for index, row in enumerate(rows)
-            for at, span in enumerate(row)
-        )
-    ):
-        error = "the faithful mapping has more NOTE slots than the target channel has notes"
     operations = faithful.operations(text, resolved.stream)
     readings = ()
     if not error and all(onset is not None and length is not None for row in raw for onset, length in row):

@@ -6287,6 +6287,25 @@ def test_alignment_mapping_can_use_or_ignore_krc_constraints(own_window, tmp_pat
     assert own_window.view.lyric_mapped == expected
 
 
+def test_extra_lyric_sounds_remain_editable_without_mapping_errors(own_window, tmp_path):
+    own_window.project_path = tmp_path / "song.nto"
+    own_window._watch_lyrics()
+    own_window.view.set_notes([(60, 0.0, 1.0)])
+    assert own_window._on_lyrics_saved("あいう")
+    wait_for_lyric_mapping(own_window)
+    assert not own_window._lyric_error
+    assert own_window.view.lyric_editable
+    assert own_window.view.lyric_times == (((0.0, own_window.view.to_seconds(1.0)), (None, None), (None, None)),)
+    own_window._on_lyric_action("drop", 0, 0)
+    assert own_window.lyrics_text == "あ.0いう"
+    assert not own_window._lyric_error
+    assert own_window.view.lyric_times == (((None, None), (0.0, own_window.view.to_seconds(1.0)), (None, None)),)
+    own_window.view.undo_stack.undo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == "あいう"
+    assert not own_window._lyric_error
+
+
 def test_incompatible_krc_constraints_leave_the_original_text_until_rebuilt(own_window, tmp_path):
     own_window.project_path = tmp_path / "song.nto"
     own_window._watch_lyrics()
@@ -6294,7 +6313,9 @@ def test_incompatible_krc_constraints_leave_the_original_text_until_rebuilt(own_
     assert own_window._on_lyrics_saved("あ.3")
     own_window._adopt_alignment([[(0.0, 1.0)]], "mms", use_constraints=True)
     wait_for_lyric_mapping(own_window)
-    assert own_window._lyric_error
+    assert not own_window._lyric_error
+    assert own_window.view.lyric_times == (((0.0, own_window.view.to_seconds(1.0)),),)
+    assert own_window.view.lyric_editable
     assert not own_window.sound_strip.isHidden()
     assert own_window.lyrics_text == "あ.3"
     own_window._adopt_alignment([[(0.0, 1.0)]], "mms", use_constraints=False)

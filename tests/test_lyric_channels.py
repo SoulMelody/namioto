@@ -73,8 +73,33 @@ def test_unmapped_faithful_sounds_do_not_use_alignment_as_a_mapping():
     assert result.spans == (((0.0, 1.0), (None, None)),)
     assert result.raw == (((5.0, 0.5), (6.0, 0.5)),)
     assert result.mapped == (((10,), ()),)
-    assert result.error
+    assert not result.error
+    assert not result.channel_errors
+    assert result.zero == ((False, True),)
     assert result.operations == (Match(SoundRef(0, 0), (10,), confirmed=True),)
+
+
+@pytest.mark.parametrize(
+    "text,notes,spans,mapped",
+    [
+        ("あ", ((0.0, 1.0, 60, 10), (1.0, 2.0, 62, 20)), (((0.0, 1.0),),), (((10,),),)),
+        ("あ.2い", ((0.0, 1.0, 60, 10),), (((0.0, 1.0), (None, None)),), (((10,), ()),)),
+    ],
+)
+@pytest.mark.parametrize("channel", [0, 1])
+def test_faithful_count_mismatches_keep_available_note_spans_without_errors(text, notes, spans, mapped, channel):
+    text = f"@{channel}{{{text}}}"
+    lines = natural_sounds(text)
+    result = map_lyrics(
+        text,
+        lines,
+        [[(None, None)] * len(line.sounds) for line in lines],
+        notes_by_channel={channel: notes},
+    )
+    assert not result.error
+    assert not result.channel_errors
+    assert result.spans == spans
+    assert result.mapped == mapped
 
 
 def test_rebuilding_selected_lines_preserves_other_tracks_literal_structure():

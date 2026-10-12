@@ -17,7 +17,7 @@ from itertools import groupby
 from namioto.karaoke.model import Group, KrcError, Line, Unit, Word
 from namioto.karaoke.operations import NoteRun, Operation, partition, remap_operation
 from namioto.karaoke.parser import parse
-from namioto.karaoke.sounds import SoundLine, _base_words, _entries, natural_sounds
+from namioto.karaoke.sounds import SoundLine, _base_words, natural_sounds
 from namioto.karaoke.writer import dumps
 
 
@@ -63,26 +63,36 @@ def rebuild(text: str, operations: Sequence[Operation | NoteRun], *, line_indice
                     joined = shared and index > 0
                     override = None if joined or (shared and count == 1 and operation.slots == 1) else operation.dot
                     pieces.append((count, override, joined))
-            _rebuild_line(line, pieces)
+            _rebuild_line(line, pieces, lines[line_index])
             line_index += 1
     rebuilt = dumps(lyrics, dotted=True)
     _verify(lines, rebuilt)
     return rebuilt
 
 
-def _rebuild_line(line: Line, pieces: list[tuple[int, int | None, bool]]) -> None:
+def _rebuild_line(line: Line, pieces: list[tuple[int, int | None, bool]], sounds: SoundLine) -> None:
     """Replace the units of one line with the ones the mapping writes."""
     cursor = 0
     new_units: list[Unit] = []
     run: list[Word] = []
+    entries_by_container: list[list[tuple[str, int, int]]] = [[] for _ in sounds.containers]
+    for sound in sounds.sounds:
+        entries_by_container[sound.container].append((sound.reading, sound.first_atom, sound.last_atom))
+    containers = iter(entries_by_container)
+
+    def build(atoms: list[Word]) -> list[Unit]:
+        nonlocal cursor
+        if not atoms:
+            return []
+        entries = next(containers)
+        taken = _take(pieces, cursor, len(entries))
+        cursor += len(taken)
+        return _build(atoms, taken, entries)
 
     def flush() -> None:
-        nonlocal cursor
         if not run:
             return
-        taken = _take(pieces, cursor, len(_entries([word.char for word in run])))
-        cursor += len(taken)
-        new_units.extend(_build(run, taken))
+        new_units.extend(build(run))
         run.clear()
 
     for unit in line.units:
@@ -94,9 +104,7 @@ def _rebuild_line(line: Line, pieces: list[tuple[int, int | None, bool]]) -> Non
         unit.join_previous = False
         for part in unit.ruby.parts:
             atoms = [word for inner in part for word in _base_words(inner)]
-            taken = _take(pieces, cursor, len(_entries([word.char for word in atoms])))
-            cursor += len(taken)
-            part[:] = _build(atoms, taken)
+            part[:] = build(atoms)
         new_units.append(unit)
     flush()
     if cursor != len(pieces):
@@ -118,9 +126,10 @@ def _take(pieces: list[tuple[int, int | None, bool]], cursor: int, count: int) -
     return taken
 
 
-def _build(atoms: list[Word], pieces: list[tuple[int, int | None, bool]]) -> list[Unit]:
+def _build(
+    atoms: list[Word], pieces: list[tuple[int, int | None, bool]], entries: list[tuple[str, int, int]]
+) -> list[Unit]:
     """The units one container's characters become: an override lands on the Sound's whole range."""
-    entries = _entries([word.char for word in atoms])
     starts: dict[int, tuple[int, int | None, bool]] = {}
     at = 0
     for count, override, joined in pieces:

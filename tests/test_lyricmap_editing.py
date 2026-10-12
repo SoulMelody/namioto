@@ -76,6 +76,19 @@ def test_drop_and_restore_preserve_the_remaining_group_count():
     assert detach(dropped, C) == (NoteRun((A, B), 2), NoteRun((C,), 1))
 
 
+@pytest.mark.parametrize(
+    "text,index,expected",
+    [
+        ("夢[ゆめ]はL.2L.2したっていいじゃん！いいじゃん！", 5, "夢[ゆめ]はL.2L.2し.0たっていいじゃん！いいじゃん！"),
+        ("字[L.2L.2し]", 2, "字[L.2L.2し.0]"),
+    ],
+)
+def test_dropping_a_sound_preserves_explicit_boundaries_between_latin_letters(text, index, expected):
+    changed = detach(note_runs(text), SoundRef(0, index), 0)
+    assert rebuild(text, changed) == expected
+    assert note_runs(expected) == changed
+
+
 def test_whole_group_can_be_resized_to_zero_and_restored():
     base = note_runs("(あい).1う")
     zero = resize(base, A, 0)
