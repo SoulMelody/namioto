@@ -113,10 +113,11 @@ class _RollState:
     lyric_raw: tuple = ()
     lyric_operations: tuple = ()
     lyric_text: str = ""
+    lyric_evidence: tuple = ("", (), (), ())
 
 
 def _state_data(state: _RollState) -> tuple:
-    return (state.channels, state.notes, state.lyric_raw, state.lyric_operations, state.lyric_text)
+    return (state.channels, state.notes, state.lyric_raw, state.lyric_text, state.lyric_evidence)
 
 
 class _RollEdit(QUndoCommand):
@@ -377,6 +378,7 @@ class PianoRollView(QGraphicsView):
         self._lyric_raw: tuple[tuple[tuple[float | None, float | None], ...], ...] = ()
         self._lyric_mapped: tuple[tuple[tuple[int, ...], ...], ...] = ()
         self._lyric_operations: tuple = ()
+        self.lyric_evidence: tuple = ("", (), (), ())
         self._lyric_editable = True
         self.lyric_text = ""
         self.lyric_mapping_pending = False
@@ -521,7 +523,7 @@ class PianoRollView(QGraphicsView):
 
     @property
     def lyric_editable(self) -> bool:
-        """Whether the strip may drag its raw times; off while the `.krc` itself lays them out."""
+        """Whether the strip may edit the KRC mapping."""
         return self._lyric_editable
 
     @lyric_editable.setter
@@ -718,6 +720,7 @@ class PianoRollView(QGraphicsView):
             lyrics=self._lines,
             lyric_raw=self._lyric_raw,
             lyric_operations=self._lyric_operations,
+            lyric_evidence=self.lyric_evidence,
             lyric_text=self.lyric_text,
         )
 
@@ -773,6 +776,7 @@ class PianoRollView(QGraphicsView):
         gesture, self._gesture = self._gesture, None
         if gesture is None:
             self.lyric_text = before.lyric_text
+            self.lyric_evidence = before.lyric_evidence
             self.lyric_text_changed.emit(before.lyric_text)
             self._lines = before.lyrics
             self._lyric_raw = before.lyric_raw
@@ -806,6 +810,7 @@ class PianoRollView(QGraphicsView):
         self._history_depth += 1
         try:
             self.lyric_text = state.lyric_text
+            self.lyric_evidence = state.lyric_evidence
             self.lyric_text_changed.emit(state.lyric_text)
             self._lines = state.lyrics
             self._lyric_raw = state.lyric_raw

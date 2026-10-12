@@ -176,14 +176,10 @@ def test_the_lyric_times_survive_a_round_trip() -> None:
         "text": "あん\n",
         "key": "abc",
         "model": "mms",
-        "mode": "read",
         "raw": [[[0.0, 1.0], [None, None]]],
         "scores": [],
         "flagged": [True],
         "problems": [],
-        "operations": [],
-        "version": project.MAPPING_VERSION,
-        "use_constraints": False,
     }
     assert project.from_dict(written).lyrics == lyrics
 
@@ -193,9 +189,9 @@ def test_a_lyrics_block_without_a_text_still_reads() -> None:
     assert project.from_dict(data).lyrics == project.Lyrics(key="abc", model="mms", raw=(((0.0, 1.0),),))
 
 
-def test_an_unknown_lyric_mode_falls_back_to_edit() -> None:
+def test_an_unknown_lyric_mode_without_legacy_operations_reads_krc() -> None:
     data = {"format": "namioto", "lyrics": {"key": "a", "raw": [], "mode": "sideways"}}
-    assert project.from_dict(data).lyrics.mode == "edit"
+    assert project.from_dict(data).lyrics.mode == "read"
 
 
 def test_a_broken_lyric_block_is_dropped() -> None:
@@ -338,6 +334,7 @@ def test_the_mapping_survives_a_round_trip(tmp_path) -> None:
 
     lyrics = project.Lyrics(
         text="@3{胡椒[こ,しょう]}\n",
+        mode="edit",
         key="abc",
         raw=(((0.0, 0.9), (1.0, 0.4), (2.0, 0.0)),),
         scores=((0.9, None, 0.8),),

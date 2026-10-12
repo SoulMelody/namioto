@@ -778,7 +778,6 @@ class WindowBridge:
         return {
             "text": window.lyrics_text,
             "lines": len(window.view.lyric_lines),
-            "mode": window._lyric_mode,
         }
 
     def set_lyrics(self, params: dict) -> dict:

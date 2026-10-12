@@ -35,7 +35,15 @@ def test_nonzero_channels_read_literal_slots_in_read_mode(text, expected):
         notes_by_channel={1: ((0.0, 1.0, 60, 10), (1.0, 2.0, 62, 20), (2.0, 3.0, 64, 30))},
     )
     assert result.mapped == expected
-    assert result.operations == ()
+    rebuilt = rebuild(text, result.operations)
+    reread = map_lyrics(
+        rebuilt,
+        natural_sounds(rebuilt),
+        result.raw,
+        mode="read",
+        notes_by_channel={1: ((0.0, 1.0, 60, 10), (1.0, 2.0, 62, 20), (2.0, 3.0, 64, 30))},
+    )
+    assert reread.mapped == expected
     assert not result.error
 
 
@@ -53,7 +61,7 @@ def test_faithful_cursors_are_independent_per_channel():
     assert not result.error
 
 
-def test_unmapped_faithful_sounds_keep_raw_times_without_inventing_matches():
+def test_unmapped_faithful_sounds_do_not_use_alignment_as_a_mapping():
     text = "@1{あい}"
     result = map_lyrics(
         text,
@@ -62,10 +70,11 @@ def test_unmapped_faithful_sounds_keep_raw_times_without_inventing_matches():
         mode="read",
         notes_by_channel={1: ((0.0, 1.0, 60, 10),)},
     )
-    assert result.spans == (((0.0, 1.0), (6.0, 6.5)),)
+    assert result.spans == (((0.0, 1.0), (None, None)),)
+    assert result.raw == (((5.0, 0.5), (6.0, 0.5)),)
     assert result.mapped == (((10,), ()),)
     assert result.error
-    assert result.operations == ()
+    assert result.operations == (Match(SoundRef(0, 0), (10,), confirmed=True),)
 
 
 def test_rebuilding_selected_lines_preserves_other_tracks_literal_structure():
@@ -99,7 +108,7 @@ def test_channel_cursors_are_independent_within_one_display_line(mode):
 def test_an_invalid_channel_does_not_discard_another_channels_edit_mapping():
     text = "@1{あ}@2{い}"
     result = map_lyrics(
-        text, natural_sounds(text), [[(0.0, 1.0), (0.0, 1.0)]], notes_by_channel={1: ((0.0, 1.0, 60, 10),)}
+        text, natural_sounds(text), [[(0.0, 1.0), (0.0, 1.0)]], mode="edit", notes_by_channel={1: ((0.0, 1.0, 60, 10),)}
     )
     assert result.operations == (Match(SoundRef(0, 0), (10,)),)
     assert result.mapped == (((10,), ()),)
@@ -138,8 +147,22 @@ def test_edit_constraints_keep_explicit_note_counts_on_nonzero_channels():
         text,
         natural_sounds(text),
         [[(0.0, 1.0), (0.0, 1.0)]],
+        mode="edit",
         use_constraints=True,
         notes_by_channel={1: ((0.0, 1.0, 60, 10), (2.0, 3.0, 62, 20)), 2: ((0.0, 1.0, 64, 30),)},
     )
     assert not result.error
     assert result.mapped == (((10, 20), (30,)),)
+
+
+def test_invalid_alignment_evidence_cannot_override_faithful_krc_slots():
+    result = map_lyrics(
+        "あ",
+        natural_sounds("あ"),
+        [[(4.0, -1.0)]],
+        notes=((0.0, 1.0, 60, 10),),
+    )
+    assert not result.error
+    assert result.spans == (((0.0, 1.0),),)
+    assert result.mapped == (((10,),),)
+    assert result.red == ((False,),)

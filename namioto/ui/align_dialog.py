@@ -150,6 +150,7 @@ class AlignDialog(QDialog):
         self._thread: Aligner | None = None
         # the choices the last run was made with, straight onto the form
         self._parameters = align.load_parameters()
+        self._use_constraints = True
         self._fields: list[tuple[Field, Callable[[], object], Callable[[object], None]]] = []
 
         form = self._build_form()
@@ -159,10 +160,13 @@ class AlignDialog(QDialog):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFixedHeight(LOG_HEIGHT)
-        self.run = QPushButton(tr("Run"))
-        self.run.clicked.connect(self._start)
+        self.run = QPushButton(tr("Auto-map"))
+        self.run.clicked.connect(lambda: self._start(True))
+        self.rebuild = QPushButton(tr("Rebuild mapping"))
+        self.rebuild.clicked.connect(lambda: self._start(False))
         buttons = QDialogButtonBox()
         buttons.addButton(self.run, QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.addButton(self.rebuild, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
 
@@ -175,7 +179,12 @@ class AlignDialog(QDialog):
 
     def parameters(self) -> dict:
         """What the form holds now, checked the way the store checks it."""
-        return align.coerce_parameters({field.name: read() for field, read, _write in self._fields})
+        return align.coerce_parameters(
+            {
+                **{field.name: read() for field, read, _write in self._fields},
+                "use_constraints": self._use_constraints,
+            }
+        )
 
     def _build_form(self) -> QWidget:
         widget = QWidget()
@@ -183,6 +192,8 @@ class AlignDialog(QDialog):
         form.setContentsMargins(0, 0, 0, 0)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         for item in align.PARAMETERS:
+            if item.name == "use_constraints":
+                continue
             editor, read, write = field_editor(self._parameters[item.name], item)
             add_row(form, editor, item)
             self._fields.append((item, read, write))
@@ -193,15 +204,17 @@ class AlignDialog(QDialog):
         self._parameters = self.parameters()
         align.save_parameters(self._parameters)
 
-    def _start(self) -> None:
+    def _start(self, use_constraints: bool = True) -> None:
         if self._thread is not None:
             return
+        self._use_constraints = use_constraints
         problem = devices.validate()
         if problem is not None:
             self._fail(tr(problem))
             return
         self.log.clear()
         self.run.setEnabled(False)
+        self.rebuild.setEnabled(False)
         self._remember()
         model = self._parameters["model"]
         provider = devices.resolve(self._parameters["device"])
@@ -236,6 +249,7 @@ class AlignDialog(QDialog):
             times = snap_to_beats(times, self.tempo, 1.0 / cells, self.offset)
         self._thread = None
         self.run.setEnabled(True)
+        self.rebuild.setEnabled(True)
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
         self.status.setText(tr("Aligned {lines} lines", lines=len(times)))
@@ -246,6 +260,7 @@ class AlignDialog(QDialog):
     def _fail(self, message: str) -> None:
         self._thread = None
         self.run.setEnabled(True)
+        self.rebuild.setEnabled(True)
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         self.status.setText(tr("Alignment failed"))

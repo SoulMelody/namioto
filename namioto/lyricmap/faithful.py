@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Read-only mode: the `.krc`'s own `.N`, groups and `.+` lay the Sounds out, with nothing estimated.
+"""The `.krc`'s own `.N`, groups and `.+` lay the Sounds out, with nothing estimated.
 
-This is not the edit mapping and shares none of its state: the input's NOTE slots are read in order,
-never solved for. `note_groups` reads the literal mapping, including continuations, into runs of
-Sounds and their NOTE counts. Sounds sharing one NOTE divide it equally; one Sound taking several
-holds their whole span. When the notes run out the rest have no time to render. Qt-free.
+The input's NOTE slots are read in order, never solved for. `note_groups` reads the literal mapping,
+including continuations, into runs of Sounds and their NOTE counts. Sounds sharing one NOTE divide
+it equally; one Sound taking several holds their whole span. When the notes run out the rest have
+no time to render. Qt-free.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
+from namioto.karaoke.operations import Drop, Match, Merge, Operation, SoundRef
 from namioto.karaoke.parser import parse
 from namioto.karaoke.sounds import natural_sounds, note_groups
 from namioto.lyricmap.notes import Note
@@ -58,6 +59,30 @@ def lay_out(text: str, notes: Sequence[Note]) -> tuple[list[list[Span]], list[li
     return rows, found
 
 
+def operations(text: str, notes: Sequence[Note]) -> tuple[Operation, ...]:
+    """Derive editable operations from KRC slots; uncovered Sounds have no operation."""
+    if not text.strip():
+        return ()
+    parsed = [line for chapter in parse(text).chapters for line in chapter.lines]
+    found: list[Operation] = []
+    at = 0
+    for row, (sounds, line) in enumerate(zip(natural_sounds(text), parsed, strict=True)):
+        for slots, indices in note_groups(line, sounds):
+            refs = tuple(SoundRef(row, index) for index in indices)
+            if slots == 0:
+                found.extend(Drop(ref, confirmed=True) for ref in refs)
+                continue
+            taken = notes[at : at + slots]
+            at += len(taken)
+            if len(taken) != slots:
+                continue
+            if len(refs) > 1:
+                found.append(Merge(refs, taken[0].id, confirmed=True))
+            else:
+                found.append(Match(refs[0], tuple(note.id for note in taken), confirmed=True))
+    return tuple(found)
+
+
 def consumes(text: str, notes: Sequence[Note]) -> int:
     """How many notes the faithful reading asks for; more than `len(notes)` leaves Sounds untimed."""
     if not text.strip():
@@ -70,4 +95,4 @@ def consumes(text: str, notes: Sequence[Note]) -> int:
     )
 
 
-__all__ = ["Span", "consumes", "lay_out", "read"]
+__all__ = ["Span", "consumes", "lay_out", "operations", "read"]

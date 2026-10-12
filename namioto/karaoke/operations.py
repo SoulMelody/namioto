@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The authoritative mapping: one `match`, `merge` or `drop` per run of the line's Sounds.
+"""Discrete mapping operations for the solver and the derived view of KRC NOTE slots.
 
 A `SoundRef` names a Sound the way `natural_sounds` counts it: its line and its index within the
 line. `Match` consumes `1..N` consecutive notes with one Sound, `Merge` consumes one note with `2..N`
 consecutive Sounds, `Drop` consumes no note. Together the operations of a song are a partition - every
-Sound is in exactly one, every note in exactly one `Match` or `Merge` - and that partition is the
-mapping everything else is derived from. Qt-free.
+Sound is in exactly one, every note in exactly one `Match` or `Merge`. A solved partition is written
+back to KRC; faithful operations are derived from that text, not persisted separately. Qt-free.
 """
 
 from __future__ import annotations

@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Mapped Sounds on the roll's time axis, with a separate lane for Sounds consuming no NOTE.
 
-Normal gestures request discrete mapping anchors; raw timings are untouched. The advanced
-raw overlay exposes onset editing separately. The window solves previews off the GUI thread,
-and the roll owns the single undo step committed when a gesture ends.
+Normal gestures change discrete KRC NOTE counts; alignment evidence is read-only.
+The roll owns the single undo step committed when a gesture ends.
 """
 
 from __future__ import annotations
@@ -32,8 +31,6 @@ class SoundStrip(ViewportStrip):
 
     lyric_action_requested = Signal(str, int, int)
     channel_requested = Signal(int, int, int)
-    save_map_requested = Signal()
-    discard_map_requested = Signal()
     mapping_drag_started = Signal()
     mapping_preview_requested = Signal(object)
     mapping_drag_finished = Signal(bool)
@@ -49,7 +46,6 @@ class SoundStrip(ViewportStrip):
         self._base_blocks = {}
         self._base_notes = ()
         self._press_x = 0.0
-        self._press_seconds = 0.0
         self._candidate = None
         self._candidate_x = 0.0
         self._candidate_y = 0.0
@@ -212,16 +208,6 @@ class SoundStrip(ViewportStrip):
         x, y = event.position().x(), event.position().y()
         self.setFocus()
         self._press_x = x
-        if self.show_raw:
-            found = self._raw_boundary_at(x, y)
-            if found is None:
-                return
-            row, column = found
-            self._drag = ("raw", row, column)
-            self._base = self.view.lyric_raw[row]
-            self._press_seconds = self._base[column][0]
-            self.view.begin_gesture(tr("Move lyrics"))
-            return
         self._base_blocks = self._blocks()
         found = self._boundary_at(x, y) if y % SOUND_HEIGHT <= MAIN_BOTTOM else None
         kind = "boundary"
@@ -252,21 +238,12 @@ class SoundStrip(ViewportStrip):
         x, y = event.position().x(), event.position().y()
         if self._drag is None:
             self._update_hover(self._sound_at(x, y))
-            self._set_cursor(self._raw_boundary_at(x, y) if self.show_raw else self._boundary_at(x, y))
+            self._set_cursor(self._boundary_at(x, y))
             return
         kind, row, column = self._drag
         main_bottom = self._lane(row, column) + MAIN_BOTTOM
         if not self.view.gesture_active:
             self._drag = None
-            return
-        if kind == "raw":
-            origin = self.origin().x()
-            travelled = self.view.seconds_at_viewport_x(x - origin) - self.view.seconds_at_viewport_x(
-                self._press_x - origin
-            )
-            self.view.set_sound_onset(
-                row, column, self._magnet_seconds(self._press_seconds + travelled, x), base=self._base
-            )
             return
         if abs(x - self._press_x) < SOUND_GRAB_PX and kind == "boundary":
             candidate = None
@@ -318,22 +295,14 @@ class SoundStrip(ViewportStrip):
     def mouseReleaseEvent(self, event):
         if self._drag is None:
             return
-        kind = self._drag[0]
         self._drag = None
-        if kind == "raw":
-            self.view.commit_gesture()
-        else:
-            self.mapping_drag_finished.emit(True)
+        self.mapping_drag_finished.emit(True)
         self._refresh()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self._drag is not None:
-            kind = self._drag[0]
             self._drag = None
-            if kind == "raw":
-                self.view.cancel_gesture()
-            else:
-                self.mapping_drag_finished.emit(False)
+            self.mapping_drag_finished.emit(False)
             event.accept()
             return
         super().keyPressEvent(event)
@@ -342,13 +311,6 @@ class SoundStrip(ViewportStrip):
         if not self.view.lyric_editable:
             return
         menu = QMenu(self)
-        save = menu.addAction(tr("Save lyrics map"))
-        save.setEnabled(not self.view.lyric_mapping_pending and not self.view.gesture_active)
-        save.triggered.connect(self.save_map_requested)
-        discard = menu.addAction(tr("Discard lyrics map"))
-        discard.setEnabled(not self.view.gesture_active)
-        discard.triggered.connect(self.discard_map_requested)
-        menu.addSeparator()
         raw = QAction(tr("Show raw timing (advanced)"), menu)
         raw.setCheckable(True)
         raw.setChecked(self.show_raw)

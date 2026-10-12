@@ -116,9 +116,8 @@ mapping is edited in the same dialog, and the tempo stays where the audio put it
 tempo, one track chunk per channel and no name on any of them. A note drawn on the roll's grid lands
 exactly on the tick that grid names, and one taken from the audio keeps the time it has, rounded to
 the nearest tick; a hidden channel goes in like any other, since hiding is about the drawing and not
-the notes. **Export lyrics** folds the current mapping back into a `.krc` - a run of sounds sharing a
-note becomes `(...)` and every word gets the notes it covers as its `.N` - writing a file of its own,
-for another karaoke tool or a read-only pass. **Export ASS subtitle** times the same mapping onto a
+the notes. **Export lyrics** writes the project's KRC text to a file of its own for another karaoke
+tool. Its `.N` counts and groups already contain the current lyric mapping. **Export ASS subtitle** times the same mapping onto a
 `.ass` karaoke subtitle - the `\k` of every syllable, its ruby and the gaps between notes - with the
 header the Aegisub kara-templater expects, so an existing video pipeline picks it up as it is.
 **WaveTone compatibility**, in the settings, is
@@ -484,30 +483,29 @@ before they are dropped. The key lives in `~/.config/namioto/settings.json` in p
 an external hand edit leaves broken is kept as it is for you to fix where it lives, but the window
 will not write one that does not parse.
 
-Lyrics normally follow the KRC's own `.N` and groups (faithful mapping). A successful **Align**
-starts a mapping-editing session. Its **Use KRC mapping constraints** switch, on by default,
-preserves explicit NOTE counts and shared-sound groups; turn it off to compute a new structure.
-Text editing is unavailable during this session. Right-click the lyrics timeline, including its
-blank area, and choose **Save lyrics map** to write the final structure into the project and return
-to faithful mapping, or **Discard lyrics map** to restore the KRC structure from before Align.
-Saving the project normally keeps unfinished mapping work so it can be resumed next time.
+Lyrics always follow the KRC's own `.N` counts and groups (faithful mapping), and remain editable.
+In the **Align** window, **Auto-map** uses alignment to map the selected channel while respecting
+explicit KRC counts and shared-sound groups. **Rebuild mapping** computes a new structure without
+those constraints. A successful operation updates the project's KRC in one undo step; it does not
+save the project automatically. Text editing and subsequent note changes never trigger alignment
+or automatic mapping. Each channel consumes notes in order, so inserting or deleting a note can
+shift the lyrics that follow it.
 
 Once a `.krc` is open and its audio is loaded, the clock button beside the text-box one puts a time
 on every sound of the currently selected channel: its stream is forced onto the frames of a
 wav2vec2 CTC model in one pass, and each sound gets the span of frames it won. Other channels keep
-their alignment and confirmed mapping decisions. The lyrics are drawn above the roll in separate
+their alignment evidence and KRC mapping. The lyrics are drawn above the roll in separate
 channel lanes, on the roll's own columns. Right-click a Sound and choose **Lyric channel** to change
 its ownership in one undo step. Each sound
 starts at a `|` with its label, and its block covers the note span the mapping gives it - green while
 it sits on its notes, red while the mapping doubts it, grey and blockless while it covers none.
-Dragging a `|` slides the boundary between two sounds' raw aligned starts; the drag is smooth and
-sticks to a drawn beat line when the pointer comes near it, and one gesture is one undo step.
-Hovering a sound that shares a note with its neighbours lights the whole run. The mapping is the only
-thing that decides a sound's look; **Save lyrics map** writes the final mapping into the project lyrics.
-The text and the times ride in the `.nto` beside the notes, saved and undone with them.
-`Export lyrics` folds the current mapping back into a `.krc`: a run of sounds sharing a note becomes
-`(...)`, and every word gets the notes it covers as its `.N` - `0` for a sound that covers none - so a
-read-only pass reads the same layout. The align window also offers a Quantize choice (Off / 1/4 / 1/8 / …)
+Dragging a boundary changes how adjacent sounds divide NOTE slots; dropping, keeping, merging and
+dissolving sounds also change the KRC directly, without rerunning automatic mapping. Each gesture
+is one undo step. Hovering a sound that shares a note with its neighbours lights the whole run.
+The raw timing overlay shows alignment evidence without editing it. Low-confidence results are
+highlighted for review rather than blocking the update. The KRC text and alignment evidence ride
+in the `.nto` beside the notes, saved and undone with them. `Export lyrics` writes that KRC, including
+shared-sound groups and `.N` counts (`0` for a sound that consumes no note). The align window also offers a Quantize choice (Off / 1/4 / 1/8 / …)
 that snaps the result onto the BPM beat grid, and remembers the model, the device and the Quantize
 choice for the next run. A finished run is kept as a cache, so changing the
 tempo or the grid offset and running again re-snaps it without touching the model.

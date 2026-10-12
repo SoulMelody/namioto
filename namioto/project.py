@@ -14,9 +14,9 @@ preferences are in `namioto.settings`, and the window's state in `namioto.state`
 window keeps every change the user makes to one in `namioto.state`, and the next document starts
 from it.
 
-`Lyrics` carries the `.krc` text itself (the baseline), the aligned times keyed by a hash of that
-text, and the mode. External text editing uses a temporary working copy; the project remains the
-source of truth.
+`Lyrics` carries the authoritative `.krc` text and auxiliary alignment evidence keyed by that
+text. Legacy edit sessions are read for migration. External text editing uses a temporary working
+copy; the project remains the source of truth.
 """
 
 from __future__ import annotations
@@ -312,22 +312,21 @@ class Note(NamedTuple):
 
 
 class Lyrics(NamedTuple):
-    """A `.krc` as the project keeps it: the text itself, the times made from it, and the mapping.
+    """The authoritative KRC text and auxiliary alignment evidence.
 
-    The text is the baseline and the source of truth for temporary editing copies and exports.
+    The text is the source of truth for temporary editing copies and exports.
     `key` is the hash of the text the times were made from, so a changed text invalidates them;
     `raw` holds one `(onset, raw_length)` in seconds per Sound, `None` where none was found; `scores`
     holds the aligner's own score per sound beside it; `flagged` holds one bool per line, true where
     the aligner itself doubted the times it made; `problems` holds the aligner's line-level
-    complaints. `mode` is `edit` while the aligner's times lay the sounds out, or `read` while the
-    `.krc`'s own `.N` and groups do. KRC channel wrappers name each Sound's MIDI channel.
-    `operations` holds all channels' mappings, and `version` the algorithm that suggested them.
+    complaints. KRC channel wrappers name each Sound's MIDI channel.
+    `mode`, `operations`, `version` and `use_constraints` are retained only for legacy migration.
     """
 
     text: str = ""
     key: str = ""
     model: str = ""
-    mode: str = "edit"
+    mode: str = "read"
     raw: tuple[tuple[tuple[float | None, float | None], ...], ...] = ()
     flagged: tuple[bool, ...] = ()
     scores: tuple[tuple[float | None, ...], ...] = ()
@@ -399,14 +398,20 @@ def _lyrics_dict(lyrics: Lyrics | None) -> dict | None:
         "text": lyrics.text,
         "key": lyrics.key,
         "model": lyrics.model,
-        "mode": lyrics.mode,
         "raw": [[list(sound) for sound in line] for line in lyrics.raw],
         "scores": [list(row) for row in lyrics.scores],
         "flagged": list(lyrics.flagged),
         "problems": [list(row) for row in lyrics.problems],
-        "operations": [_operation_dict(operation) for operation in lyrics.operations],
-        "version": lyrics.version,
-        "use_constraints": lyrics.use_constraints,
+        **(
+            {
+                "mode": "edit",
+                "operations": [_operation_dict(operation) for operation in lyrics.operations],
+                "version": lyrics.version,
+                "use_constraints": lyrics.use_constraints,
+            }
+            if lyrics.mode == "edit"
+            else {}
+        ),
     }
 
 
@@ -584,7 +589,7 @@ def _lyrics(value: Any) -> Lyrics | None:
         text=text if isinstance(text, str) else "",
         key=key,
         model=model if isinstance(model, str) else "",
-        mode=mode if mode in LYRIC_MODES else "edit",
+        mode=mode if mode in LYRIC_MODES else ("edit" if "operations" in value else "read"),
         raw=tuple(rows),
         flagged=tuple(bool(flag) for flag in flagged) if isinstance(flagged, list) else (),
         scores=_scores(value.get("scores")),
