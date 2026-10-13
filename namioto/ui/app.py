@@ -382,6 +382,9 @@ class MainWindow(QMainWindow):
         )
         self.view.lyric_text_changed.connect(self._restore_lyric_text)
         self.transport.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
+        self.transport.lyric_scope.toggled.connect(self.sound_strip.set_current_channel_only)
+        self.view.lyrics_changed.connect(self._update_lyric_scope)
+        self._update_lyric_scope()
         self.player.finished.connect(self._on_playback_finished)
         self.song.finished.connect(self._on_playback_finished)
         self.song.failed.connect(self._on_song_failed)
@@ -2206,6 +2209,13 @@ class MainWindow(QMainWindow):
         self._send_program()
         if playing:
             self.player.play(position)
+
+    def _update_lyric_scope(self) -> None:
+        channels = {sound.channel for line in self.view.lyric_lines for sound in line.sounds}
+        enabled = len(channels) > 1
+        if not enabled:
+            self.transport.lyric_scope.setChecked(False)
+        self.transport.lyric_scope.setEnabled(enabled)
 
     def _on_channels_changed(self, *_args) -> None:
         """A channel edit is a document change, and a mute or instrument lands in the running sound."""

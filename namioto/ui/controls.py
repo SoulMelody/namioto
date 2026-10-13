@@ -528,7 +528,7 @@ class TransportBar(_Group):
         self.channels = icon_button(
             "channels", tr("Channels: colours, mute and instruments, one card per channel"), checkable=True
         )
-        self.note_lyrics = icon_button("lyrics", tr("Show lyrics on MIDI notes"), checkable=True)
+        self.note_lyrics = icon_button("note_lyrics", tr("Show lyrics on MIDI notes"), checkable=True)
         self.note_lyrics.setChecked(True)
         self.division = icon_button(
             "beat",
@@ -555,6 +555,8 @@ class TransportBar(_Group):
         playback.add(separator())
         playback.add(self.channels)
         playback.add(self.note_lyrics)
+        self.lyric_scope = icon_button("lyric_scope", tr("Show only the current channel's lyric rows"), checkable=True)
+        playback.add(self.lyric_scope)
         playback.add(self.division)
 
         bpm = Cluster("bpm")

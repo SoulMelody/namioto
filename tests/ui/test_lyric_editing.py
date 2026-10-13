@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter
@@ -15,6 +17,48 @@ from namioto.lyrics import text_key
 from namioto.ui import theme
 
 from .helpers import _mapped_pair, drag_sound, sound_mouse, wait_for_lyric_mapping
+
+
+def test_lyric_channel_scope_requires_multiple_lyric_lanes(own_window) -> None:
+    view = own_window.view
+    scope = own_window.transport.lyric_scope
+    assert not scope.isEnabled()
+    view.set_channels((Channel(channel=0), Channel(channel=1)))
+    assert not scope.isEnabled()
+    view.load_lyrics(natural_sounds("あ\nい"), [[(0.0, 1.0)], [(1.0, 2.0)]])
+    assert not scope.isEnabled()
+    lines = natural_sounds("あ\nい")
+    lines[1] = replace(lines[1], sounds=tuple(replace(sound, channel=1) for sound in lines[1].sounds))
+    view.load_lyrics(lines, [[(0.0, 1.0)], [(1.0, 2.0)]])
+    assert scope.isEnabled()
+    scope.click()
+    view.set_active_channel(1)
+    view.load_lyrics(natural_sounds("あ"), [[(0.0, 1.0)]])
+    assert not scope.isEnabled()
+    assert not scope.isChecked()
+    assert set(own_window.sound_strip._blocks()) == {(0, 0)}
+
+
+def test_lyric_channel_scope(own_window) -> None:
+    view = own_window.view
+    view.set_channels((Channel(channel=0), Channel(channel=1), Channel(channel=2)))
+    lines = natural_sounds("あ\nい")
+    lines[1] = replace(lines[1], sounds=tuple(replace(sound, channel=1) for sound in lines[1].sounds))
+    view.load_lyrics(lines, [[(0.0, 1.0)], [(None, None)]])
+    strip = own_window.sound_strip
+    before = view.undo_stack.count()
+    assert set(strip._blocks()) == {(0, 0), (1, 0)}
+    own_window.transport.lyric_scope.click()
+    assert strip._lanes() == {0: 0}
+    assert set(strip._blocks()) == {(0, 0)}
+    view.set_active_channel(1)
+    assert strip._lanes() == {1: 0}
+    assert set(strip._blocks()) == {(1, 0)}
+    view.set_active_channel(2)
+    assert strip._blocks() == {}
+    own_window.transport.lyric_scope.click()
+    assert set(strip._blocks()) == {(0, 0), (1, 0)}
+    assert view.undo_stack.count() == before
 
 
 def test_note_lyrics_merge_same_ruby_base(own_window) -> None:

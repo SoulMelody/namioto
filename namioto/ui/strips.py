@@ -60,6 +60,8 @@ class SoundStrip(ViewportStrip):
         self._block_scale = 0.0
         self._channel_lanes = None
         self.show_raw = False
+        self.current_channel_only = False
+        view.active_channel_changed.connect(self._refresh)
         view.viewport_changed.connect(self._refresh_viewport)
         view.lyrics_changed.connect(self._refresh)
         view.notes_changed.connect(self._refresh)
@@ -69,12 +71,27 @@ class SoundStrip(ViewportStrip):
         base = self.origin().x() if origin is None else origin
         return base + self.view.mapFromScene(QPointF(self.view.to_beats(seconds), 0)).x()
 
+    def set_current_channel_only(self, enabled):
+        self.current_channel_only = bool(enabled)
+        self._hover = None
+        self._refresh()
+
+    def _channel_visible(self, channel):
+        return not self.current_channel_only or channel == self.view.active_channel
+
     def _lanes(self):
         if self._channel_lanes is None:
             self._channel_lanes = {
                 channel: at
                 for at, channel in enumerate(
-                    sorted({sound.channel for line in self.view.lyric_lines for sound in line.sounds})
+                    sorted(
+                        {
+                            sound.channel
+                            for line in self.view.lyric_lines
+                            for sound in line.sounds
+                            if self._channel_visible(sound.channel)
+                        }
+                    )
                 )
             }
         return self._channel_lanes
@@ -92,8 +109,8 @@ class SoundStrip(ViewportStrip):
         first_start = {}
         for row, spans in enumerate(self.view.lyric_times):
             for column, (start, end) in enumerate(spans):
-                if start is not None and end is not None:
-                    channel = self.view.lyric_lines[row].sounds[column].channel
+                channel = self.view.lyric_lines[row].sounds[column].channel
+                if start is not None and end is not None and self._channel_visible(channel):
                     first_start.setdefault(channel, start)
                     blocks[(row, column)] = QRectF(
                         self._x(start),
@@ -105,6 +122,8 @@ class SoundStrip(ViewportStrip):
         previous_end = {}
         for row, line in enumerate(self.view.lyric_lines):
             for column, sound in enumerate(line.sounds):
+                if not self._channel_visible(sound.channel):
+                    continue
                 ref = SoundRef(row, column)
                 if (row, column) in blocks:
                     previous_end[sound.channel] = self.view.lyric_times[row][column][1]
@@ -201,7 +220,7 @@ class SoundStrip(ViewportStrip):
             painter.setPen(QPen(QColor(theme.LYRIC_ZERO), 1, Qt.PenStyle.DashLine))
             for row, spans in enumerate(self.view.lyric_raw):
                 for column, (start, _length) in enumerate(spans):
-                    if start is not None:
+                    if start is not None and self._channel_visible(self.view.lyric_lines[row].sounds[column].channel):
                         x = self._x(start)
                         lane = self._lane(row, column)
                         painter.drawLine(QPointF(x, lane), QPointF(x, lane + MAIN_BOTTOM))

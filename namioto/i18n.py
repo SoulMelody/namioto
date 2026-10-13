@@ -416,6 +416,7 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Re-aligning the lyrics…": "正在重新对齐歌词…",
         "Calculating lyric mapping…": "正在计算歌词映射…",
         "Show lyrics on MIDI notes": "显示 MIDI 音符上的歌词",
+        "Show only the current channel's lyric rows": "仅显示当前通道歌词行（关闭时显示全部通道）",
         "Lyric channel": "歌词通道",
         "Change lyric channel": "更改歌词通道",
         "The selected channel has no lyric sounds": "所选通道没有歌词声音",
