@@ -58,6 +58,7 @@ def map_lyrics(
     use_constraints: bool = False,
     notes_by_channel: dict | None = None,
     solve_channels: tuple[int, ...] | None = None,
+    read_confidence: bool = True,
 ) -> LyricResult:
     """Read faithful KRC slots, or solve an explicit automatic mapping request.
 
@@ -81,12 +82,13 @@ def map_lyrics(
             previous,
             use_constraints,
             solve_channels,
+            read_confidence,
         )
     lines = list(lines)
     raw = [[(span[0], span[1]) for span in row] for row in raw]
     if mode == "read":
         try:
-            return _read_result(text, lines, raw, notes, scores, flagged)
+            return _read_result(text, lines, raw, notes, scores, flagged, read_confidence)
         except (MappingError, ValueError) as error:
             return _failed(lines, raw, str(error))
     try:
@@ -97,7 +99,20 @@ def map_lyrics(
         return _failed(lines, raw, f"{type(error).__name__}: {error}")
 
 
-def _channel_result(text, lines, raw, scores, flagged, notes, mode, anchors, previous, use_constraints, solve_channels):
+def _channel_result(
+    text,
+    lines,
+    raw,
+    scores,
+    flagged,
+    notes,
+    mode,
+    anchors,
+    previous,
+    use_constraints,
+    solve_channels,
+    read_confidence,
+):
     try:
         parts = split(text)
         owned = {ref: part.channel for part in parts.values() for refs in part.refs for ref in refs}
@@ -130,6 +145,7 @@ def _channel_result(text, lines, raw, scores, flagged, notes, mode, anchors, pre
                 part.flags(flagged),
                 notes=notes.get(channel, ()),
                 mode="read",
+                read_confidence=read_confidence,
             )
         else:
             try:
@@ -181,7 +197,7 @@ def _channel_result(text, lines, raw, scores, flagged, notes, mode, anchors, pre
     )
 
 
-def _read_result(text, lines, raw, notes, scores=(), flagged=()) -> LyricResult:
+def _read_result(text, lines, raw, notes, scores=(), flagged=(), read_confidence=True) -> LyricResult:
     resolved = resolve([TimedNote(*note) for note in notes])
     spans, ids = faithful.lay_out(text, resolved.stream)
     rows = _rows(lines, spans)
@@ -189,7 +205,11 @@ def _read_result(text, lines, raw, notes, scores=(), flagged=()) -> LyricResult:
     error = "the target channel has no notes" if not resolved.stream else ""
     operations = faithful.operations(text, resolved.stream)
     readings = ()
-    if not error and all(onset is not None and length is not None for row in raw for onset, length in row):
+    if (
+        read_confidence
+        and not error
+        and all(onset is not None and length is not None for row in raw for onset, length in row)
+    ):
         evidence = [_raw_row(row, scores[index] if index < len(scores) else ()) for index, row in enumerate(raw)]
         try:
             readings = tuple(confidence.read(lines, evidence, resolved.stream, operations, flagged))

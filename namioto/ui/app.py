@@ -1995,7 +1995,12 @@ class MainWindow(QMainWindow):
             changed = set(baseline).symmetric_difference(runs)
             affected = sorted({ref.line for operation in changed for ref in operation.sounds})
             text = rebuild(self._lyric_drag_request["text"], runs, line_indices=affected)
-            snapshot = dict(self._lyric_drag_request, text=text, lines=natural_sounds(text))
+            snapshot = dict(
+                self._lyric_drag_request,
+                text=text,
+                lines=faithful.structure(text).lines,
+                read_confidence=False,
+            )
             mapping = map_lyrics(**snapshot)
         except (KrcError, ValueError) as error:
             self.statusBar().showMessage(str(error))

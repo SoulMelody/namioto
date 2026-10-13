@@ -6032,6 +6032,30 @@ def test_merging_two_sounds_confirms_the_pair(own_window, tmp_path) -> None:
     assert own_window.view.lyric_times == (((0.0, 0.5), (0.5, 1.0)),)
 
 
+def test_lyric_preview_defers_confidence_until_the_gesture_finishes(own_window, tmp_path, monkeypatch):
+    from namioto.lyricmap import confidence
+    from namioto.lyricmap.editing import detach, note_runs
+
+    _mapped_pair(own_window, tmp_path, raw=((0.0, 0.5), (0.5, 0.5)))
+    calls = []
+    original = confidence.read
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(confidence, "read", counted)
+    own_window._begin_lyric_drag()
+    runs = detach(note_runs(own_window.lyrics_text), SoundRef(0, 1), 0)
+    own_window._preview_lyric_drag(runs)
+    assert own_window.view.lyric_zero == ((False, True),)
+    assert calls == []
+    own_window._finish_lyric_drag(True)
+    wait_for_lyric_mapping(own_window)
+    assert calls == [True]
+    assert own_window._lyric_map_result.readings
+
+
 def test_a_group_edge_member_can_be_dragged_out_again(own_window, tmp_path) -> None:
     _mapped_pair(own_window, tmp_path, raw=((0.0, 0.5), (0.5, 0.5)))
     drag_sound(own_window, (0, 1), own_window.sound_strip._blocks()[(0, 0)].center().x())
