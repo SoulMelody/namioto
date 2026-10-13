@@ -11,6 +11,7 @@ note ids read smaller. Qt-free.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple, Protocol
@@ -97,12 +98,14 @@ def components(notes: Iterable[Note]) -> list[list[Note]]:
     return regions
 
 
-def resolve(notes: Iterable[Note], cost: Callable[[tuple], float] | None = None) -> Resolved:
+def resolve(
+    notes: Iterable[Note], cost: Callable[[tuple], float] | None = None, *, include_branches: bool = True
+) -> Resolved:
     """Reduce the notes to one voice, choosing each region's path by `cost` and its tie-breaks.
 
     `cost(path)` is the mapping's own time cost for a candidate path; a caller that only wants a
     preview may leave it out, and the paths then tie, so the one keeping more notes and the smaller
-    ids wins.
+    ids wins. Without `include_branches`, the default-cost path is selected by interval scheduling.
     """
     regions = components(notes)
     kept: list[Note] = []
@@ -112,15 +115,52 @@ def resolve(notes: Iterable[Note], cost: Callable[[tuple], float] | None = None)
         if len(region) == 1:
             kept.append(region[0])
             continue
-        paths = list(_maximal_paths(region))
-        if not paths:
-            continue
-        priced = [Branch(tuple(path), 0.0 if cost is None else cost(tuple(path))) for path in paths]
-        chosen = _best(priced)
-        branches.append(tuple(priced))
-        kept.extend(chosen.notes)
-        filtered.extend(note for note in region if note not in chosen.notes)
+        if cost is None and not include_branches:
+            chosen = _best_path(region)
+        else:
+            priced = [Branch(path, 0.0 if cost is None else cost(path)) for path in _maximal_paths(region)]
+            if not priced:
+                continue
+            chosen = _best(priced).notes
+            if include_branches:
+                branches.append(tuple(priced))
+        kept.extend(chosen)
+        chosen_ids = {id(note) for note in chosen}
+        filtered.extend(note for note in region if id(note) not in chosen_ids)
     return Resolved(tuple(kept), tuple(filtered), tuple(branches))
+
+
+def _best_path(region: list[Note]) -> tuple[Note, ...]:
+    """Select the longest path with the smallest ids, retaining exhaustive semantics below the slack."""
+    if any(note.end - note.start <= OVERLAP_SLACK for note in region):
+        return _best([Branch(path) for path in _maximal_paths(region)]).notes
+    starts = [note.start for note in region]
+    size = len(region)
+    counts = [0] * (size + 1)
+    heads = [None] * (size + 1)
+    links = [None] * size
+
+    def preferred(left, right):
+        while left is not None and right is not None:
+            if region[left].id != region[right].id:
+                return region[left].id < region[right].id
+            left, right = links[left], links[right]
+        return left is None
+
+    for index in range(size - 1, -1, -1):
+        following = bisect_left(starts, region[index].end - OVERLAP_SLACK, lo=index + 1)
+        links[index] = heads[following]
+        count = 1 + counts[following]
+        if count > counts[index + 1] or (count == counts[index + 1] and preferred(index, heads[index + 1])):
+            counts[index], heads[index] = count, index
+        else:
+            counts[index], heads[index] = counts[index + 1], heads[index + 1]
+    found = []
+    index = heads[0]
+    while index is not None:
+        found.append(region[index])
+        index = links[index]
+    return tuple(found)
 
 
 def _best(branches: Sequence[Branch]) -> Branch:

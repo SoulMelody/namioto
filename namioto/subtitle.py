@@ -64,9 +64,12 @@ def build_ass(krc: str, data: bytes, *, settings: AssSettings | None = None, wav
     for channel, part in split(krc).items():
         text = part.text
         notes = resolve(
-            TimedNote(note.start, note.start + note.duration, note.pitch, index)
-            for index, note in enumerate(imported.notes)
-            if note.channel == channel
+            (
+                TimedNote(note.start, note.start + note.duration, note.pitch, index)
+                for index, note in enumerate(imported.notes)
+                if note.channel == channel
+            ),
+            include_branches=False,
         )
         rows = faithful.read(text, notes.stream)
         dropped = tuple(ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0)

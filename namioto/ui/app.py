@@ -1036,7 +1036,7 @@ class MainWindow(QMainWindow):
             return Gate((Problem("invalid_lyrics", str(error)),))
         for channel, part in parts.items():
             text = part.text
-            resolved = resolve(tuple(TimedNote(*note) for note in self._target_notes(channel)))
+            resolved = resolve(tuple(TimedNote(*note) for note in self._target_notes(channel)), include_branches=False)
             try:
                 spans = faithful.read(text, resolved.stream)
             except (KrcError, ValueError) as error:
@@ -1876,7 +1876,7 @@ class MainWindow(QMainWindow):
         for channel, part in split_channels(rebuilt).items():
             if channels is not None and channel not in channels:
                 continue
-            resolved = resolve([TimedNote(*note) for note in self._target_notes(channel)])
+            resolved = resolve([TimedNote(*note) for note in self._target_notes(channel)], include_branches=False)
             expected = sorted(
                 part.operations(operations), key=lambda operation: (operation.sounds[0].line, operation.sounds[0].index)
             )

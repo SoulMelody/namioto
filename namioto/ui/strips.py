@@ -254,7 +254,8 @@ class SoundStrip(ViewportStrip):
                     TimedNote(self.view.to_seconds(note.start), self.view.to_seconds(note.end), note.pitch, note.id)
                     for note in self.view.notes()
                     if note.channel == self.view.lyric_lines[found[0]].sounds[found[1]].channel
-                ]
+                ],
+                include_branches=False,
             ).stream
         )
         self._press_note_position = self._note_position(x)

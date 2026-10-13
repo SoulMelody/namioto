@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+from random import Random
+
 from namioto.document import Note
+from namioto.lyricmap import notes as note_stream
 from namioto.lyricmap.notes import components, ordered, overlaps, resolve
 
 
@@ -30,6 +33,43 @@ def test_components_join_every_note_that_reaches_the_region():
     notes = [_note(1, 0.0, 1.0), _note(2, 0.5, 1.5), _note(3, 1.4, 2.0), _note(4, 3.0, 4.0)]
     regions = components(notes)
     assert [[note.id for note in region] for region in regions] == [[1, 2, 3], [4]]
+
+
+def test_best_only_resolution_matches_exhaustive_paths():
+    random = Random(734)
+    for _ in range(300):
+        identifiers = list(range(1, 10))
+        random.shuffle(identifiers)
+        notes = [
+            note_stream.TimedNote(start, start + random.choice((0.0005, 0.001, 0.25, 0.5, 1.0)), 60, identifier)
+            for identifier in identifiers
+            for start in [random.randrange(20) * 0.125]
+        ]
+        expected = resolve(notes)
+        actual = resolve(notes, include_branches=False)
+        assert actual.stream == expected.stream
+        assert actual.filtered == expected.filtered
+        assert actual.branches == ()
+
+
+def test_long_overlap_chains_do_not_enumerate_paths(monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("best-only resolution must not enumerate paths")
+
+    monkeypatch.setattr(note_stream, "_maximal_paths", forbidden)
+    notes = [_note(index + 1, float(index), index + 1.5) for index in range(3000)]
+    found = resolve(notes, include_branches=False)
+    assert found.stream == tuple(notes[::2])
+    assert found.filtered == tuple(notes[1::2])
+    assert found.branches == ()
+
+
+def test_best_only_resolution_retains_custom_costs():
+    notes = [_note(1, 0.0, 1.0), _note(2, 0.5, 1.5), _note(3, 1.2, 2.0)]
+    found = resolve(notes, lambda path: 0.0 if len(path) == 1 else 5.0, include_branches=False)
+    assert found.stream == (notes[1],)
+    assert found.filtered == (notes[0], notes[2])
+    assert found.branches == ()
 
 
 def test_a_note_that_never_conflicts_is_always_kept():

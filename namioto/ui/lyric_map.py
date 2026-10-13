@@ -215,7 +215,7 @@ def _channel_result(
 
 
 def _read_result(text, lines, raw, notes, scores=(), flagged=(), read_confidence=True) -> LyricResult:
-    resolved = resolve([TimedNote(*note) for note in notes])
+    resolved = resolve([TimedNote(*note) for note in notes], include_branches=False)
     spans, ids = faithful.lay_out(text, resolved.stream)
     rows = _rows(lines, spans)
     zero = tuple(tuple(span is None or span[0] is None for span in row) for row in rows)
@@ -259,7 +259,7 @@ def _edit_result(
     text, lines, raw, scores, flagged, notes, anchors, previous, use_constraints, shapes=None
 ) -> LyricResult:
     rows = [_raw_row(raw[index], scores[index] if index < len(scores) else ()) for index in range(len(lines))]
-    resolved = resolve([TimedNote(*note) for note in notes])
+    resolved = resolve([TimedNote(*note) for note in notes], include_branches=False)
     state = previous.state if previous is not None and previous.filtered == resolved.filtered else None
     shapes = (constraints.read(text) if use_constraints else {}) if shapes is None else shapes
     operations = tuple(solve(lines, rows, resolved.stream, anchors, state, shapes))
