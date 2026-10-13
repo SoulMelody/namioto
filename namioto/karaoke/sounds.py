@@ -19,7 +19,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from namioto.karaoke.model import LATIN, Group, KrcError, Line, Unit
+from namioto.karaoke.model import LATIN, Group, KrcError, Line, Lyrics, Unit
 from namioto.karaoke.parser import parse
 from namioto.utils import kana_tokens
 
@@ -95,7 +95,11 @@ def natural_sounds(text: str) -> list[SoundLine]:
     """
     if not text.strip():
         return []
-    lyrics = parse(text)
+    return sound_lines(parse(text))
+
+
+def sound_lines(lyrics: Lyrics) -> list[SoundLine]:
+    """Read natural Sounds from an already parsed KRC."""
     lines: list[SoundLine] = []
     line_index = 0
     for chapter_index, chapter in enumerate(lyrics.chapters):

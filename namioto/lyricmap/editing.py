@@ -9,19 +9,11 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from namioto.karaoke.operations import NoteRun, SoundRef
-from namioto.karaoke.parser import parse
-from namioto.karaoke.sounds import mapping_runs, natural_sounds
+from namioto.lyricmap.faithful import structure
 
 
 def note_runs(text: str) -> tuple[NoteRun, ...]:
-    if not text.strip():
-        return ()
-    parsed = [line for chapter in parse(text).chapters for line in chapter.lines]
-    found = []
-    for row, (line, sounds) in enumerate(zip(parsed, natural_sounds(text), strict=True)):
-        for slots, indices in mapping_runs(line, sounds):
-            found.append(NoteRun(tuple(SoundRef(row, index) for index in indices), slots))
-    return tuple(found)
+    return structure(text).runs
 
 
 def operation_at(runs: Sequence[NoteRun], ref: SoundRef) -> NoteRun | None:

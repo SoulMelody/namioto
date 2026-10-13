@@ -10,13 +10,40 @@ no time to render. Qt-free.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from functools import lru_cache
 
-from namioto.karaoke.operations import Drop, Match, Merge, Operation, SoundRef
+from namioto.karaoke.operations import Drop, Match, Merge, NoteRun, Operation, SoundRef
 from namioto.karaoke.parser import parse
-from namioto.karaoke.sounds import natural_sounds, note_groups
+from namioto.karaoke.sounds import SoundLine, mapping_runs, note_groups, sound_lines
 from namioto.lyricmap.notes import Note
 
 Span = tuple[float, float] | None
+
+
+@dataclass(frozen=True)
+class Structure:
+    lines: tuple[SoundLine, ...]
+    groups: tuple[tuple[tuple[int, tuple[int, ...]], ...], ...]
+    runs: tuple[NoteRun, ...]
+
+
+@lru_cache(maxsize=8)
+def structure(text: str) -> Structure:
+    """The immutable lyric structure shared by faithful reads and hand edits."""
+    if not text.strip():
+        return Structure((), (), ())
+    lyrics = parse(text)
+    lines = tuple(sound_lines(lyrics))
+    parsed = [line for chapter in lyrics.chapters for line in chapter.lines]
+    groups, runs = [], []
+    for row, (sounds, line) in enumerate(zip(lines, parsed, strict=True)):
+        groups.append(tuple((slots, tuple(indices)) for slots, indices in note_groups(line, sounds)))
+        runs.extend(
+            NoteRun(tuple(SoundRef(row, index) for index in indices), slots)
+            for slots, indices in mapping_runs(line, sounds)
+        )
+    return Structure(lines, tuple(groups), tuple(runs))
 
 
 def read(text: str, notes: Sequence[Note]) -> list[list[Span]]:
@@ -30,17 +57,14 @@ def lay_out(text: str, notes: Sequence[Note]) -> tuple[list[list[Span]], list[li
     The ids say which notes a Sound landed on where a span alone cannot: a Sound over several notes
     carries several, and Sounds sharing one note each carry that same id.
     """
-    lines = natural_sounds(text)
-    if not text.strip():
-        return [], []
-    parsed = [line for chapter in parse(text).chapters for line in chapter.lines]
+    layout = structure(text)
     rows: list[list[Span]] = []
     found: list[list[tuple[int, ...]]] = []
     at = 0
-    for sound_line, line in zip(lines, parsed, strict=True):
+    for sound_line, groups in zip(layout.lines, layout.groups, strict=True):
         row: list[Span] = [None] * len(sound_line.sounds)
         ids: list[tuple[int, ...]] = [() for _sound in sound_line.sounds]
-        for slots, indices in note_groups(line, sound_line):
+        for slots, indices in groups:
             taken = list(notes[at : at + slots])
             at += len(taken)
             if not taken:
@@ -61,13 +85,10 @@ def lay_out(text: str, notes: Sequence[Note]) -> tuple[list[list[Span]], list[li
 
 def operations(text: str, notes: Sequence[Note]) -> tuple[Operation, ...]:
     """Derive editable operations from KRC slots; uncovered Sounds have no operation."""
-    if not text.strip():
-        return ()
-    parsed = [line for chapter in parse(text).chapters for line in chapter.lines]
     found: list[Operation] = []
     at = 0
-    for row, (sounds, line) in enumerate(zip(natural_sounds(text), parsed, strict=True)):
-        for slots, indices in note_groups(line, sounds):
+    for row, groups in enumerate(structure(text).groups):
+        for slots, indices in groups:
             refs = tuple(SoundRef(row, index) for index in indices)
             if slots == 0:
                 found.extend(Drop(ref, confirmed=True) for ref in refs)
@@ -85,14 +106,7 @@ def operations(text: str, notes: Sequence[Note]) -> tuple[Operation, ...]:
 
 def consumes(text: str, notes: Sequence[Note]) -> int:
     """How many notes the faithful reading asks for; more than `len(notes)` leaves Sounds untimed."""
-    if not text.strip():
-        return 0
-    parsed = [line for chapter in parse(text).chapters for line in chapter.lines]
-    return sum(
-        slots
-        for sound_line, line in zip(natural_sounds(text), parsed, strict=True)
-        for slots, _indices in note_groups(line, sound_line)
-    )
+    return sum(slots for groups in structure(text).groups for slots, _indices in groups)
 
 
 __all__ = ["Span", "consumes", "lay_out", "operations", "read"]

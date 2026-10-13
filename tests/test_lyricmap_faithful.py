@@ -6,12 +6,37 @@ from __future__ import annotations
 import pytest
 
 from namioto.document import Note
+from namioto.lyricmap import faithful
+from namioto.lyricmap.editing import note_runs
 from namioto.lyricmap.faithful import consumes, lay_out, read
 from namioto.lyricmap.verify import faithful_gate
 
 
 def _notes(*spans):
     return [Note(60, start, end - start, id=index + 1) for index, (start, end) in enumerate(spans)]
+
+
+def test_faithful_reads_share_one_immutable_parse(monkeypatch):
+    faithful.structure.cache_clear()
+    calls = []
+    original = faithful.parse
+
+    def counted(text):
+        calls.append(text)
+        return original(text)
+
+    monkeypatch.setattr(faithful, "parse", counted)
+    text = "あ.2(いう).1え.0"
+    notes = _notes((0.0, 1.0), (1.0, 2.0), (2.0, 3.0))
+    expected = lay_out(text, notes)
+    faithful.operations(text, notes)
+    assert consumes(text, notes) == 3
+    assert len(note_runs(text)) == 3
+    expected[0][0][0] = None
+    assert lay_out(text, notes)[0][0][0] == (0.0, 2.0)
+    assert calls == [text]
+    assert faithful.structure(text) != faithful.structure("あ.1")
+    faithful.structure.cache_clear()
 
 
 def test_a_dot_holds_one_sound_over_several_notes():
