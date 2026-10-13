@@ -11,6 +11,68 @@ from namioto.karaoke.writer import dumps
 from namioto.ui.lyric_map import map_lyrics
 
 
+@pytest.mark.parametrize("changed", ["notes", "raw", "scores", "flagged", "text"])
+def test_faithful_mapping_reuses_only_unchanged_channels(monkeypatch, changed):
+    from namioto.ui import lyric_map
+
+    text = "あ\n@1{い}"
+    request = {
+        "text": text,
+        "lines": natural_sounds(text),
+        "raw": [[(0.0, 1.0)], [(2.0, 1.0)]],
+        "scores": [[0.9], [0.9]],
+        "flagged": [False, False],
+        "notes_by_channel": {0: ((0.0, 1.0, 60, 10),), 1: ((2.0, 3.0, 60, 20),)},
+    }
+    baseline = map_lyrics(**request)
+    if changed == "notes":
+        request["notes_by_channel"] = {0: ((0.1, 1.1, 60, 10),), 1: request["notes_by_channel"][1]}
+    elif changed == "raw":
+        request["raw"] = [[(0.2, 1.0)], request["raw"][1]]
+    elif changed == "scores":
+        request["scores"] = [[0.1], request["scores"][1]]
+    elif changed == "flagged":
+        request["flagged"] = [True, False]
+    else:
+        request["text"] = "あ.0\n@1{い}"
+        request["lines"] = natural_sounds(request["text"])
+    expected = map_lyrics(**request)
+    calls = []
+    original = lyric_map._read_result
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(lyric_map, "_read_result", counted)
+    result = map_lyrics(**request, previous=baseline)
+    assert result == expected
+    assert calls == [True]
+    assert dict(result.channel_results)[1] is dict(baseline.channel_results)[1]
+
+
+def test_preview_reuses_complete_channels_but_finishing_recomputes_preview_confidence():
+    text = "あ\n@1{い}"
+    notes = {0: ((0.0, 1.0, 60, 10),), 1: ((2.0, 3.0, 60, 20),)}
+    raw = [[(0.0, 1.0)], [(2.0, 1.0)]]
+    baseline = map_lyrics(text, natural_sounds(text), raw, notes_by_channel=notes)
+    changed = "あ.0\n@1{い}"
+    preview = map_lyrics(
+        changed,
+        natural_sounds(changed),
+        raw,
+        notes_by_channel=notes,
+        previous=baseline,
+        read_confidence=False,
+    )
+    assert dict(preview.channel_results)[1] is dict(baseline.channel_results)[1]
+    assert not dict(preview.channel_results)[0].confidence_ready
+    complete = map_lyrics(changed, natural_sounds(changed), raw, notes_by_channel=notes, previous=preview)
+    assert complete == map_lyrics(changed, natural_sounds(changed), raw, notes_by_channel=notes)
+    assert dict(complete.channel_results)[0].confidence_ready
+    assert complete.readings
+
+
 @pytest.mark.parametrize("text", ["@c0{あい}", "@c2{あい}", "@c15{文字[あ,い]}"])
 def test_color_tags_preserve_mapping_and_roundtrip(text):
     lines = natural_sounds(text)

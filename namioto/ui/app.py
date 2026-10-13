@@ -1551,10 +1551,7 @@ class MainWindow(QMainWindow):
             "raw": raw,
             "scores": tuple(tuple(row) for row in (self._lyric_scores or ())),
             "flagged": tuple(self._lyric_flags),
-            "notes_by_channel": {
-                channel: tuple(self._target_notes(channel))
-                for channel in {sound.channel for line in lines for sound in line.sounds}
-            },
+            "notes_by_channel": self._notes_by_channel({sound.channel for line in lines for sound in line.sounds}),
             "mode": "read",
         }
 
@@ -1610,6 +1607,8 @@ class MainWindow(QMainWindow):
     def _start_lyric_mapper(self, request) -> None:
         revision, request = request
         thread = LyricMapper(revision, request, self)
+        if request.get("mode") == "read":
+            thread.previous = self._lyric_map_result
         thread.mapped.connect(self._on_lyric_mapping)
         thread.failed.connect(partial(self._on_lyric_mapping_failed, revision))
         thread.finished.connect(partial(self._on_lyric_mapper_finished, thread))
@@ -1675,12 +1674,16 @@ class MainWindow(QMainWindow):
 
     def _target_notes(self, channel: int = 0) -> list[tuple[float, float, int, int]]:
         """One channel's notes in seconds, ordered by time then pitch then stable id."""
-        found = [
-            (self.view.to_seconds(note.start), self.view.to_seconds(note.end), note.pitch, note.id)
-            for note in self.view.notes()
-            if note.channel == channel
-        ]
-        return sorted(found, key=lambda note: (note[0], note[1], note[2], note[3]))
+        return list(self._notes_by_channel((channel,))[channel])
+
+    def _notes_by_channel(self, channels) -> dict:
+        found = {channel: [] for channel in channels}
+        for note in self.view.notes():
+            if note.channel in found:
+                found[note.channel].append(
+                    (self.view.to_seconds(note.start), self.view.to_seconds(note.end), note.pitch, note.id)
+                )
+        return {channel: tuple(sorted(notes)) for channel, notes in found.items()}
 
     def _open_lyrics(self) -> None:
         """Read a text into a `.krc` with a model, or by pasting what a web model answered."""
@@ -2000,6 +2003,7 @@ class MainWindow(QMainWindow):
                 text=text,
                 lines=faithful.structure(text).lines,
                 read_confidence=False,
+                previous=self._lyric_map_result,
             )
             mapping = map_lyrics(**snapshot)
         except (KrcError, ValueError) as error:

@@ -43,6 +43,8 @@ class LyricResult:
     state: MappingState | None = None
     channel_errors: tuple = ()
     channel_results: tuple = ()
+    read_key: tuple = ()
+    confidence_ready: bool = False
 
 
 def map_lyrics(
@@ -87,8 +89,22 @@ def map_lyrics(
     lines = list(lines)
     raw = [[(span[0], span[1]) for span in row] for row in raw]
     if mode == "read":
+        key = (
+            text,
+            tuple(lines),
+            tuple(tuple(row) for row in raw),
+            tuple(tuple(row) for row in scores),
+            tuple(flagged),
+            tuple(notes),
+        )
+        if previous is not None and previous.read_key == key and (not read_confidence or previous.confidence_ready):
+            return previous
         try:
-            return _read_result(text, lines, raw, notes, scores, flagged, read_confidence)
+            return replace(
+                _read_result(text, lines, raw, notes, scores, flagged, read_confidence),
+                read_key=key,
+                confidence_ready=read_confidence,
+            )
         except (MappingError, ValueError) as error:
             return _failed(lines, raw, str(error))
     try:
@@ -145,6 +161,7 @@ def _channel_result(
                 part.flags(flagged),
                 notes=notes.get(channel, ()),
                 mode="read",
+                previous=previous_results.get(channel),
                 read_confidence=read_confidence,
             )
         else:
@@ -344,10 +361,12 @@ class LyricMapper(QThread):
         super().__init__(parent)
         self.revision = revision
         self.request = request
+        self.previous = None
 
     def run(self) -> None:
         try:
-            result = map_lyrics(**self.request)
+            request = dict(self.request, previous=self.previous) if self.request.get("mode") == "read" else self.request
+            result = map_lyrics(**request)
             self.mapped.emit((self.revision, result))
         except Exception as error:  # noqa: BLE001 - the worker reports whatever the mapping raised
             self.failed.emit(f"{type(error).__name__}: {error}")

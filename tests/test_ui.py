@@ -6032,6 +6032,24 @@ def test_merging_two_sounds_confirms_the_pair(own_window, tmp_path) -> None:
     assert own_window.view.lyric_times == (((0.0, 0.5), (0.5, 1.0)),)
 
 
+def test_mapping_snapshot_collects_all_channels_in_one_note_pass(own_window, monkeypatch):
+    view = own_window.view
+    view.set_notes(((60, 0.0, 1.0, 0), (62, 2.0, 1.0, 1)))
+    lines = natural_sounds("あ\n@1{い}")
+    calls = []
+    original = view.notes
+
+    def counted():
+        calls.append(True)
+        return original()
+
+    monkeypatch.setattr(view, "notes", counted)
+    request = own_window._mapping_request(lines)
+    assert set(request["notes_by_channel"]) == {0, 1}
+    assert all(len(notes) == 1 for notes in request["notes_by_channel"].values())
+    assert calls == [True]
+
+
 def test_lyric_preview_defers_confidence_until_the_gesture_finishes(own_window, tmp_path, monkeypatch):
     from namioto.lyricmap import confidence
     from namioto.lyricmap.editing import detach, note_runs

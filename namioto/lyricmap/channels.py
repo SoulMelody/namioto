@@ -7,6 +7,7 @@ Contiguous channel runs stay separate so a solver cannot merge across another vo
 """
 
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from itertools import groupby
 
 from namioto.karaoke.model import Chapter, Group, KrcError, Line, Lyrics, Ruby, Unit, Word
@@ -51,6 +52,11 @@ class ChannelSlice:
 
 
 def split(text: str) -> dict[int, ChannelSlice]:
+    return dict(_slices(text))
+
+
+@lru_cache(maxsize=8)
+def _slices(text: str) -> tuple[tuple[int, ChannelSlice], ...]:
     layout = structure(text)
     for run in layout.runs:
         channels = {layout.lines[ref.line].sounds[ref.index].channel for ref in run.sounds}
@@ -89,4 +95,4 @@ def split(text: str) -> dict[int, ChannelSlice]:
         result[channel] = ChannelSlice(
             channel, dumps(Lyrics([Chapter(literal)]), dotted=True), tuple(projected), tuple(refs)
         )
-    return result
+    return tuple(result.items())
