@@ -557,7 +557,17 @@ class PianoRollView(QGraphicsView):
             self.load_lyrics(lines, times)
 
     def load_lyrics(
-        self, lines, times, red=None, raw=None, zero=None, group=None, mapped=None, editable=True, operations=None
+        self,
+        lines,
+        times,
+        red=None,
+        raw=None,
+        zero=None,
+        group=None,
+        mapped=None,
+        editable=True,
+        operations=None,
+        filtered=None,
     ) -> None:
         """The lyrics a `.krc` or a project brings in, with no undo step of their own.
 
@@ -568,6 +578,18 @@ class PianoRollView(QGraphicsView):
         taken as sound, without `raw` evidence is captured from `times`, and without `mapped` no
         note is taken as a lyric NOTE.
         """
+        fields = (
+            "_lines",
+            "_lyric_editable",
+            "_lyric_operations",
+            "_lyric_times",
+            "_lyric_raw",
+            "_lyric_red",
+            "_lyric_zero",
+            "_lyric_group",
+            "_lyric_mapped",
+        )
+        previous = tuple(getattr(self, name) for name in fields)
         self._lines = tuple(lines)
         self._lyric_editable = bool(editable)
         if operations is not None:
@@ -594,6 +616,11 @@ class PianoRollView(QGraphicsView):
             if mapped is not None
             else tuple(tuple(() for _span in row) for row in times)
         )
+        filtering_changed = filtered is not None and self._set_filtered_notes(filtered)
+        if previous == tuple(getattr(self, name) for name in fields):
+            if filtering_changed:
+                self._sync_channel_visuals()
+            return
         self._sync_channel_visuals()
         self._sync_lyric_highlight()
         self.lyrics_changed.emit()
@@ -678,10 +705,19 @@ class PianoRollView(QGraphicsView):
 
     def set_filtered_notes(self, ids) -> None:
         """Mark the target channel's notes a conflict kept out of the preview stream."""
+        if self._set_filtered_notes(ids):
+            self._sync_channel_visuals()
+
+    def _set_filtered_notes(self, ids) -> bool:
         wanted = set(ids)
+        changed = False
         for item in self._items:
-            item.filtered = item.id in wanted
-        self._sync_channel_visuals()
+            filtered = item.id in wanted
+            if item.filtered != filtered:
+                item.filtered = filtered
+                item.update()
+                changed = True
+        return changed
 
     def _add_item(self, note: Note) -> NoteItem:
         item = NoteItem(note)
@@ -897,15 +933,20 @@ class PianoRollView(QGraphicsView):
                     text += f"{left}{sound.base}{right}"
                 runs.append(((" " if runs else "") + prefix + text, zero))
             text = "".join(text for text, _zero in runs)
-            note.lyric_runs = tuple(runs) if self.note_lyrics_visible else ()
-            note.lyric_text = text if self.note_lyrics_visible else ""
+            lyric_runs = tuple(runs) if self.note_lyrics_visible else ()
+            lyric_text = text if self.note_lyrics_visible else ""
+            if note.lyric_runs != lyric_runs or note.lyric_text != lyric_text:
+                note.lyric_runs = lyric_runs
+                note.lyric_text = lyric_text
+                note.update()
             warning = (
                 tr("Overlapping note: excluded from lyric mapping. Move, shorten or remove the overlapping notes.")
                 if note.filtered
                 else ""
             )
-            note.setToolTip("\n".join(part for part in (text, warning) if part))
-            note.update()
+            tooltip = "\n".join(part for part in (text, warning) if part)
+            if note.toolTip() != tooltip:
+                note.setToolTip(tooltip)
             note.fill, note.edge_light, note.edge_dark = theme.note_shades(self.channel_color(note.channel))
             channel = self._channel(note.channel)
             note.setVisible(self.edit_mode and (channel.visible if channel else True))

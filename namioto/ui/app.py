@@ -1668,9 +1668,9 @@ class MainWindow(QMainWindow):
             mapped=result.mapped,
             editable=True,
             operations=result.operations,
+            filtered=(note.id for note in result.filtered),
         )
         self.sound_strip.setVisible(bool(result.lines))
-        self.view.set_filtered_notes(note.id for note in result.filtered)
         self.edit.align.setEnabled(self.project_path is not None)
 
     def _target_notes(self, channel: int = 0) -> list[tuple[float, float, int, int]]:

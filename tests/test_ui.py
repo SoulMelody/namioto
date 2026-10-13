@@ -2653,6 +2653,36 @@ def row_colors(image: QImage, row: int) -> list[int]:
     return [image.pixel(x, row) for x in range(image.width())]
 
 
+def test_loading_lyrics_batches_filtering_and_skips_unchanged_refreshes(own_window, monkeypatch):
+    view = own_window.view
+    note = view.add_note(60, 0.0, 1.0)
+    lines = natural_sounds("あ")
+    calls, changes = [], []
+    original = view._sync_channel_visuals
+
+    def sync():
+        calls.append(True)
+        original()
+
+    monkeypatch.setattr(view, "_sync_channel_visuals", sync)
+    view.lyrics_changed.connect(lambda: changes.append(True))
+    request = {"lines": lines, "times": [[(0.0, 1.0)]], "mapped": [[(note.id,)]], "filtered": (note.id,)}
+    view.load_lyrics(**request)
+    assert calls == [True]
+    assert changes == [True]
+    assert note.filtered
+    assert "Overlapping note" in note.toolTip()
+    view.load_lyrics(**request)
+    view.set_filtered_notes((note.id,))
+    assert calls == [True]
+    assert changes == [True]
+    view.load_lyrics(**dict(request, filtered=()))
+    assert calls == [True, True]
+    assert changes == [True]
+    assert not note.filtered
+    assert "Overlapping note" not in note.toolTip()
+
+
 def test_filtered_note_has_a_cosmetic_border_and_explanatory_tooltip(window, monkeypatch) -> None:
     view = window.view
     note = view.add_note(69, 0.0, 2.0)
