@@ -947,7 +947,10 @@ class PianoRollView(QGraphicsView):
             tooltip = "\n".join(part for part in (text, warning) if part)
             if note.toolTip() != tooltip:
                 note.setToolTip(tooltip)
-            note.fill, note.edge_light, note.edge_dark = theme.note_shades(self.channel_color(note.channel))
+            shades = theme.note_shades(self.channel_color(note.channel))
+            if (note.fill, note.edge_light, note.edge_dark) != shades:
+                note.fill, note.edge_light, note.edge_dark = shades
+                note.update()
             channel = self._channel(note.channel)
             note.setVisible(self.edit_mode and (channel.visible if channel else True))
             note.setZValue(note.channel)

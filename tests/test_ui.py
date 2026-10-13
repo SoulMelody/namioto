@@ -2653,6 +2653,20 @@ def row_colors(image: QImage, row: int) -> list[int]:
     return [image.pixel(x, row) for x in range(image.width())]
 
 
+def test_note_visual_sync_repaints_only_changed_lyrics_or_colours(own_window, monkeypatch):
+    view = own_window.view
+    note = view.add_note(60, 0.0, 1.0)
+    calls = []
+    monkeypatch.setattr(note, "update", lambda: calls.append(True))
+    view._sync_channel_visuals()
+    assert calls == []
+    view.set_channel_field(0, color="#ff8800")
+    assert note.fill.name() == "#ff8800"
+    assert calls == [True]
+    view._sync_channel_visuals()
+    assert calls == [True]
+
+
 def test_loading_lyrics_batches_filtering_and_skips_unchanged_refreshes(own_window, monkeypatch):
     view = own_window.view
     note = view.add_note(60, 0.0, 1.0)
