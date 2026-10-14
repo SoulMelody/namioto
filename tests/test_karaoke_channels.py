@@ -12,6 +12,17 @@ from namioto.karaoke.operations import Match, SoundRef
 from namioto.karaoke.sounds import natural_sounds
 
 
+@pytest.mark.parametrize("text", ["@2{@c3{あ}い}う", "@2{@c3{あ}い}@c4{う}"])
+def test_color_and_owner_nesting_round_trips(text):
+    model = parse(text)
+    assert asdict(parse(dumps(model, dotted=True))) == asdict(model)
+    sounds = natural_sounds(text)[0].sounds
+    assert (sounds[0].channel, sounds[0].color_channel) == (2, 3)
+    assert sounds[1].channel == 2
+    assert sounds[1].color_channel is None
+    assert sounds[2].channel == 0
+
+
 def structure(value):
     if isinstance(value, dict):
         return {key: structure(item) for key, item in value.items() if key != "channel"}

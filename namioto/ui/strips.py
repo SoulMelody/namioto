@@ -32,6 +32,7 @@ class SoundStrip(ViewportStrip):
 
     lyric_action_requested = Signal(str, int, int)
     channel_requested = Signal(int, int, int)
+    editor_requested = Signal(object)
     mapping_drag_started = Signal()
     mapping_preview_requested = Signal(object)
     mapping_drag_finished = Signal(bool)
@@ -392,6 +393,9 @@ class SoundStrip(ViewportStrip):
         raw.toggled.connect(self._toggle_raw)
         menu.addAction(raw)
         found = self._sound_at(event.pos().x(), event.pos().y())
+        editor = menu.addAction(tr("Edit lyrics…"))
+        editor.setEnabled(not self.view.lyric_mapping_pending and not self.view.gesture_active)
+        editor.triggered.connect(lambda: self.editor_requested.emit(found[0] if found else None))
         if found is not None:
             channels = menu.addMenu(tr("Lyric channel"))
             channels.setEnabled(not self.view.lyric_mapping_pending and not self.view.gesture_active)

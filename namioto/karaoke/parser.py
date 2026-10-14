@@ -103,7 +103,7 @@ CHANNEL_BLOCK = re.compile(r"@(c?)(\d+)\{")
 def _unwrap(text: str) -> tuple[str, list[tuple[int, int | None]], list[int]]:
     chars, channels, positions = [], [], []
     channel = (0, None)
-    opened = False
+    opened = []
     at = 0
     while at < len(text):
         if text[at] == "#":
@@ -120,18 +120,18 @@ def _unwrap(text: str) -> tuple[str, list[tuple[int, int | None]], list[int]]:
             continue
         match = CHANNEL_BLOCK.match(text, at) if text[at] == "@" else None
         if match:
-            if opened:
-                raise KrcError("channel blocks cannot be nested")
+            kind = bool(match[1])
+            if opened and (not kind or any(previous_kind for previous_kind, _ in opened)):
+                raise KrcError("only a color block inside an ownership block may be nested")
             number = int(match[2])
             if not 0 <= number < 16:
                 raise KrcError("a channel must be between 0 and 15")
-            channel = (0, number) if match[1] else (number, None)
-            opened = True
+            opened.append((kind, channel))
+            channel = (channel[0], number) if kind else (number, channel[1])
             at = match.end()
             continue
         if text[at] == "}" and opened:
-            opened = False
-            channel = (0, None)
+            _, channel = opened.pop()
             at += 1
             continue
         chars.append(text[at])

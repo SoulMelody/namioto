@@ -79,6 +79,7 @@ from namioto.ui.controls import ControlArea, EditBar, MixBar, TransportBar
 from namioto.ui.ipc_commands import WindowBridge
 from namioto.ui.ipc_server import IpcServer
 from namioto.ui.loading import LoadingThread
+from namioto.ui.lyric_editor import LyricEditor
 from namioto.ui.lyric_map import LyricMapper, map_lyrics
 from namioto.ui.lyrics_dialog import LyricsDialog, LyricsWatcher
 from namioto.ui.midi_dialog import MidiImportDialog
@@ -380,6 +381,9 @@ class MainWindow(QMainWindow):
         self.sound_strip.channel_requested.connect(
             lambda line, index, channel: self._set_lyric_channel(line, channel, index=index)
         )
+        self.lyric_editor = LyricEditor(self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.lyric_editor)
+        self.sound_strip.editor_requested.connect(self.lyric_editor.open_at)
         self.view.lyric_text_changed.connect(self._restore_lyric_text)
         self.transport.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
         self.transport.lyric_scope.toggled.connect(self.sound_strip.set_current_channel_only)
@@ -1936,6 +1940,45 @@ class MainWindow(QMainWindow):
         if self._lyrics_directory is not None:
             self._prepare_lyrics_copy()
 
+    def _apply_lyric_editor(self, source, text, note_ids, channel):
+        if (
+            source != self.lyrics_text
+            or self._lyric_migration_error
+            or self.view.lyric_mapping_pending
+            or self.view.gesture_active
+        ):
+            QMessageBox.warning(
+                self, i18n.tr("Edit lyrics"), i18n.tr("Lyrics changed or are busy. Reopen the editor and try again.")
+            )
+            return False
+        try:
+            lines = natural_sounds(text)
+            faithful.structure(text)
+        except ValueError as error:
+            QMessageBox.warning(self, i18n.tr("Edit lyrics"), str(error))
+            return False
+        notes = [item for item in self.view.notes() if item.note.id in note_ids]
+        if note_ids and (self.view._locked(channel) or any(self.view._locked(item.channel) for item in notes)):
+            QMessageBox.warning(self, i18n.tr("Edit lyrics"), i18n.tr("A source or destination channel is locked."))
+            return False
+        with self.view.lyric_edit(i18n.tr("Edit lyrics")):
+            for item in notes:
+                item.note.channel = channel
+            self.lyrics_text = text
+            self.view.lyric_text = text
+            self._lyric_key = text_key(text)
+            same_sounds = [[sound.reading for sound in line.sounds] for line in lines] == [
+                [sound.reading for sound in line.sounds] for line in self.view.lyric_lines
+            ]
+            raw = self.view.lyric_raw if same_sounds else ()
+            self.view.load_lyrics(lines, (), raw=raw, operations=())
+            if notes:
+                self.view._sync_channel_visuals()
+                self.view.notes_changed.emit()
+        self._mark_dirty()
+        self._remap_lyrics()
+        return True
+
     def _set_lyric_channel(self, line: int, channel: int, *, index: int | None = None) -> None:
         if (
             self._lyric_migration_error
@@ -1955,23 +1998,7 @@ class MainWindow(QMainWindow):
             rows[line].track = channel
         else:
             set_sound_channel(rows[line], index, channel)
-        text = dumps(parsed, dotted=True)
-        with self.view.lyric_edit(i18n.tr("Change lyric channel")):
-            self.lyrics_text = text
-            self.view.lyric_text = text
-            self._lyric_key = text_key(text)
-            self.view.load_lyrics(
-                natural_sounds(text),
-                self.view.lyric_times,
-                raw=self.view.lyric_raw,
-                operations=[
-                    op
-                    for op in self.view.lyric_operations
-                    if all(ref.line != line or (index is not None and ref.index != index) for ref in op.sounds)
-                ],
-            )
-        self._mark_dirty()
-        self._remap_lyrics()
+        self._apply_lyric_editor(text, dumps(parsed, dotted=True), set(), None)
 
     def _begin_lyric_drag(self) -> None:
         if self._lyric_map_result is None:

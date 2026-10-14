@@ -31,6 +31,21 @@ LOCALES = {"en": "en_US", "zh": "zh_CN"}
 
 CATALOGS: dict[str, dict[str, str]] = {
     "zh": {
+        "Edit lyrics…": "编辑歌词…",
+        "Select all lines in channel": "选择此通道的全部歌词行",
+        "Move linked notes too": "同步移动关联音符",
+        "Move to channel": "移动到通道",
+        "Set lyric color": "设置歌词颜色",
+        "Follow lyric channel": "跟随歌词所属通道",
+        "Text": "正文",
+        "Ruby (comma-separated parts)": "注音（以半角逗号分段）",
+        "Text must not be empty.": "正文不能为空。",
+        "Drag to select. Right-click for channels and colors. Double-click text or ruby to edit.": "拖动选择内容，右键修改通道和颜色，双击正文或注音原位编辑。",
+        "Drag to select · Right-click to move · Double-click text/ruby to edit": "拖动选择 · 右键移动通道 · 双击正文／注音编辑",
+        "NOTE consumption changed. Following lyrics may map to different notes. Apply?": "NOTE 槽消费结构已改变，后续歌词可能对应到不同的音符。是否应用？",
+        "A linked note is shared with unselected lyrics. Expand the selection or disable moving notes.": "关联音符与未选中的歌词共用。请扩大选区或取消同步移动音符。",
+        "Lyrics changed or are busy. Reopen the editor and try again.": "歌词已改变或正在处理中，请重新打开编辑器后重试。",
+        "A source or destination channel is locked.": "源通道或目标通道已锁定。",
         # settings window and its pages
         "Overlapping note: excluded from lyric mapping. Move, shorten or remove the overlapping notes.": "音符重叠：此音符已被排除在歌词映射之外。请移动、缩短或删除相互重叠的音符。",
         "Settings": "设置",
