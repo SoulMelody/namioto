@@ -83,12 +83,18 @@ def save(path: str | Path, text: str) -> Path:
     return write_text(path, text)
 
 
+def normalize_plain_text(text: str) -> str:
+    """Make literal lyric punctuation safe for KRC before adding annotations."""
+    text = re.sub(r"\.+", lambda match: "．" if len(match[0]) == 1 else "…" if len(match[0]) < 5 else "……", text)
+    return text.translate(str.maketrans("#[]()-,{}@", "＃［］（）－，｛｝＠"))
+
+
 def build_prompt(lyrics: str, prompt: str = DEFAULT_PROMPT, retry: str = "") -> str:
     """The prompt that goes to a model, with the text to annotate under it.
 
     `retry` is what an earlier refusal said, appended so a second try knows what to fix.
     """
-    text = f"{prompt}\n{lyrics}"
+    text = f"{prompt}\n{normalize_plain_text(lyrics)}"
     return f"{text}\n\n{retry}" if retry else text
 
 
@@ -115,7 +121,7 @@ def conversion_error(text: str, source: str) -> str:
     except KrcError as error:
         return str(error)
     spoken = "".join(unit.text for chapter in converted.chapters for line in chapter.lines for unit in line.units)
-    if _squeezed(spoken) != _squeezed(source):
+    if _squeezed(spoken) != _squeezed(normalize_plain_text(source)):
         return "the answer changed the lyrics instead of annotating them"
     unread = [
         unit.text
@@ -166,6 +172,7 @@ def convert(
     as it arrives - `kind` being `"reasoning"` or `"content"` - and the answer is still returned.
     Without an `opener`, the request goes through the proxy named in the settings.
     """
+    lyrics = normalize_plain_text(lyrics)
     body: dict[str, Any] = {
         "model": model,
         "temperature": temperature,

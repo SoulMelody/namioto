@@ -292,7 +292,7 @@ class LyricsDialog(QDialog):
         if not text:
             self.status_label.setText(tr("That file could not be read"))
             return
-        self.source.setPlainText(text)
+        self.source.setPlainText(lyrics.normalize_plain_text(text))
         self.status_label.setText(tr("Loaded {name} — convert it, or copy the prompt", name=Path(chosen).name))
 
     def _copy_prompt(self) -> None:

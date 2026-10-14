@@ -91,6 +91,39 @@ def convert(payload=None, error=None, **fields):
     return text, opener.calls[0]
 
 
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("#[]()-,{}@", "＃［］（）－，｛｝＠"),
+        (".", "．"),
+        ("..", "…"),
+        ("...", "…"),
+        ("....", "…"),
+        (".....", "……"),
+        ("..........", "……"),
+        ("a.b..c...d....e.....\n---", "a．b…c…d…e……\n－－－"),
+    ],
+)
+def test_plain_text_punctuation_is_safe_for_krc(source, expected):
+    assert lyrics.normalize_plain_text(source) == expected
+    assert lyrics.normalize_plain_text(expected) == expected
+    assert lyrics.syntax_error(expected) == ""
+    assert lyrics.conversion_error(expected, source) == ""
+
+
+def test_annotation_uses_normalized_plain_text():
+    source = "歌[1]...#"
+    normalized = "歌［1］…＃"
+    annotated = "歌[うた]［1］…＃"
+    assert lyrics.build_prompt(source) == f"{lyrics.DEFAULT_PROMPT}\n{normalized}"
+    opener = fake_opener(answer(annotated))
+    assert lyrics.convert(source, base_url=BASE, api_key=KEY, model="m", opener=opener) == annotated
+    body = json.loads(opener.calls[0]["request"].data)
+    assert body["messages"][1]["content"] == normalized
+    assert lyrics.conversion_error(annotated, source) == ""
+    assert lyrics.conversion_error("歌[うた]［2］…＃", source)
+
+
 def test_a_project_keeps_its_lyrics_beside_it() -> None:
     assert lyrics.path_for("/tmp/song.nto") == Path("/tmp/song.krc")
     assert lyrics.path_for("C:/work/うた.nto").name == "うた.krc"
