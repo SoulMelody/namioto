@@ -57,6 +57,29 @@ def test_paste_snaps_the_anchor_and_the_spacing() -> None:
     assert [(note.pitch, note.start) for note in view.notes()[2:]] == [(60, 2.0), (62, 3.5)]
 
 
+@pytest.mark.parametrize("bpm", [90.0, 120.0, 180.0])
+@pytest.mark.parametrize("grid_offset", [-0.07, 0.07])
+def test_paste_aligns_to_the_offset_grid_at_the_current_bpm(bpm, grid_offset) -> None:
+    view = PianoRollView()
+    view.apply_interaction(Interaction.editing_with(Tool.PEN))
+    view.set_channels((Channel(channel=0),))
+    view.bpm = bpm
+    view.set_offset(grid_offset)
+    view.snap = 0.5
+    view.add_note(60, 2.0, 1.0)
+    view.add_note(62, 3.3, 0.5)
+    for note in view.notes():
+        note.setSelected(True)
+    view.set_playhead(view.to_seconds(4.1) + grid_offset)
+
+    assert view.copy_selection()
+    assert view.paste_notes()
+
+    pasted = view.notes()[2:]
+    assert [note.start for note in pasted] == pytest.approx([4.0 + view.offset_beats, 5.5 + view.offset_beats])
+    assert [note.duration for note in pasted] == [1.0, 0.5]
+
+
 def test_paste_without_a_copy_does_nothing() -> None:
     view = PianoRollView()
     view.apply_interaction(Interaction.editing_with(Tool.PEN))

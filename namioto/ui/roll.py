@@ -1096,7 +1096,7 @@ class PianoRollView(QGraphicsView):
         if not self.edit_mode or not self._clipboard:
             return False
         known = {channel.channel for channel in self.channels}
-        anchor = self._snap_beats((self.playhead or 0.0) * self.bpm / 60.0)
+        anchor = self._snap_beats(self.to_beats(self.playhead or 0.0))
         placed = False
         with self._edit("Paste notes"):
             for pitch, offset, duration, channel in self._clipboard:
@@ -1106,7 +1106,7 @@ class PianoRollView(QGraphicsView):
                 if not placed:
                     self._clear_selection()
                 placed = True
-                note = Note(pitch, anchor + self._snap_beats(offset), duration, place)
+                note = Note(pitch, anchor + self.snap_movement_beats(offset), duration, place)
                 self.document.add_note(note)
                 self._add_item(note).setSelected(True)
             self._update_scene()
