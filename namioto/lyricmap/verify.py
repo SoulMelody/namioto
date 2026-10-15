@@ -115,28 +115,27 @@ def faithful_gate(
     filtered: Sequence = (),
     subtitle: bool = False,
     dropped: Sequence[SoundRef] = (),
-    required_slots: int = 0,
 ) -> Gate:
     """The faithful subtitle gate checks NOTE coverage without solver operations.
 
     The KRC itself may always be copied, so this concerns the subtitle alone: the target channel must
     have notes, no conflict may have filtered one out, and every Sound it is to render must have a
-    definite time. `required_slots` detects NOTE counts that were truncated for display. Explicit
-    `.0` Sounds are excluded from the missing-time check.
+    definite time. A Sound may use fewer remaining notes than requested; explicit `.0` Sounds are
+    excluded from the missing-time check.
     """
     issues: list[Problem] = []
     if not notes:
         issues.append(Problem(codes.NO_TARGET_NOTES, "the target channel has no notes"))
     issues.extend(Problem(codes.FILTERED_NOTE, "a note is kept out by a conflict", (note.id,)) for note in filtered)
     omitted = set(dropped)
-    missing = any(
-        span is None or span[0] is None or span[1] is None
+    missing = tuple(
+        SoundRef(line, index)
         for line, row in enumerate(spans)
         for index, span in enumerate(row)
-        if SoundRef(line, index) not in omitted
+        if SoundRef(line, index) not in omitted and (span is None or span[0] is None or span[1] is None)
     )
-    if missing or required_slots > len(notes):
-        issues.append(Problem(codes.INCOMPLETE_ALIGNMENT, "a sound has unmatched NOTE slots"))
+    if missing:
+        issues.append(Problem(codes.INCOMPLETE_ALIGNMENT, "a sound has unmatched NOTE slots", missing))
     if subtitle and all(span is None for row in spans for span in row):
         issues.append(Problem(codes.NO_LYRIC_SOUNDS, "the subtitle would have nothing to show"))
     return Gate(tuple(issues))

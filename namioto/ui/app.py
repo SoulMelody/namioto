@@ -1014,6 +1014,7 @@ class MainWindow(QMainWindow):
             target = target.with_name(target.name + lyrics.SUFFIX)
         gate = self._verification()
         if not gate.open():
+            self._locate_export_problem(gate)
             self.statusBar().showMessage(self._gate_message(gate))
             return False
         try:
@@ -1050,16 +1051,21 @@ class MainWindow(QMainWindow):
                 continue
             if subtitle:
                 dropped = tuple(ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0)
-                issues.extend(
-                    faithful_gate(
-                        spans,
-                        resolved.stream,
-                        filtered=resolved.filtered,
-                        subtitle=True,
-                        dropped=dropped,
-                        required_slots=faithful.consumes(text, resolved.stream),
-                    ).problems
+                gate = faithful_gate(
+                    spans,
+                    resolved.stream,
+                    filtered=resolved.filtered,
+                    subtitle=True,
+                    dropped=dropped,
                 )
+                for problem in gate.problems:
+                    if problem.code == "incomplete_alignment":
+                        refs = tuple(part.refs[ref.line][ref.index] for ref in problem.refs)
+                    elif problem.code == "filtered_note":
+                        refs = problem.refs
+                    else:
+                        refs = tuple(ref for row in part.refs for ref in row)[:1]
+                    issues.append(Problem(problem.code, problem.message, refs))
         if issues:
             return Gate(tuple(issues))
         return Gate((), self.lyrics_text)
@@ -1067,7 +1073,20 @@ class MainWindow(QMainWindow):
     def _gate_message(self, gate) -> str:
         counts = gate.counts()
         summary = ", ".join(f"{code} ×{count}" for code, count in sorted(counts.items()))
+        locations = [
+            (ref.line, ref.index) for problem in gate.problems for ref in problem.refs if isinstance(ref, SoundRef)
+        ]
+        if locations:
+            row, index = locations[0]
+            summary += i18n.tr(" (line {line}, sound {sound})", line=row + 1, sound=index + 1)
         return i18n.tr("The mapping cannot be exported: {problems}", problems=summary)
+
+    def _locate_export_problem(self, gate) -> None:
+        for problem in gate.problems:
+            for ref in problem.refs:
+                if isinstance(ref, SoundRef):
+                    self.sound_strip.reveal_sound(ref.line, ref.index)
+                    return
 
     def _on_export_ass(self) -> bool:
         """Write the lyrics out as a karaoke subtitle, timed by the mapping the strip shows."""
@@ -1080,6 +1099,7 @@ class MainWindow(QMainWindow):
             return False
         gate = self._verification(subtitle=True)
         if not gate.open():
+            self._locate_export_problem(gate)
             self.statusBar().showMessage(self._gate_message(gate))
             return False
         dialog = AssDialog(self.settings, self)
@@ -1107,6 +1127,7 @@ class MainWindow(QMainWindow):
         """Export the current KRC first, then MIDI, as one GUI-thread snapshot."""
         gate = self._verification(subtitle=True)
         if not gate.open():
+            self._locate_export_problem(gate)
             raise ValueError(self._gate_message(gate))
         krc = gate.canonical
         data = midi.to_bytes(**self._midi_export())

@@ -79,7 +79,6 @@ def build_ass(krc: str, data: bytes, *, settings: AssSettings | None = None, wav
             filtered=notes.filtered,
             subtitle=True,
             dropped=dropped,
-            required_slots=faithful.consumes(text, notes.stream),
         )
         if not gate.open():
             raise ValueError(f"channel {channel}: " + "; ".join(problem.message for problem in gate.problems))

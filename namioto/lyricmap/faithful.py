@@ -105,7 +105,7 @@ def operations(text: str, notes: Sequence[Note]) -> tuple[Operation, ...]:
 
 
 def consumes(text: str, notes: Sequence[Note]) -> int:
-    """How many notes the faithful reading asks for; more than `len(notes)` leaves Sounds untimed."""
+    """How many NOTE slots the lyrics request, before truncating to the available notes."""
     return sum(slots for groups in structure(text).groups for slots, _indices in groups)
 
 

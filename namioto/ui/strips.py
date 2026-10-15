@@ -72,6 +72,18 @@ class SoundStrip(ViewportStrip):
         base = self.origin().x() if origin is None else origin
         return base + self.view.mapFromScene(QPointF(self.view.to_beats(seconds), 0)).x()
 
+    def reveal_sound(self, row, column):
+        self.view.set_active_channel(self.view.lyric_lines[row].sounds[column].channel)
+        rect = self._blocks().get((row, column))
+        if rect is None:
+            return
+        point = (rect.center() - QPointF(self.origin())).toPoint()
+        x = self.view.mapToScene(point).x()
+        y = self.view.mapToScene(self.view.viewport().rect().center()).y()
+        self.view.center_on(x, y)
+        self._update_hover((row, column))
+        self.setFocus()
+
     def set_current_channel_only(self, enabled):
         self.current_channel_only = bool(enabled)
         self._hover = None

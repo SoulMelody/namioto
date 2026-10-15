@@ -31,7 +31,7 @@ def test_memory_and_file_midi_exports_are_identical(exports, tmp_path, wavetone)
     assert subtitle.build_ass(krc, data, wavetone=wavetone) == expected
 
 
-@pytest.mark.parametrize("krc", ["あ.4", "@2{あ}", "あ.0", ""])
+@pytest.mark.parametrize("krc", ["あ.4い", "@2{あ}", "あ.0", ""])
 def test_unrenderable_input_is_rejected(exports, krc):
     _, channels, notes = exports
     with pytest.raises(ValueError):
@@ -84,7 +84,7 @@ def test_file_cli_keeps_previous_ass_on_failure_and_uses_explicit_settings(expor
     assert ass_cli.main(args) == 0
     before = target.read_bytes()
     assert b",100,100,8,0,1," in before
-    lyrics.write_text("あ.10")
+    lyrics.write_text("あ.10い")
     assert ass_cli.main(args) == 1
     assert target.read_bytes() == before
     assert not list(tmp_path.glob("*.tmp"))
@@ -104,7 +104,7 @@ def test_file_watch_handles_atomic_replacement_and_recovers(exports, tmp_path, m
         tick += 1
         if tick == 1:
             initial = target.read_bytes()
-            lyrics.write_text("あ.100")
+            lyrics.write_text("あ.100い")
         if tick == 5:
             assert target.read_bytes() == initial
         if tick == 6:

@@ -453,6 +453,8 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Export ASS subtitle": "导出 ASS 字幕",
         "ASS subtitle (*.ass)": "ASS 字幕 (*.ass)",
         "Lyrics file (*{suffix})": "歌词文件 (*{suffix})",
+        "The mapping cannot be exported: {problems}": "映射无法导出：{problems}",
+        " (line {line}, sound {sound})": "（第 {line} 行，第 {sound} 个音）",
         "There are no lyrics to export": "没有可导出的歌词",
         "There are no notes to time the subtitle with": "没有可用作字幕时间的音符",
         "The subtitle could not be built: {error}": "字幕无法生成：{error}",
