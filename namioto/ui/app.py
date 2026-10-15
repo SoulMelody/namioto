@@ -84,6 +84,7 @@ from namioto.ui.lyric_map import LyricMapper, map_lyrics
 from namioto.ui.lyrics_dialog import LyricsDialog, LyricsWatcher
 from namioto.ui.midi_dialog import MidiImportDialog
 from namioto.ui.open_dialog import OpenAudioDialog
+from namioto.ui.palette_dialog import PaletteDialog
 from namioto.ui.roll import SNAP_CHOICES, PianoKeyboard, PianoRollView, TimelineRuler
 from namioto.ui.settings_dialog import SettingsDialog, SettingsStore
 from namioto.ui.song import SongPlayer, load_song
@@ -396,6 +397,7 @@ class MainWindow(QMainWindow):
         self.view.note_preview.connect(self._on_note_preview)
         self.keyboard.key_preview.connect(self._on_note_preview)
         self.transport.settings_button.clicked.connect(self._open_settings)
+        self.transport.palette_button.clicked.connect(self._open_palette)
         self._sync_midi_volume()
         self.view.gain = self.mix.gain.value()
         self.view.contrast = self.mix.contrast.value()
@@ -546,13 +548,13 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(
-            self.settings,
-            lyric_colors=self.view.lyric_colors,
-            parent=self,
-        )
-        dialog.lyric_colors_applied.connect(self._apply_lyric_colors)
+        dialog = SettingsDialog(self.settings, parent=self)
         dialog.applied.connect(self.settings_store.apply)
+        dialog.exec()
+
+    def _open_palette(self) -> None:
+        dialog = PaletteDialog(self.view.lyric_colors, parent=self)
+        dialog.applied.connect(self._apply_lyric_colors)
         dialog.exec()
 
     def _apply_lyric_colors(self, colors) -> None:

@@ -6,11 +6,11 @@ from PySide6.QtWidgets import QColorDialog, QPushButton
 
 from namioto import project
 from namioto.lyric_colors import DEFAULT_COLORS
-from namioto.ui.settings_dialog import SettingsDialog
+from namioto.ui.palette_dialog import PaletteDialog
 
 
 def test_color_picker_updates_swatch_without_applying(own_window, monkeypatch):
-    dialog = SettingsDialog(own_window.settings, lyric_colors=own_window.view.lyric_colors)
+    dialog = PaletteDialog(own_window.view.lyric_colors)
     editor = dialog.color_editors[0]
     picker = editor.parentWidget().findChild(QPushButton)
     monkeypatch.setattr(QColorDialog, "getColor", lambda *args: QColor("#123456"))
@@ -19,6 +19,27 @@ def test_color_picker_updates_swatch_without_applying(own_window, monkeypatch):
     assert picker.icon().pixmap(20, 20).toImage().pixelColor(10, 10) == QColor("#123456")
     dialog.reject()
     assert own_window.view.lyric_color(0) == QColor(DEFAULT_COLORS[0])
+
+
+def test_palette_entry_and_save_persist_with_project(own_window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    opened = []
+
+    def edit_palette(dialog):
+        opened.append(dialog)
+        dialog.color_editors[3].setText("#ABCDEF")
+        dialog._buttons.button(QDialogButtonBox.StandardButton.Save).click()
+        return dialog.result()
+
+    monkeypatch.setattr(PaletteDialog, "exec", edit_palette)
+    own_window.transport.palette_button.click()
+    assert len(opened) == 1
+    assert own_window.project_dirty
+    assert own_window.view.lyric_color(3) == QColor("#abcdef")
+    path = tmp_path / "palette.nto"
+    assert own_window.save_project(path)
+    assert project.load(path).settings.lyric_colors.channel_3 == "#abcdef"
 
 
 def test_palette_is_applied_when_project_settings_are_restored(own_window):

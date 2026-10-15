@@ -15,7 +15,7 @@ from namioto.karaoke.operations import Drop, Match, SoundRef
 from namioto.karaoke.sounds import natural_sounds
 from namioto.lyrics import text_key
 from namioto.ui.align_dialog import AlignDialog
-from namioto.ui.settings_dialog import SettingsDialog
+from namioto.ui.palette_dialog import PaletteDialog
 
 from .helpers import _manual_mapping, _mapped_pair, drag_sound, wait_for_lyric_mapping
 
@@ -198,8 +198,8 @@ def test_project_colour_pickers_validate_and_leave_preferences_untouched(own_win
 
     original = store.to_dict(own_window.settings)
     original_midi = own_window.view.channel_color(1)
-    dialog = SettingsDialog(own_window.settings, lyric_colors=own_window.view.lyric_colors)
-    dialog.lyric_colors_applied.connect(own_window._apply_lyric_colors)
+    dialog = PaletteDialog(own_window.view.lyric_colors)
+    dialog.applied.connect(own_window._apply_lyric_colors)
     dialog.color_editors[1].setText("#FF0000")
     dialog.color_editors[2].setText("#00FF00")
     picker = dialog.color_editors[1].parentWidget().findChild(QPushButton)

@@ -32,6 +32,7 @@ GLYPHS = {
     "check": "mdi.check",
     "cross": "mdi.close",
     "gear": "mdi.cog",
+    "palette": "mdi.palette",
     "refresh": "mdi.refresh",
     "restore": "mdi.restore",
     "open": "mdi.folder-open",
