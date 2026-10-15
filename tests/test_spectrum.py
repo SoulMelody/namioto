@@ -260,14 +260,14 @@ def test_load_channels_modes(tmp_path):
 def test_analyse_end_to_end(tmp_path):
     path = write_wav(tmp_path / "a440.wav", tone(440.0, 2.0))
     timings: dict = {}
-    spectrum = analyse(path, timings=timings)
+    spectrum = analyse(path, timings=timings, cache=False)
     assert spectrum.frames == 80  # 2 s at the default 40 frames per second
     assert note_label(int(spectrum.table.mean(axis=0).argmax())) == "A4"
     assert spectrum.backend == "wavetone"
     assert spectrum.fft_points == 0
     assert {"decode", "correlate", "normalize"} <= set(timings)
     legacy_timings: dict = {}
-    legacy = analyse(path, backend="notedigger", timings=legacy_timings)
+    legacy = analyse(path, backend="notedigger", timings=legacy_timings, cache=False)
     assert legacy.backend == "notedigger"
     decoded, rate = load_channels(path)
     np.testing.assert_array_equal(legacy.table, stft_notes(decoded, rate).table)

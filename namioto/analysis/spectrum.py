@@ -298,29 +298,55 @@ def analyse(
     *,
     channels: str = "mono",
     backend: str = "wavetone",
+    cache: bool = True,
     t_num: float = 40.0,
     fft_points: int = 8192,
     a4: float = 440.0,
     progress=None,
     timings: dict | None = None,
 ) -> NoteSpectrum:
-    start = time.perf_counter()
+    """Decode and analyse audio, reusing content-addressed results unless cache=False."""
+    from namioto.analysis import spectrum_cache
+
     if backend not in ("wavetone", "notedigger"):
         raise ValueError(f"Unknown spectrum backend: {backend!r}")
+    if channels not in CHANNEL_MODES:
+        raise ValueError(f"Unknown channel mode {channels!r}, expected one of {CHANNEL_MODES}")
+    options = {"backend": backend, "channels": channels, "t_num": float(t_num), "a4": float(a4)}
+    if backend == "notedigger":
+        options["fft_points"] = fft_points
+    start = time.perf_counter()
+    key = spectrum_cache.cache_key(path, options) if cache else None
+    cached = spectrum_cache.load(key) if key is not None else None
+    if timings is not None and cache:
+        timings["cache_read"] = time.perf_counter() - start
+    if cached is not None:
+        if progress is not None:
+            progress(1, 1)
+        return NoteSpectrum(**cached)
+    start = time.perf_counter()
     selected, sample_rate = load_channels(path, channels)
     if timings is not None:
         timings["decode"] = time.perf_counter() - start
     if backend == "wavetone":
-        return wave_notes(selected, sample_rate, t_num=t_num, a4=a4, progress=progress, timings=timings)
-    return stft_notes(
-        selected,
-        sample_rate,
-        t_num=t_num,
-        fft_points=fft_points,
-        a4=a4,
-        progress=progress,
-        timings=timings,
-    )
+        result = wave_notes(selected, sample_rate, t_num=t_num, a4=a4, progress=progress, timings=timings)
+    else:
+        result = stft_notes(
+            selected,
+            sample_rate,
+            t_num=t_num,
+            fft_points=fft_points,
+            a4=a4,
+            progress=progress,
+            timings=timings,
+        )
+    if key is not None:
+        start = time.perf_counter()
+        if spectrum_cache.cache_key(path, options) == key:
+            spectrum_cache.save(key, result)
+        if timings is not None:
+            timings["cache_write"] = time.perf_counter() - start
+    return result
 
 
 def auto_fill(table: np.ndarray, threshold: float, from_frame: int = 0, to_frame: int | None = None) -> list[NoteSpan]:
@@ -362,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--a4", type=float, default=440.0, help="frequency of A4 (default: 440)")
     parser.add_argument("--threshold", type=float, help="also report auto-filled notes above this value")
     parser.add_argument("--bench", action="store_true", help="print per-stage timings")
+    parser.add_argument("--no-cache", action="store_true", help="analyse without reading or writing the spectrum cache")
     parser.add_argument("--json", action="store_true", help="print the summary as JSON")
     args = parser.parse_args(argv)
 
@@ -371,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         args.audio,
         channels=args.channels,
         backend=args.backend,
+        cache=not args.no_cache,
         t_num=args.t_num,
         fft_points=args.fft_points,
         a4=args.a4,

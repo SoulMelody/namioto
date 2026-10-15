@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """The project file: the notes, the audio they were drawn over, and the values that go with them.
 
-Plain UTF-8 JSON, so a project can be read, diffed and edited by hand; the only thing that would need
-a binary container is the spectrum, and reanalysing a five-minute file takes about a second.
+Plain UTF-8 JSON, so a project can be read, diffed and edited by hand. Derived spectra are cached
+separately by audio content and analysis parameters; they are not part of the project file.
 
 Qt-free on purpose. Notes are stored in seconds and rounded to a tenth of a millisecond: seconds are
 what the editor anchors them to, so a different tempo moves the grid, not the notes.
