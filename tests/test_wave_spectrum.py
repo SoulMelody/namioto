@@ -5,7 +5,9 @@ import math
 
 import numpy as np
 import pytest
+from scipy.signal import fftconvolve
 
+import namioto.analysis.wave_spectrum as wave_spectrum
 from namioto.analysis.spectrum import A4_INDEX, freq_table, wave_notes
 from namioto.analysis.wave_spectrum import amplitudes, correlation_kernel, decimate
 
@@ -51,6 +53,17 @@ def test_fft_acceleration_matches_direct_local_magnitude_average():
         expected.append(np.mean(magnitudes))
     actual = amplitudes([samples], rate, np.array([frequency]), centers, 40)
     np.testing.assert_allclose(actual[:, 0], expected, atol=1e-14)
+
+
+@pytest.mark.parametrize("rate", [8000, 44100])
+@pytest.mark.parametrize("length", [1, 127, 8001, 16001])
+def test_overlap_add_matches_whole_fft_across_bands_and_edges(monkeypatch, rate, length):
+    channels = list(np.random.default_rng(11).normal(size=(2, length)))
+    centers = np.array([0, length // 2, length - 1])
+    actual = amplitudes(channels, rate, freq_table(), centers, 40)
+    monkeypatch.setattr(wave_spectrum, "oaconvolve", fftconvolve)
+    expected = amplitudes(channels, rate, freq_table(), centers, 40)
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-14)
 
 
 @pytest.mark.parametrize("note", [0, 12, A4_INDEX, 70, 83])

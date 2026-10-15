@@ -7,15 +7,16 @@ AnalyzeWaveData2 (RVA 0x3980), the decimation pyramid (0x1010), correlation
 is required. This is not a bit-exact port: samples remain floating point,
 64 samples per period selects the decimation level, and file edges are padded
 rather than shortening and renormalising the window. Namioto's frame centres
-and display normalisation are retained by the caller. FFT convolution evaluates
-the same per-frequency correlations without materialising every sliding window;
+and display normalisation are retained by the caller. Overlap-add convolution
+avoids song-length FFTs for the short kernels and evaluates the same per-frequency
+correlations without materialising every sliding window;
 it does not replace the variable kernels with fixed-window STFT bins.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import correlate
+from scipy.signal import oaconvolve
 
 
 def decimate(samples: np.ndarray) -> np.ndarray:
@@ -68,7 +69,7 @@ def amplitudes(
                 kernel = correlation_kernel(float(frequency), rate)
                 if len(samples):
                     padded = np.pad(samples, (len(kernel) // 2, len(kernel)))
-                    response = correlate(padded, kernel, mode="valid", method="fft")
+                    response = oaconvolve(padded, kernel[::-1].conj(), mode="valid")
                     valid = (positions >= 0) & (positions < len(samples))
                     values = np.abs(response[np.clip(positions, 0, len(samples) - 1)])
                     result[:, note] += np.where(valid, values, 0).mean(axis=1)
