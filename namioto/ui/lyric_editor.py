@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDockWidget,
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -16,13 +18,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QStyledItemDelegate,
+    QToolButton,
     QVBoxLayout,
     QWidget,
     QWidgetAction,
 )
 
 from namioto.i18n import tr
-from namioto.karaoke.model import Group, Ruby, Unit, Word, unit_words
+from namioto.karaoke.model import Chapter, Group, Line, Lyrics, Ruby, Unit, Word, unit_words
 from namioto.karaoke.parser import parse
 from namioto.karaoke.sounds import natural_sounds, sound_lines
 from namioto.karaoke.writer import dumps
@@ -68,7 +71,7 @@ class LyricDelegate(QStyledItemDelegate):
         self.panel = panel
 
     def sizeHint(self, option, index):
-        return QSize(200, 62)
+        return QSize(200, 86 if index.row() in self.panel.chapter_starts else 62)
 
     def paint(self, painter, option, index):
         painter.save()
@@ -79,6 +82,13 @@ class LyricDelegate(QStyledItemDelegate):
         )
         painter.translate(option.rect.topLeft())
         painter.setFont(option.font)
+        if index.row() in self.panel.chapter_starts:
+            painter.setPen(option.palette.text().color())
+            painter.drawText(
+                QRect(8, 0, option.rect.width() - 16, 24),
+                tr("Chapter {number}", number=self.panel.chapter_starts[index.row()] + 1),
+            )
+            painter.translate(0, 24)
         units = self.panel.rows[index.row()].units
         selected = range(len(units)) if self.panel.lines.item(index.row()).isSelected() else ()
         draw_units(painter, units, unit_rects(units, option.font), self.panel.window.view, option.palette, selected)
@@ -96,6 +106,8 @@ class LyricList(QListWidget):
         if item is None or event.button() != Qt.MouseButton.LeftButton:
             return
         row_rect = self.visualItemRect(item)
+        if self.row(item) in self.panel.chapter_starts:
+            row_rect.adjust(0, 24, 0, 0)
         point = event.position().toPoint() - row_rect.topLeft()
         units = self.panel.rows[self.row(item)].units
         for index, rect in enumerate(unit_rects(units, self.font())):
@@ -112,6 +124,8 @@ class LyricCanvas(QWidget):
         self.panel = panel
         self.selected = set()
         self.anchor = None
+        self.cut = None
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.editor = QLineEdit(self)
         self.editor.hide()
         self.editor.installEventFilter(self)
@@ -128,6 +142,7 @@ class LyricCanvas(QWidget):
         self.cancel_edit()
         self.selected.clear()
         self.anchor = None
+        self.cut = None
         rects = unit_rects(self.units(), self.font())
         self.setMinimumWidth(rects[-1].right() + 8 if rects else 0)
         self.update()
@@ -144,6 +159,18 @@ class LyricCanvas(QWidget):
             self.selected,
         )
 
+        if self.cut is not None:
+            rects = unit_rects(self.units(), self.font())
+            painter.setPen(self.palette().highlight().color())
+            x = rects[self.cut].left()
+            painter.drawLine(x, 2, x, 60)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.cut is not None:
+            self.panel.split_line()
+            return
+        super().keyPressEvent(event)
+
     def hit(self, position):
         return next(
             (index for index, rect in enumerate(unit_rects(self.units(), self.font())) if rect.contains(position)), None
@@ -151,6 +178,16 @@ class LyricCanvas(QWidget):
 
     def mousePressEvent(self, event):
         index = self.hit(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus()
+            self.cut = None
+            for boundary, rect in enumerate(unit_rects(self.units(), self.font())):
+                if boundary and abs(event.position().x() - rect.left()) <= 5:
+                    self.cut = boundary
+                    self.selected.clear()
+                    self.anchor = None
+                    self.update()
+                    return
         if index is not None and event.button() == Qt.MouseButton.LeftButton:
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and self.anchor is not None:
                 self.selected = set(range(min(self.anchor, index), max(self.anchor, index) + 1))
@@ -220,8 +257,43 @@ class LyricEditor(QDockWidget):
         self.window = window
         self.source = ""
         self.rows = []
+        self.chapter_starts = {}
+        self.row_selections = {}
         body = QWidget()
         layout = QVBoxLayout(body)
+        toolbar = QHBoxLayout()
+        insert = QToolButton()
+        insert.setText(tr("Insert line"))
+        insert.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        insert.clicked.connect(self.insert_line)
+        insert_menu = QMenu(insert)
+        insert_menu.addAction(tr("Insert above"), lambda: self.insert_line(above=True))
+        insert_menu.addAction(tr("Insert below"), self.insert_line)
+        insert.setMenu(insert_menu)
+        toolbar.addWidget(insert)
+        delete = QToolButton()
+        delete.setText(tr("Delete lines"))
+        delete.setToolTip(tr("Delete lyrics, not MIDI notes. Following lyrics may map to different notes."))
+        delete.clicked.connect(self.delete_lines)
+        toolbar.addWidget(delete)
+        chapter = QToolButton()
+        chapter.setText(tr("Chapter"))
+        chapter.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        chapter_menu = QMenu(chapter)
+        start_chapter = chapter_menu.addAction(tr("Start chapter here"), self.start_chapter)
+        merge_chapter = chapter_menu.addAction(tr("Merge with previous chapter"), self.merge_chapter)
+        chapter_menu.aboutToShow.connect(
+            lambda: start_chapter.setEnabled(
+                self.single_row() is not None and self.single_row() not in self.chapter_starts
+            )
+        )
+        chapter_menu.aboutToShow.connect(
+            lambda: merge_chapter.setEnabled(self.single_row() in self.chapter_starts and self.single_row() != 0)
+        )
+        chapter.setMenu(chapter_menu)
+        toolbar.addWidget(chapter)
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
         self.lines = LyricList(self)
         self.lines.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.lines.setItemDelegate(LyricDelegate(self))
@@ -234,11 +306,12 @@ class LyricEditor(QDockWidget):
         scroll.setWidget(self.canvas)
         scroll.setFixedHeight(88)
         layout.addWidget(scroll)
-        hint = QLabel(tr("Drag to select · Right-click to move · Double-click text/ruby to edit"))
+        hint = QLabel(tr("Drag to select · Double-click to edit · Click between units, then Enter to split"))
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.setWidget(body)
         self.lines.itemSelectionChanged.connect(self.canvas.refresh)
+        self.lines.itemSelectionChanged.connect(lambda: delete.setEnabled(bool(self.lines.selectedIndexes())))
         window.view.lyrics_changed.connect(self.refresh)
         window.view.view_changed.connect(self.lines.viewport().update)
         self.hide()
@@ -255,9 +328,17 @@ class LyricEditor(QDockWidget):
         if text == self.source and not force:
             return
         selected = [index.row() for index in self.lines.selectedIndexes()]
+        self.row_selections[self.source] = selected
+        selected = self.row_selections.get(text, selected)
         self.source = text
-        self.model = parse(text)
+        self.model = parse(text) if text.strip() else Lyrics([])
         self.rows = [line for chapter in self.model.chapters for line in chapter.lines]
+        self.chapter_starts = {}
+        offset = 0
+        for chapter, part in enumerate(self.model.chapters):
+            if part.lines:
+                self.chapter_starts[offset] = chapter
+            offset += len(part.lines)
         self.lines.blockSignals(True)
         self.lines.clear()
         for row in self.rows:
@@ -267,6 +348,132 @@ class LyricEditor(QDockWidget):
                 self.lines.item(row).setSelected(True)
         self.lines.blockSignals(False)
         self.canvas.refresh()
+
+    def single_row(self):
+        selected = self.lines.selectedIndexes()
+        return selected[0].row() if len(selected) == 1 else None
+
+    def location(self, model, row):
+        for chapter, part in enumerate(model.chapters):
+            if row < len(part.lines):
+                return chapter, row
+            row -= len(part.lines)
+        raise IndexError(row)
+
+    def commit_structure(self, model, row=0, *, preserve_mapping=False):
+        model.chapters = [part for part in model.chapters if part.lines]
+        try:
+            text = dumps(model, dotted=True)
+            layout = structure(text)
+            if preserve_mapping:
+
+                def signature(layout):
+                    return [
+                        (slots, tuple(line.sounds[index].reading for index in indices))
+                        for line, groups in zip(layout.lines, layout.groups, strict=True)
+                        for slots, indices in groups
+                    ]
+
+                if signature(layout) != signature(structure(self.source)):
+                    raise ValueError(tr("This boundary would change note mapping. Choose another boundary."))
+        except ValueError as error:
+            QMessageBox.warning(self, tr("Edit lyrics"), str(error))
+            return
+        if text != self.source and self.window._apply_lyric_editor(self.source, text, set(), None):
+            self.refresh(force=True)
+            if self.lines.count():
+                self.lines.setCurrentRow(min(row, self.lines.count() - 1))
+            self.row_selections[text] = [index.row() for index in self.lines.selectedIndexes()]
+
+    def insert_line(self, checked=False, *, above=False):
+        row = self.single_row()
+        if self.rows and row is None:
+            return
+        source = self.source
+        value, accepted = QInputDialog.getText(
+            self, tr("Insert line"), tr("Lyrics (.krc, one line; following lyrics may map to different notes)")
+        )
+        if not accepted or not value.strip():
+            return
+        if source != self.source:
+            QMessageBox.warning(
+                self, tr("Edit lyrics"), tr("Lyrics changed or are busy. Reopen the editor and try again.")
+            )
+            return
+        try:
+            inserted = parse(value)
+            if len(inserted.chapters) != 1 or len(inserted.chapters[0].lines) != 1:
+                raise ValueError(tr("Enter exactly one lyric line."))
+            line = inserted.chapters[0].lines[0]
+        except ValueError as error:
+            QMessageBox.warning(self, tr("Edit lyrics"), str(error))
+            return
+        channel = self.rows[row].track if row is not None else self.window.view.active_channel
+        line.track = max(channel, 0)
+        model = deepcopy(self.model)
+        if row is None:
+            model.chapters.append(Chapter([line]))
+            target = 0
+        else:
+            chapter, index = self.location(model, row)
+            model.chapters[chapter].lines.insert(index + (not above), line)
+            target = row + (not above)
+        self.commit_structure(model, target)
+
+    def delete_lines(self):
+        selected = sorted((index.row() for index in self.lines.selectedIndexes()), reverse=True)
+        if not selected:
+            return
+        model = deepcopy(self.model)
+        for row in selected:
+            chapter, index = self.location(model, row)
+            del model.chapters[chapter].lines[index]
+        self.commit_structure(model, selected[-1])
+
+    def split_line(self):
+        row, cut = self.single_row(), self.canvas.cut
+        if row is None or cut is None or not 0 < cut < len(self.rows[row].units):
+            return
+        model = deepcopy(self.model)
+        chapter, index = self.location(model, row)
+        lines = model.chapters[chapter].lines
+        if lines[index].units[cut].join_previous:
+            QMessageBox.warning(self, tr("Edit lyrics"), tr("Cannot split units sharing a note."))
+            return
+        lines.insert(index + 1, Line(lines[index].units[cut:]))
+        lines[index].units = lines[index].units[:cut]
+        self.commit_structure(model, row + 1, preserve_mapping=True)
+        self.canvas.setFocus()
+
+    def merge_line(self):
+        row = self.single_row()
+        if row is None or row == 0 or row in self.chapter_starts:
+            return
+        model = deepcopy(self.model)
+        chapter, index = self.location(model, row)
+        lines = model.chapters[chapter].lines
+        lines[index - 1].units.extend(lines.pop(index).units)
+        self.commit_structure(model, row - 1, preserve_mapping=True)
+
+    def start_chapter(self):
+        row = self.single_row()
+        if row is None or row in self.chapter_starts:
+            return
+        model = deepcopy(self.model)
+        chapter, index = self.location(model, row)
+        lines = model.chapters[chapter].lines
+        model.chapters.insert(chapter + 1, Chapter(lines[index:]))
+        del lines[index:]
+        self.commit_structure(model, row, preserve_mapping=True)
+
+    def merge_chapter(self):
+        row = self.single_row()
+        if row is None or row == 0 or row not in self.chapter_starts:
+            return
+        model = deepcopy(self.model)
+        chapter, _ = self.location(model, row)
+        model.chapters[chapter - 1].lines.extend(model.chapters.pop(chapter).lines)
+        self.commit_structure(model, row, preserve_mapping=True)
 
     def targets(self):
         selected = [index.row() for index in self.lines.selectedIndexes()]
@@ -324,6 +531,21 @@ class LyricEditor(QDockWidget):
             move.addAction(label, lambda checked=False, n=number: self.apply("channel", n, sync.isChecked()))
             color.addAction(label, lambda checked=False, n=number: self.apply("color", n))
             select.addAction(label, lambda checked=False, n=number: self.select_channel(n))
+        menu.addSeparator()
+        menu.addAction(tr("Insert above"), lambda: self.insert_line(above=True))
+        menu.addAction(tr("Insert below"), self.insert_line)
+        menu.addAction(tr("Delete lines"), self.delete_lines).setEnabled(bool(self.lines.selectedIndexes()))
+        menu.addAction(tr("Split here"), self.split_line).setEnabled(self.canvas.cut is not None)
+        row = self.single_row()
+        menu.addAction(tr("Merge with previous line"), self.merge_line).setEnabled(
+            row is not None and row > 0 and row not in self.chapter_starts
+        )
+        menu.addAction(tr("Start chapter here"), self.start_chapter).setEnabled(
+            row is not None and row not in self.chapter_starts
+        )
+        menu.addAction(tr("Merge with previous chapter"), self.merge_chapter).setEnabled(
+            row in self.chapter_starts and row != 0
+        )
         menu.exec(position)
 
     def select_channel(self, number):

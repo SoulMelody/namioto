@@ -1,6 +1,6 @@
 from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QCheckBox, QMenu, QMessageBox, QPushButton
+from PySide6.QtGui import QKeyEvent, QMouseEvent
+from PySide6.QtWidgets import QCheckBox, QInputDialog, QMenu, QMessageBox, QPushButton
 
 from namioto.karaoke.sounds import natural_sounds
 from namioto.ui.lyric_editor import reading, unit_rects
@@ -116,7 +116,7 @@ def test_double_click_ruby_in_list_edits_at_clicked_row(own_window, tmp_path):
     panel.open_at(0)
     row_rect = panel.lines.visualItemRect(panel.lines.item(0))
     rect = unit_rects(panel.rows[0].units, panel.lines.font())[0]
-    pos = QPointF(row_rect.x() + rect.center().x(), row_rect.y() + 12)
+    pos = QPointF(row_rect.x() + rect.center().x(), row_rect.y() + 24 + 12)
     event = QMouseEvent(
         QEvent.Type.MouseButtonDblClick,
         pos,
@@ -160,3 +160,118 @@ def test_multiline_move_preserves_color_override(own_window, tmp_path):
     assert [line.track for line in lines] == [1, 1]
     assert lines[0].sounds[0].color_channel == 2
     assert lines[1].sounds[0].color_channel is None
+
+
+def test_split_merge_preserves_mapping_and_undo_selection(own_window, tmp_path, monkeypatch):
+    def fail_warning(*args):
+        raise AssertionError(args[-1])
+
+    monkeypatch.setattr(QMessageBox, "warning", fail_warning)
+    _mixed_lyrics(own_window, tmp_path)
+    assert own_window._apply_lyric_editor(own_window.lyrics_text, "@c2{(今日)[きょう].2}あ.1\nい", set(), None)
+    wait_for_lyric_mapping(own_window)
+    panel = own_window.lyric_editor
+    panel.open_at(0)
+    before = own_window.lyrics_text
+    mapped = [ids for line in own_window.view.lyric_mapped for ids in line]
+    boundary = unit_rects(panel.canvas.units(), panel.canvas.font())[1].left()
+    position = QPointF(boundary, 30)
+    panel.canvas.mousePressEvent(
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            position,
+            position,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+    assert panel.canvas.cut == 1
+    panel.canvas.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+    wait_for_lyric_mapping(own_window)
+    assert len(panel.rows) == 3
+    assert reading(panel.rows[0].units[0]) == "きょう"
+    assert panel.rows[0].units[0].base.words[0].color_channel == 2
+    assert [ids for line in own_window.view.lyric_mapped for ids in line] == mapped
+    assert panel.single_row() == 1
+    own_window.view.undo_stack.undo()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == before
+    assert panel.single_row() == 0
+    own_window.view.undo_stack.redo()
+    wait_for_lyric_mapping(own_window)
+    assert panel.single_row() == 1
+    panel.merge_line()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == before
+
+
+def test_chapter_boundaries_preserve_rows_and_mapping(own_window, tmp_path):
+    _mixed_lyrics(own_window, tmp_path)
+    panel = own_window.lyric_editor
+    panel.open_at(1)
+    before = own_window.lyrics_text
+    mapped = own_window.view.lyric_mapped
+    panel.start_chapter()
+    wait_for_lyric_mapping(own_window)
+    assert list(panel.chapter_starts) == [0, 1]
+    assert own_window.view.lyric_mapped == mapped
+    assert len(panel.rows) == 3
+    panel.merge_line()
+    assert len(panel.rows) == 3
+    panel.merge_chapter()
+    wait_for_lyric_mapping(own_window)
+    assert own_window.lyrics_text == before
+    panel.start_chapter()
+    wait_for_lyric_mapping(own_window)
+    panel.lines.item(2).setSelected(True)
+    panel.delete_lines()
+    wait_for_lyric_mapping(own_window)
+    assert len(panel.model.chapters) == 1
+    assert len(panel.rows) == 1
+
+
+def test_insert_delete_and_empty_document(own_window, tmp_path, monkeypatch):
+    _mixed_lyrics(own_window, tmp_path)
+    panel = own_window.lyric_editor
+    panel.open_at(0)
+    notes = [(item.note.id, item.note.channel) for item in own_window.view.notes()]
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args: ("う", True))
+    panel.insert_line()
+    wait_for_lyric_mapping(own_window)
+    assert [line.units[0].text for line in panel.rows] == ["あ", "う", "い", "う"]
+    assert panel.single_row() == 1
+    panel.lines.selectAll()
+    panel.delete_lines()
+    wait_for_lyric_mapping(own_window)
+    assert not panel.rows
+    assert not panel.model.chapters
+    assert [(item.note.id, item.note.channel) for item in own_window.view.notes()] == notes
+    panel.insert_line()
+    wait_for_lyric_mapping(own_window)
+    assert len(panel.rows) == 1
+    assert panel.rows[0].units[0].text == "う"
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args: ("今日[きょう]", True))
+    panel.insert_line(above=True)
+    wait_for_lyric_mapping(own_window)
+    assert panel.single_row() == 0
+    assert reading(panel.rows[0].units[0]) == "きょう"
+    before = own_window.lyrics_text
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args: ("あ", False))
+    panel.insert_line()
+    assert own_window.lyrics_text == before
+
+
+def test_split_shared_note_is_rejected(own_window, tmp_path, monkeypatch):
+    _mixed_lyrics(own_window, tmp_path)
+    assert own_window._apply_lyric_editor(own_window.lyrics_text, "あ.1い.+", set(), None)
+    wait_for_lyric_mapping(own_window)
+    panel = own_window.lyric_editor
+    panel.open_at(0)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    before = own_window.lyrics_text
+    panel.canvas.cut = 1
+    panel.split_line()
+    assert own_window.lyrics_text == before
+    assert len(warnings) == 1
