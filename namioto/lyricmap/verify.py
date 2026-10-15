@@ -2,8 +2,8 @@
 """The one gate every lyric export passes through: the issues that block it, and the canonical `.krc`.
 
 A button, a colour or a caught exception must never decide on its own whether a mapping may leave the
-editor, so the KRC and the subtitle both ask this. It reports locatable problems - a filtered note, a
-low-confidence operation, an anchor that no longer holds, a merge the format cannot write - and, when
+editor, so the KRC and the subtitle both ask this. It reports locatable problems - a filtered note,
+an anchor that no longer holds, a merge the format cannot write - and, when
 nothing is wrong, hands back the canonical `.krc` the subtitle is generated from. Qt-free.
 """
 
@@ -17,7 +17,6 @@ from namioto.karaoke.model import KrcError
 from namioto.karaoke.operations import Drop, Operation, SoundRef, partition
 from namioto.karaoke.sounds import SoundLine
 from namioto.lyricmap import problems as codes
-from namioto.lyricmap.confidence import read
 from namioto.lyricmap.notes import Note
 from namioto.lyricmap.problems import MappingError, Problem
 from namioto.lyricmap.raw import Raw, validate
@@ -58,7 +57,6 @@ def verify(
     `broken` says the lyrics could not even be normalised into Sounds; `filtered` is the notes a
     conflict kept out of the stream; `subtitle` adds the subtitle's own condition that at least one
     Sound is actually shown. `pending` blocks export until the current mapping is ready.
-    A low-confidence operation blocks only while it is unconfirmed.
     """
     if pending:
         return Gate((Problem(codes.MAPPING_PENDING, "the lyric mapping is still being calculated"),))
@@ -96,13 +94,6 @@ def verify(
         code = codes.INVALID_ANCHOR if confirmed else codes.UNCOVERED_NOTE
         issues.append(Problem(code, str(error)))
         blocked = True
-    if not blocked and operations and sounds and notes:
-        readings = read(lines, raw, notes, operations, flagged)
-        for operation, reading in zip(operations, readings, strict=True):
-            if reading.low and not operation.confirmed:
-                issues.append(
-                    Problem(reading.code, "the mapping is not sure of this operation", tuple(operation.sounds))
-                )
     if not blocked:
         canonical = ""
         try:

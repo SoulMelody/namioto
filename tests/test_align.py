@@ -232,19 +232,6 @@ def test_align_keeps_an_empty_token_untimed():
     assert aligned[0].tokens[0].start is not None and aligned[0].tokens[2].start is not None
 
 
-def test_problems_names_the_failure_shapes():
-    def segment(*starts):
-        return align.AlignedSegment(0.0, 1.0, tuple(align.Token("x", start) for start in starts))
-
-    assert align.problems(segment()) == ("empty",)
-    assert align.problems(segment(0.0, 0.5)) == ()
-    assert "nonmonotonic" in align.problems(segment(0.5, 0.4))
-    assert "collapsed" in align.problems(segment(0.0, 0.02, 0.04, 0.06))
-    assert align.problems(segment(0.0, 0.02)) == ()
-    assert "diverged" in align.problems(segment(0.0, 0.5), reference=[0.5, 1.0])
-    assert align.problems(segment(0.0, 0.5), reference=[0.01, 0.51]) == ()
-
-
 def test_voice_segments_finds_the_stretch_that_is_sounding():
     audio = np.zeros(align.SAMPLE_RATE * 2, dtype=np.float32)
     audio[align.SAMPLE_RATE // 2 : align.SAMPLE_RATE * 3 // 2] = 0.5

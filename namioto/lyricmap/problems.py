@@ -16,9 +16,6 @@ NO_LYRIC_SOUNDS = "no_lyric_sounds"
 INCOMPLETE_ALIGNMENT = "incomplete_alignment"
 NO_TARGET_NOTES = "no_target_notes"
 FILTERED_NOTE = "filtered_note"
-LOW_CONFIDENCE_MATCH = "low_confidence_match"
-LOW_CONFIDENCE_MERGE = "low_confidence_merge"
-LOW_CONFIDENCE_DROP = "low_confidence_drop"
 INVALID_ANCHOR = "invalid_anchor"
 UNWRITABLE_MERGE = "unwritable_merge"
 ROUND_TRIP_MISMATCH = "round_trip_mismatch"
@@ -47,9 +44,6 @@ __all__ = [
     "FILTERED_NOTE",
     "INCOMPLETE_ALIGNMENT",
     "INVALID_ANCHOR",
-    "LOW_CONFIDENCE_DROP",
-    "LOW_CONFIDENCE_MATCH",
-    "LOW_CONFIDENCE_MERGE",
     "MAPPING_PENDING",
     "MappingError",
     "NO_LYRIC_SOUNDS",

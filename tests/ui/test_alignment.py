@@ -145,12 +145,12 @@ def test_the_align_dialog_shows_a_failure(own_window) -> None:
     assert dialog.run.isEnabled()
 
 
-def test_the_align_dialog_keeps_its_progress_beside_the_problems(own_window) -> None:
+def test_the_align_dialog_ignores_legacy_diagnostics(own_window) -> None:
     dialog = AlignDialog("vocal.wav", "あい\n", 120.0, parent=own_window)
     dialog.log.setPlainText("Aligning over 204.0s of audio…")
     dialog._done(([[(0.0, 1.0), (1.0, 2.0)]], "mms", ["あい: empty"], [True]))
     assert "Aligning over 204.0s of audio…" in dialog.log.toPlainText()
-    assert "あい: empty" in dialog.log.toPlainText()
+    assert "あい: empty" not in dialog.log.toPlainText()
 
 
 def test_the_aligner_logs_a_download_a_tenth_at_a_time(qt_app) -> None:
@@ -161,14 +161,6 @@ def test_the_aligner_logs_a_download_a_tenth_at_a_time(qt_app) -> None:
     aligner._downloading(50, 1000)
     aligner._downloading(100, 1000)
     assert logged == ["Downloading the yohane model… 0%", "Downloading the yohane model… 10%"]
-
-
-def test_the_aligner_reports_the_lines_it_doubts() -> None:
-    lines = natural_sounds("あい\n")
-    found = align.AlignedSegment(0.0, 2.0, (align.Token("a"), align.Token("i")))
-    flagged, reported = Aligner._problems(found, lines)
-    assert flagged == [True]
-    assert reported == ["あい: empty"]
 
 
 def test_the_align_button_opens_the_dialog(own_window, monkeypatch, tmp_path) -> None:

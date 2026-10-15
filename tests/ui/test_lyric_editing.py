@@ -535,26 +535,15 @@ def test_notes_on_another_channel_are_not_mapped(own_window, tmp_path) -> None:
     assert own_window.view.lyric_times == (((None, None), (None, None)),)
 
 
-def test_lyric_preview_defers_confidence_until_the_gesture_finishes(own_window, tmp_path, monkeypatch):
-    from namioto.lyricmap import confidence
+def test_lyric_preview_and_finished_mapping_do_not_mark_notes_red(own_window, tmp_path):
     from namioto.lyricmap.editing import detach, note_runs
 
     _mapped_pair(own_window, tmp_path, raw=((0.0, 0.5), (0.5, 0.5)))
-    calls = []
-    original = confidence.read
-
-    def counted(*args, **kwargs):
-        calls.append(True)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(confidence, "read", counted)
     own_window._begin_lyric_drag()
     runs = detach(note_runs(own_window.lyrics_text), SoundRef(0, 1), 0)
     own_window._preview_lyric_drag(runs)
     assert own_window.view.lyric_zero == ((False, True),)
-    assert calls == []
+    assert own_window.view.lyric_red == ((False, False),)
     own_window._finish_lyric_drag(True)
     wait_for_lyric_mapping(own_window)
-    assert calls == [True]
-    assert own_window._lyric_map_result.readings
-
+    assert own_window.view.lyric_red == ((False, False),)

@@ -249,7 +249,6 @@ class MainWindow(QMainWindow):
         self._lyric_scores = None
         self._lyric_problems = None
         self._lyric_filtered: tuple = ()
-        self._lyric_readings: tuple = ()
         self._lyric_error = ""
         self._lyric_alignment = None
         self._lyric_map_thread: LyricMapper | None = None
@@ -1586,7 +1585,6 @@ class MainWindow(QMainWindow):
             self._invalidate_lyric_mapping()
             self._lyric_map_result = None
             self._lyric_filtered = ()
-            self._lyric_readings = ()
             if not self.lyrics_text:
                 self._lyric_error = ""
             self.sound_strip.hide()
@@ -1663,7 +1661,6 @@ class MainWindow(QMainWindow):
         self.view.lyric_text = self.lyrics_text
         self._lyric_error = result.error
         self._lyric_filtered = result.filtered
-        self._lyric_readings = result.readings
         self.view.load_lyrics(
             result.lines,
             result.spans,
@@ -2032,7 +2029,6 @@ class MainWindow(QMainWindow):
                 self._lyric_drag_request,
                 text=text,
                 lines=faithful.structure(text).lines,
-                read_confidence=False,
                 previous=self._lyric_map_result,
             )
             mapping = map_lyrics(**snapshot)

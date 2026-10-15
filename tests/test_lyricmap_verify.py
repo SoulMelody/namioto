@@ -42,12 +42,12 @@ def test_a_filtered_note_closes_the_gate():
     assert gate.counts() == {"filtered_note": 1}
 
 
-def test_a_low_confidence_operation_closes_the_gate_until_confirmed():
+def test_low_alignment_scores_do_not_require_confirmation():
     lines = natural_sounds("あ")
     raw = [[Raw(0.0, 1.0, 0.1)]]
     notes = _notes((0.0, 1.0))
     operations = solve(lines, raw, notes)
-    assert verify("あ", lines, raw, notes, operations).counts() == {"low_confidence_match": 1}
+    assert verify("あ", lines, raw, notes, operations).open()
     confirmed = [Match(SoundRef(0, 0), (1,), confirmed=True)]
     assert verify("あ", lines, raw, notes, confirmed).open()
 

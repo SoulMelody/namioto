@@ -12,9 +12,8 @@ from dataclasses import dataclass, replace
 from PySide6.QtCore import QThread, Signal
 
 from namioto.karaoke.operations import Match, Merge, Operation
-from namioto.lyricmap import confidence, constraints, faithful
+from namioto.lyricmap import constraints, faithful
 from namioto.lyricmap.channels import split
-from namioto.lyricmap.confidence import Reading
 from namioto.lyricmap.editing import note_runs
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.lyricmap.problems import MappingError
@@ -27,7 +26,7 @@ Span = tuple[float | None, float | None]
 
 @dataclass(frozen=True)
 class LyricResult:
-    """One mapping: what the strip draws, and the operations and readings it was read from."""
+    """One mapping: what the strip draws, and the operations it was read from."""
 
     lines: tuple = ()
     spans: tuple = ()
@@ -38,13 +37,11 @@ class LyricResult:
     mapped: tuple = ()
     operations: tuple = ()
     filtered: tuple = ()
-    readings: tuple = ()
     error: str = ""
     state: MappingState | None = None
     channel_errors: tuple = ()
     channel_results: tuple = ()
     read_key: tuple = ()
-    confidence_ready: bool = False
 
 
 def map_lyrics(
@@ -60,7 +57,6 @@ def map_lyrics(
     use_constraints: bool = False,
     notes_by_channel: dict | None = None,
     solve_channels: tuple[int, ...] | None = None,
-    read_confidence: bool = True,
 ) -> LyricResult:
     """Read faithful KRC slots, or solve an explicit automatic mapping request.
 
@@ -84,7 +80,6 @@ def map_lyrics(
             previous,
             use_constraints,
             solve_channels,
-            read_confidence,
         )
     lines = list(lines)
     raw = [[(span[0], span[1]) for span in row] for row in raw]
@@ -97,13 +92,12 @@ def map_lyrics(
             tuple(flagged),
             tuple(notes),
         )
-        if previous is not None and previous.read_key == key and (not read_confidence or previous.confidence_ready):
+        if previous is not None and previous.read_key == key:
             return previous
         try:
             return replace(
-                _read_result(text, lines, raw, notes, scores, flagged, read_confidence),
+                _read_result(text, lines, raw, notes),
                 read_key=key,
-                confidence_ready=read_confidence,
             )
         except (MappingError, ValueError) as error:
             return _failed(lines, raw, str(error))
@@ -127,7 +121,6 @@ def _channel_result(
     previous,
     use_constraints,
     solve_channels,
-    read_confidence,
 ):
     try:
         parts = split(text)
@@ -143,7 +136,7 @@ def _channel_result(
         name: [list(row) for row in getattr(baseline, name)]
         for name in ("spans", "red", "raw", "zero", "group", "mapped")
     }
-    operations, readings, filtered, errors, results = [], [], [], [], []
+    operations, filtered, errors, results = [], [], [], []
     previous_results = dict(previous.channel_results) if previous is not None else {}
     shapes = constraints.read(text) if use_constraints else {}
     group_offset = 0
@@ -162,7 +155,6 @@ def _channel_result(
                 notes=notes.get(channel, ()),
                 mode="read",
                 previous=previous_results.get(channel),
-                read_confidence=read_confidence,
             )
         else:
             try:
@@ -189,7 +181,6 @@ def _channel_result(
                     rows[ref.line][ref.index] = value
         kept = local_anchors if result.error and automatic else result.operations
         operations.extend(part.restore(op) for op in kept)
-        readings.extend(result.readings)
         filtered.extend(result.filtered)
         results.append((channel, result))
         if result.error:
@@ -205,7 +196,6 @@ def _channel_result(
         lines=tuple(lines),
         **{name: tuple(tuple(row) for row in rows) for name, rows in tables.items()},
         operations=tuple(operations),
-        readings=tuple(readings),
         filtered=tuple(filtered),
         error="; ".join(f"Channel {channel}: {error}" for channel, error in errors),
         state=dict(results).get(0, LyricResult()).state,
@@ -214,27 +204,14 @@ def _channel_result(
     )
 
 
-def _read_result(text, lines, raw, notes, scores=(), flagged=(), read_confidence=True) -> LyricResult:
+def _read_result(text, lines, raw, notes) -> LyricResult:
     resolved = resolve([TimedNote(*note) for note in notes], include_branches=False)
     spans, ids = faithful.lay_out(text, resolved.stream)
     rows = _rows(lines, spans)
     zero = tuple(tuple(span is None or span[0] is None for span in row) for row in rows)
     error = "the target channel has no notes" if not resolved.stream else ""
     operations = faithful.operations(text, resolved.stream)
-    readings = ()
-    if (
-        read_confidence
-        and not error
-        and all(onset is not None and length is not None for row in raw for onset, length in row)
-    ):
-        evidence = [_raw_row(row, scores[index] if index < len(scores) else ()) for index, row in enumerate(raw)]
-        try:
-            readings = tuple(confidence.read(lines, evidence, resolved.stream, operations, flagged))
-        except MappingError:
-            readings = ()
-    red, _zero, _groups, _mapped = _tables(
-        lines, operations, readings or (Reading(0.0, 1.0, 0.0, False),) * len(operations), resolved.stream
-    )
+    red, _zero, _groups, _mapped = _tables(lines, operations, resolved.stream)
     groups = [[-1 for _sound in line.sounds] for line in lines]
     for group, run in enumerate(note_runs(text)):
         if len(run.sounds) > 1:
@@ -249,7 +226,6 @@ def _read_result(text, lines, raw, notes, scores=(), flagged=(), read_confidence
         group=tuple(tuple(row) for row in groups),
         mapped=tuple(tuple(tuple(chunk) for chunk in row) for row in ids),
         operations=operations,
-        readings=readings,
         filtered=tuple(resolved.filtered),
         error=error,
     )
@@ -263,9 +239,8 @@ def _edit_result(
     state = previous.state if previous is not None and previous.filtered == resolved.filtered else None
     shapes = (constraints.read(text) if use_constraints else {}) if shapes is None else shapes
     operations = tuple(solve(lines, rows, resolved.stream, anchors, state, shapes))
-    readings = tuple(confidence.read(lines, rows, resolved.stream, operations, flagged))
     spans = sound_spans([len(line.sounds) for line in lines], operations, resolved.stream)
-    red, zero, group, mapped = _tables(lines, operations, readings, resolved.stream)
+    red, zero, group, mapped = _tables(lines, operations, resolved.stream)
     return LyricResult(
         lines=tuple(lines),
         spans=_pairs(spans),
@@ -276,7 +251,6 @@ def _edit_result(
         mapped=mapped,
         operations=operations,
         filtered=tuple(resolved.filtered),
-        readings=readings,
         state=MappingState.capture(lines, rows, resolved.stream, anchors, operations),
     )
 
@@ -325,25 +299,22 @@ def _rows(lines, spans) -> list[list[Span]]:
     return rows
 
 
-def _tables(lines, operations, readings, stream) -> tuple:
-    """The strip's doubt, grey, shared-note and note-id tables, read off the operations and readings."""
+def _tables(lines, operations, stream) -> tuple:
+    """The strip's colour, grey, shared-note and note-id tables, read off the operations."""
     at = {note.id: index for index, note in enumerate(stream)}
     red = [[False] * len(line.sounds) for line in lines]
     zero = [[False] * len(line.sounds) for line in lines]
     group = [[-1] * len(line.sounds) for line in lines]
     mapped: list[list[tuple[int, ...]]] = [[() for _sound in line.sounds] for line in lines]
-    for operation, reading in zip(operations, readings, strict=True):
+    for operation in operations:
         if isinstance(operation, Match):
-            red[operation.sound.line][operation.sound.index] = reading.low
             mapped[operation.sound.line][operation.sound.index] = tuple(operation.notes)
         elif isinstance(operation, Merge):
             note = at[operation.note]
             for ref in operation.sounds:
-                red[ref.line][ref.index] = reading.low
                 group[ref.line][ref.index] = note
                 mapped[ref.line][ref.index] = (operation.note,)
         else:
-            red[operation.sound.line][operation.sound.index] = reading.low
             zero[operation.sound.line][operation.sound.index] = True
     return (
         tuple(tuple(row) for row in red),

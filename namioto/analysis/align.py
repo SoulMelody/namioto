@@ -14,9 +14,7 @@ and a target's frames are merged into its span; the spans are grouped back into 
 a token's start is worth reading: a CTC target's end is the next target's onset, so the last one
 before a rest reaches into the rest.
 
-The caller passes a window per line; the aligner can only refine a window, never find one, and a
-window that does not hold the line's voice still comes back with times, from a path the model
-barely supports - which is what `problems()` is for.
+The caller passes a window per line; the aligner finds the best CTC path within that window.
 
 A whole song is not run in one pass: `ChunkedBackend` walks it in overlapping chunks, because a
 wav2vec2 graph attends over its whole input and one pass is quadratic in frames; the `chunk`
@@ -58,10 +56,6 @@ FRAME_SAMPLES = 320
 FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
 # wav2vec2's convolutional front end rejects anything shorter than 400 samples
 MIN_SAMPLES = 400
-# characters this close together in a row are one character's frames spread over several, not a
-# fast line; a single close pair is a zero-sound symbol or a punctuation mark and means nothing
-COLLAPSE_SECONDS = 0.04
-COLLAPSE_RUN = 3
 # a wav2vec2 graph attends over its whole input, so one pass over a song costs quadratically in
 # frames - minutes of audio need tens of gigabytes. The window is cut into overlapping chunks and
 # only the frames that saw context on both sides are kept, which bounds a pass without changing the
@@ -80,8 +74,6 @@ TAIL_FRAME_SECONDS = 0.02
 HEAD_FRAME_SECONDS = 0.8
 SILENCE_PERCENTILE = 10
 SILENCE_RATIO = 0.1
-# a line whose median error against reference times is past this is worth running again, not keeping
-DIVERGE_SECONDS = 0.1
 MODEL_FILE = "model.onnx"
 # the half-precision copy a GPU run prefers, written beside it by `--precision fp16`: the WebGPU
 # provider runs it several times faster than the fp32 graph and nearly as exactly
@@ -629,7 +621,7 @@ def align(
     """Align every line's tokens to `audio` and give each token its span.
 
     `dictionary` maps lower-cased characters to their codes; a character outside it is aligned
-    through a wildcard column, an error `problems()` reports rather than hides.
+    through a wildcard column.
     """
     lines = list(segments)
     aligned = []
@@ -706,36 +698,6 @@ def _window(segment: Segment, audio: np.ndarray) -> tuple[np.ndarray | None, flo
     if window.size < MIN_SAMPLES:
         window = np.pad(window, (0, MIN_SAMPLES - window.size))
     return window, first / SAMPLE_RATE
-
-
-def problems(segment: AlignedSegment, reference: Sequence[float | None] | None = None) -> tuple[str, ...]:
-    """The failure shapes of one aligned line: `empty`, `nonmonotonic`, `collapsed`, `diverged`.
-
-    `reference` is the onset already known for each of the line's tokens, None where there is none;
-    the times an existing MIDI or subtitle carries are what makes `diverged` possible, and a line
-    wearing it is the one to run again with another window before believing it.
-    """
-    starts = [token.start for token in segment.tokens if token.start is not None]
-    if not starts:
-        return ("empty",)
-    found = []
-    if any(later <= earlier for earlier, later in zip(starts, starts[1:], strict=False)):
-        found.append("nonmonotonic")
-    run = 0
-    for earlier, later in zip(starts, starts[1:], strict=False):
-        run = run + 1 if later - earlier < COLLAPSE_SECONDS else 0
-        if run >= COLLAPSE_RUN:
-            found.append("collapsed")
-            break
-    if reference is not None:
-        errors = [
-            token.start - expected
-            for token, expected in zip(segment.tokens, reference, strict=False)
-            if token.start is not None and expected is not None
-        ]
-        if errors and float(np.median(np.abs(errors))) > DIVERGE_SECONDS:
-            found.append("diverged")
-    return tuple(found)
 
 
 def voice_segments(audio: np.ndarray, frame_seconds: float = TAIL_FRAME_SECONDS) -> list[tuple[float, float]]:
@@ -889,18 +851,12 @@ def main(argv: list[str] | None = None) -> int:
         blank_id=blank_id,
         progress=lambda done, total: print(f"  lines {done}/{total}", file=sys.stderr),
     )
-    for segment in aligned:
-        found = problems(segment)
-        if found:
-            print(f"  {', '.join(found)}: {' '.join(token.text for token in segment.tokens)}", file=sys.stderr)
-
     payload = {
         "audio": str(args.audio),
         "segments": [
             {
                 "start": segment.start,
                 "end": segment.end,
-                "problems": list(problems(segment)),
                 "tokens": [
                     {"text": token.text, "start": token.start, "end": token.end, "score": token.score}
                     for token in segment.tokens

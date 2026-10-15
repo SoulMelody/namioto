@@ -210,17 +210,6 @@ def _line_end(context: _Context, index: int) -> float:
     return context.line_end[context.info[index][0]]
 
 
-def _line_end_overshoot(context: _Context, index: int, predicted_end: float) -> float:
-    """How far a line-end operation's predicted end runs past the end reference.
-
-    A note held longer than its lyric is sung, or a rest before the next line, is not the mapping's
-    trouble; only an end short of the end reference says the lyrics and the notes disagree.
-    """
-    if not context.is_last[index]:
-        return 0.0
-    return max(0.0, predicted_end - _line_end(context, index))
-
-
 def _drop_point(context: _Context, index: int, note_at: int) -> float:
     """The cursor boundary a dropped Sound sits on: the nearer of the taken note's end and the next start.
 
@@ -442,33 +431,3 @@ def _rebuild(context: _Context, back, sa: int, na: int, size: int, count: int) -
             step, have = step - run, have - 1
     operations.reverse()
     return operations
-
-
-def fit_errors(
-    lines: Sequence[SoundLine], raw: Sequence[Sequence[Raw]], notes: Sequence[Note], operations: Sequence[Operation]
-) -> list[float]:
-    """Pattern-weighted errors in seconds; line ends count only under-run."""
-    validate(lines, raw)
-    if not notes:
-        return []
-    context = _context(lines, raw, list(notes))
-    found: list[float] = []
-    sound_at, note_at = 0, 0
-    for operation in operations:
-        weight = 1.0
-        if isinstance(operation, Match):
-            count = len(operation.notes)
-            base = _match_base(context, sound_at, note_at, count)
-            end_at, predicted_end = sound_at, context.notes[note_at + count - 1].end
-        elif isinstance(operation, Merge):
-            count = len(operation.sounds)
-            weight = context.merge_weights[sound_at][count - 2]
-            base = _merge_base(context, sound_at, count, note_at)
-            end_at, predicted_end = sound_at + count - 1, context.notes[note_at].end
-        else:
-            base = _drop_base(context, sound_at, note_at)
-            end_at, predicted_end = sound_at, _drop_point(context, sound_at, note_at)
-        found.append(base - weight * _line_end_overshoot(context, end_at, predicted_end))
-        sound_at += len(operation.sounds)
-        note_at += operation.slots
-    return found

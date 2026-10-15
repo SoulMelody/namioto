@@ -41,7 +41,7 @@ LOG_HEIGHT = 120
 
 
 class Aligner(LoadingThread):
-    """One pass of the forced aligner over the whole audio: the times, and the lines it doubts."""
+    """One pass of the forced aligner over the whole audio."""
 
     progress = Signal(int, int)
     aligned = Signal(object)
@@ -97,13 +97,10 @@ class Aligner(LoadingThread):
         found = align.align_whole(segment, emission, dictionary, blank_id=blank_id)
         self.message.emit(tr("Fitting the sounds to the voice\u2026"))
         rows = align.correct_times(split_tokens(found.tokens, lines), audio)
-        flagged, problems = self._problems(found, lines)
         with suppress(OSError):  # the cache is disposable, and the alignment itself already came back
-            align.save_alignment(
-                self.path, self.model, self.provider, self.cache_text, rows, problems, flagged, self.chunk
-            )
+            align.save_alignment(self.path, self.model, self.provider, self.cache_text, rows, [], [], self.chunk)
         self.message.emit(tr("Alignment took {seconds:.1f}s", seconds=time.monotonic() - started))
-        self.aligned.emit((rows, self.model, problems, flagged))
+        self.aligned.emit((rows, self.model, [], []))
 
     def _downloading(self, done: int, total: int) -> None:
         """A download of a model that was not installed, logged a tenth at a time."""
@@ -115,20 +112,6 @@ class Aligner(LoadingThread):
         if percent >= self._downloaded + 10:
             self._downloaded = percent
             self.message.emit(tr("Downloading the {model} model\u2026 {percent}%", model=self.model, percent=percent))
-
-    @staticmethod
-    def _problems(found, lines) -> tuple[list[bool], list[str]]:
-        """One flag per line the aligner doubted, and the same trouble named for the log."""
-        flagged, reported = [], []
-        at = 0
-        for line in lines:
-            chunk = found.tokens[at : at + len(line.sounds)]
-            at += len(chunk)
-            trouble = align.problems(align.AlignedSegment(found.start, found.end, tuple(chunk)))
-            flagged.append(bool(trouble))
-            if trouble:
-                reported.append(f"{line.text}: {', '.join(trouble)}")
-        return flagged, reported
 
 
 class AlignDialog(QDialog):
@@ -223,9 +206,9 @@ class AlignDialog(QDialog):
         chunk = self._parameters["chunk"]
         cached = align.find_alignment(self.audio, model, provider, self.cache_text, chunk)
         if cached is not None:
-            rows, problems, flagged = cached
-            self._done((rows, model, problems, flagged))  # re-snapped with the tempo and grid offset in hand
-            self.log.setPlainText("\n".join([tr("saved alignment reused"), *problems]))
+            rows, _problems, _flagged = cached
+            self._done((rows, model, [], []))
+            self.log.setPlainText(tr("saved alignment reused"))
             return
         self.progress.setRange(0, 0)  # busy until the first chunk of the model's pass comes back
         self.status.setText(tr("Aligning…"))
@@ -242,7 +225,7 @@ class AlignDialog(QDialog):
         self.progress.setValue(done)
 
     def _done(self, result) -> None:
-        spans, model, problems, flagged = result
+        spans, model, _problems, _flagged = result
         times = from_spans(spans)
         cells = self.parameters()["quantize"]  # read now, so a change made while the run went counts
         if cells:
@@ -253,9 +236,7 @@ class AlignDialog(QDialog):
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
         self.status.setText(tr("Aligned {lines} lines", lines=len(times)))
-        if problems:
-            self.log.appendPlainText("\n".join(problems))
-        self.aligned.emit(times, model, flagged)
+        self.aligned.emit(times, model, ())
 
     def _fail(self, message: str) -> None:
         self._thread = None

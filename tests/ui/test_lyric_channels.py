@@ -231,12 +231,12 @@ def test_hand_edits_and_note_changes_never_call_the_solver(own_window, tmp_path,
     assert own_window.view.lyric_times == (((0.0, 0.4), (0.5, 0.75)),)
 
 
-def test_low_confidence_alignment_is_written_and_diagnostics_are_undoable(own_window, tmp_path):
+def test_alignment_flags_never_mark_notes_red_and_are_undoable(own_window, tmp_path):
     _mapped_pair(own_window, tmp_path)
     raw = own_window.view.lyric_raw
     own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms", (True,))
     wait_for_lyric_mapping(own_window)
-    assert own_window.view.lyric_red == ((True, True),)
+    assert own_window.view.lyric_red == ((False, False),)
     assert own_window.lyrics_text == "あい"
     assert own_window.export_krc(tmp_path / "low.krc")
     own_window.view.undo()
@@ -247,11 +247,11 @@ def test_low_confidence_alignment_is_written_and_diagnostics_are_undoable(own_wi
     own_window.view.redo()
     wait_for_lyric_mapping(own_window)
     assert own_window._lyric_flags == (True,)
-    assert own_window.view.lyric_red == ((True, True),)
+    assert own_window.view.lyric_red == ((False, False),)
     assert own_window.save_project(own_window.project_path)
     assert own_window.load_project(own_window.project_path)
     wait_for_lyric_mapping(own_window)
-    assert own_window.view.lyric_red == ((True, True),)
+    assert own_window.view.lyric_red == ((False, False),)
 
 
 def test_failed_legacy_migration_preserves_the_project_and_blocks_overwriting(own_window, tmp_path):
@@ -321,7 +321,7 @@ def test_saving_while_auto_mapping_runs_does_not_cancel_the_result(own_window, t
     assert own_window._lyric_flags == (True,)
     assert len(workers) == 2
     workers[1].complete()
-    assert own_window.view.lyric_red == ((True, True),)
+    assert own_window.view.lyric_red == ((False, False),)
 
 
 def test_automatic_solver_runs_outside_the_gui_thread(own_window, tmp_path, monkeypatch):

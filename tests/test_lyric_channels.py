@@ -51,7 +51,7 @@ def test_faithful_mapping_reuses_only_unchanged_channels(monkeypatch, changed):
     assert dict(result.channel_results)[1] is dict(baseline.channel_results)[1]
 
 
-def test_preview_reuses_complete_channels_but_finishing_recomputes_preview_confidence():
+def test_preview_and_finishing_reuse_unchanged_channels():
     text = "あ\n@1{い}"
     notes = {0: ((0.0, 1.0, 60, 10),), 1: ((2.0, 3.0, 60, 20),)}
     raw = [[(0.0, 1.0)], [(2.0, 1.0)]]
@@ -63,14 +63,11 @@ def test_preview_reuses_complete_channels_but_finishing_recomputes_preview_confi
         raw,
         notes_by_channel=notes,
         previous=baseline,
-        read_confidence=False,
     )
     assert dict(preview.channel_results)[1] is dict(baseline.channel_results)[1]
-    assert not dict(preview.channel_results)[0].confidence_ready
     complete = map_lyrics(changed, natural_sounds(changed), raw, notes_by_channel=notes, previous=preview)
     assert complete == map_lyrics(changed, natural_sounds(changed), raw, notes_by_channel=notes)
-    assert dict(complete.channel_results)[0].confidence_ready
-    assert complete.readings
+    assert dict(complete.channel_results)[0] is dict(preview.channel_results)[0]
 
 
 @pytest.mark.parametrize("text", ["@c0{あい}", "@c2{あい}", "@c15{文字[あ,い]}"])
