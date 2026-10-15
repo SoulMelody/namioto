@@ -47,6 +47,7 @@ from namioto.document import MIN_DURATION, PITCH_COUNT, PITCH_MAX, PITCH_MIN, Do
 from namioto.i18n import tr
 from namioto.interaction import Interaction, Tool
 from namioto.karaoke.sounds import SoundLine
+from namioto.lyric_colors import DEFAULT_COLORS
 from namioto.lyricmap.raw import from_spans
 from namioto.ui import theme
 from namioto.ui.blocks import CLICK_SLOP_PX, Press, block_part
@@ -367,6 +368,7 @@ class PianoRollView(QGraphicsView):
         self._grid_offset = 0.0  # seconds the drawn grid slides by; the notes and the playhead keep their time
         self._gesture: Gesture | None = None  # the pointer gesture in flight, from press to release
         self.document = Document(channels=[Channel(channel=0, color=theme.NOTE_PALETTE[0])])
+        self.lyric_colors = DEFAULT_COLORS
         self._items: list[NoteItem] = []
         self._clipboard: tuple[tuple[int, float, float, int], ...] = ()
         self.active_channel = 0
@@ -881,6 +883,9 @@ class PianoRollView(QGraphicsView):
 
     def _channel(self, number: int) -> Channel | None:
         return next((channel for channel in self.channels if channel.channel == number), None)
+
+    def lyric_color(self, number: int) -> QColor:
+        return QColor(self.lyric_colors[number % len(self.lyric_colors)])
 
     def channel_color(self, number: int) -> QColor:
         channel = self._channel(number)

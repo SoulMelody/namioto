@@ -30,8 +30,11 @@ from PySide6.QtWidgets import (
 )
 
 from namioto import settings as store
+from namioto.channels import valid_color
 from namioto.i18n import tr
+from namioto.lyric_colors import DEFAULT_COLORS
 from namioto.params import Field
+from namioto.ui.colors import colour_row
 from namioto.ui.form import add_row, advanced_section, field_editor
 
 SAVE_DELAY_MS = 1000
@@ -82,11 +85,13 @@ class SettingsDialog(QDialog):
     """Every preference, on a page per section, over a copy that is only handed over when applied."""
 
     applied = Signal(object)
+    lyric_colors_applied = Signal(object)
 
     def __init__(
         self,
         settings,
         *,
+        lyric_colors=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -100,6 +105,19 @@ class SettingsDialog(QDialog):
         for name in PAGES:
             section = self._sections[name]
             pages.addTab(self._page(section), tr(section.title))
+
+        self.color_editors = []
+        if lyric_colors is not None:
+            page = QWidget()
+            form = QFormLayout(page)
+            for number, color in enumerate(lyric_colors):
+                editor = QLineEdit(color)
+                self.color_editors.append(editor)
+                form.addRow(tr("Channel {number}", number=number), colour_row(editor))
+            restore_colors = QPushButton(tr("Restore default colours"))
+            restore_colors.clicked.connect(self._restore_colors)
+            form.addRow(restore_colors)
+            pages.addTab(page, tr("Project lyric colours"))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -116,6 +134,19 @@ class SettingsDialog(QDialog):
         layout.addWidget(pages)
         layout.addWidget(self._path_hint())
         layout.addWidget(buttons)
+        self._buttons = buttons
+        for editor in self.color_editors:
+            editor.textChanged.connect(self._validate_colors)
+        self._validate_colors()
+
+    def _restore_colors(self):
+        for editor, color in zip(self.color_editors, DEFAULT_COLORS, strict=True):
+            editor.setText(color)
+
+    def _validate_colors(self):
+        valid = all(valid_color(editor.text().strip()) for editor in self.color_editors)
+        for role in (QDialogButtonBox.StandardButton.Ok, QDialogButtonBox.StandardButton.Apply):
+            self._buttons.button(role).setEnabled(valid)
 
     def values(self):
         """The copy, with everything the widgets hold read back into it."""
@@ -124,7 +155,11 @@ class SettingsDialog(QDialog):
         return self._settings
 
     def apply(self) -> None:
+        if not all(valid_color(editor.text().strip()) for editor in self.color_editors):
+            return
         self.applied.emit(self.values())
+        if self.color_editors:
+            self.lyric_colors_applied.emit(tuple(editor.text().strip() for editor in self.color_editors))
 
     def restore_defaults(self) -> None:
         ass = self._settings.ass

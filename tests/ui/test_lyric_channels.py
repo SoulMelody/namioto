@@ -11,12 +11,11 @@ from PySide6.QtWidgets import QMenu
 from namioto import project
 from namioto import settings as store
 from namioto.channels import Channel
-from namioto.karaoke import AssSettings
 from namioto.karaoke.operations import Drop, Match, SoundRef
 from namioto.karaoke.sounds import natural_sounds
 from namioto.lyrics import text_key
 from namioto.ui.align_dialog import AlignDialog
-from namioto.ui.ass_dialog import AssDialog
+from namioto.ui.settings_dialog import SettingsDialog
 
 from .helpers import _manual_mapping, _mapped_pair, drag_sound, wait_for_lyric_mapping
 
@@ -194,20 +193,28 @@ def test_align_dialog_selects_the_active_channel_and_separates_its_cache(own_win
     assert seen == [(1, "# Align channel 1\n" + own_window.lyrics_text)]
 
 
-def test_ass_channel_colour_pickers_validate_and_leave_preferences_untouched(own_window):
+def test_project_colour_pickers_validate_and_leave_preferences_untouched(own_window):
+    from PySide6.QtWidgets import QDialogButtonBox, QPushButton
+
     original = store.to_dict(own_window.settings)
-    dialog = AssDialog(own_window.settings, own_window)
-    dialog.channel_editors[1].setText("FF0000")
-    dialog.channel_editors[2].setText("00FF00")
-    assert dialog.export_button.isEnabled()
-    assert AssSettings(channel_colors=dialog.values().ass.channel_colors).channel_colours() == {
-        1: "FF0000",
-        2: "00FF00",
-    }
-    dialog.channel_editors[1].setText("invalid")
-    assert not dialog.export_button.isEnabled()
-    dialog.restore_defaults()
-    assert dialog.values().ass.channel_colors == ""
+    original_midi = own_window.view.channel_color(1)
+    dialog = SettingsDialog(own_window.settings, lyric_colors=own_window.view.lyric_colors)
+    dialog.lyric_colors_applied.connect(own_window._apply_lyric_colors)
+    dialog.color_editors[1].setText("#FF0000")
+    dialog.color_editors[2].setText("#00FF00")
+    picker = dialog.color_editors[1].parentWidget().findChild(QPushButton)
+    assert not picker.icon().isNull()
+    assert picker.icon().pixmap(20, 20).toImage().pixelColor(10, 10).name() == "#ff0000"
+    dialog.apply()
+    assert own_window.view.lyric_color(1).name() == "#ff0000"
+    assert own_window.view.lyric_color(2).name() == "#00ff00"
+    assert own_window.view.channel_color(1) == original_midi
+    assert own_window._ass_settings().channel_colours()[1] == "FF0000"
+    dialog.color_editors[1].setText("invalid")
+    assert picker.icon().isNull()
+    assert not dialog._buttons.button(QDialogButtonBox.StandardButton.Apply).isEnabled()
+    dialog._restore_colors()
+    assert dialog._buttons.button(QDialogButtonBox.StandardButton.Apply).isEnabled()
     assert store.to_dict(own_window.settings) == original
 
 

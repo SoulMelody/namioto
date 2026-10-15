@@ -54,11 +54,11 @@ def draw_units(painter, units, rects, view, palette, selected=()):
         metrics = painter.fontMetrics()
         x = rect.center().x() - metrics.horizontalAdvance(unit.text) // 2
         for word in words:
-            painter.setPen(view.channel_color(word.channel))
+            painter.setPen(view.lyric_color(word.color_channel if word.color_channel is not None else word.channel))
             width = metrics.horizontalAdvance(word.char)
             painter.drawText(QRect(x, 26, width, 28), Qt.AlignmentFlag.AlignCenter, word.char)
             if word.color_channel is not None:
-                painter.fillRect(QRect(x, 54, max(width, 2), 2), view.channel_color(word.color_channel))
+                painter.fillRect(QRect(x, 54, max(width, 2), 2), view.lyric_color(word.color_channel))
             x += width
 
 

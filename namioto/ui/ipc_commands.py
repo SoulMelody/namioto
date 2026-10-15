@@ -754,7 +754,7 @@ class WindowBridge:
         return {
             "krc": krc,
             "midi": base64.b64encode(data).decode("ascii"),
-            "settings": vars(self.window.settings.ass).copy(),
+            "settings": vars(self.window._ass_settings()).copy(),
             "wavetone": self.window.settings.midi.wavetone,
             "revision": self._subtitle_revision,
         }

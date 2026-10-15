@@ -218,7 +218,7 @@ class SoundStrip(ViewportStrip):
             if not zero:
                 painter.fillRect(
                     QRectF(rect.left(), rect.top(), rect.width(), 2),
-                    self.view.channel_color(sound.color_channel if sound.color_channel is not None else sound.channel),
+                    self.view.lyric_color(sound.color_channel if sound.color_channel is not None else sound.channel),
                 )
             room = max(0, int(rect.width()) - 2 * SOUND_PAD)
             text = self._fit_label(sound, metrics, room)

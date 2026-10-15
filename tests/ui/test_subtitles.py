@@ -96,8 +96,9 @@ def test_cancelled_or_failed_subtitle_export_does_not_remember_options(subtitle_
 def test_ass_options_cover_the_single_track_settings_without_mutating_them(own_window):
     original = store.to_dict(own_window.settings)
     dialog = AssDialog(own_window.settings, own_window)
-    assert set(dialog.editors) | {"channel_colors"} == set(vars(own_window.settings.ass))
-    assert set(dialog.channel_editors) == set(range(16))
+    assert set(dialog.editors) == set(vars(own_window.settings.ass)) - {"overlay_color", "channel_colors"}
+    assert "overlay_color" not in dialog.editors
+    assert "channel_colors" not in dialog.editors
     assert set(dialog.editors) == {name for _, names in ASS_GROUPS for name in names}
     assert dialog.export_button.isEnabled()
     dialog.editors["font_size"].setValue(40)
@@ -107,10 +108,10 @@ def test_ass_options_cover_the_single_track_settings_without_mutating_them(own_w
 
 def test_ass_automatic_colours_follow_the_overlay_and_manual_blur(own_window):
 
-    dialog = AssDialog(own_window.settings, own_window)
-    before = dialog.editors["overlay_blur_color"].text()
-    dialog.editors["overlay_color"].setText("FF0000")
-    assert dialog.editors["overlay_blur_color"].text() != before
+    colors = ("#FF0000",) * 16
+    dialog = AssDialog(own_window.settings, own_window, lyric_colors=colors)
+    expected_overlay = AssSettings(overlay_color="FF0000").blur_colours()[0]
+    assert dialog.editors["overlay_blur_color"].text() == expected_overlay
     assert dialog.values().ass.overlay_blur_color == ""
     assert not dialog.editors["overlay_blur_color"].isEnabled()
     dialog.automatic["overlay_blur_color"].setChecked(False)
@@ -118,7 +119,6 @@ def test_ass_automatic_colours_follow_the_overlay_and_manual_blur(own_window):
     dialog.editors["overlay_blur_color"].setText("123456")
     expected = AssSettings(overlay_color="FF0000", overlay_blur_color="123456").blur_colours()[1]
     assert dialog.editors["base_blur_color"].text() == expected
-    dialog.editors["overlay_color"].setText("00FF00")
     assert dialog.values().ass.overlay_blur_color == "123456"
     assert dialog.values().ass.base_blur_color == ""
     dialog.restore_defaults()
@@ -150,11 +150,11 @@ def test_ass_options_validate_and_pick_rgb_colours(own_window, monkeypatch):
     assert dialog.result() != QDialog.DialogCode.Accepted
     dialog.editors["fade_in_ms"].setValue(0)
     assert dialog.export_button.isEnabled()
-    dialog.editors["overlay_color"].setText("invalid")
+    dialog.editors["base_outline_color"].setText("invalid")
     assert not dialog.export_button.isEnabled()
     monkeypatch.setattr(QColorDialog, "getColor", lambda *args: QColor("#12ABEF"))
-    dialog._choose_colour(dialog.editors["overlay_color"])
-    assert dialog.editors["overlay_color"].text() == "12ABEF"
+    dialog._choose_colour(dialog.editors["base_outline_color"])
+    assert dialog.editors["base_outline_color"].text() == "12ABEF"
     assert dialog.export_button.isEnabled()
     dialog.editors["font"].setText("a,b")
     assert not dialog.export_button.isEnabled()

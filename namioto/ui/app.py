@@ -548,10 +548,23 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(
             self.settings,
+            lyric_colors=self.view.lyric_colors,
             parent=self,
         )
+        dialog.lyric_colors_applied.connect(self._apply_lyric_colors)
         dialog.applied.connect(self.settings_store.apply)
         dialog.exec()
+
+    def _apply_lyric_colors(self, colors) -> None:
+        if tuple(colors) == tuple(self.view.lyric_colors):
+            return
+        for number, color in enumerate(colors):
+            setattr(self.project_settings.lyric_colors, f"channel_{number}", color)
+        self.view.lyric_colors = tuple(colors)
+        self.sound_strip.update()
+        self.lyric_editor.lines.viewport().update()
+        self.subtitle_changed.emit()
+        self._mark_dirty()
 
     def _make_bindings(self) -> tuple[_Binding, ...]:
         """Every bar value the settings hold, one line each: read, write, the signal, and its effect."""
@@ -737,6 +750,9 @@ class MainWindow(QMainWindow):
         """A document was opened or started: its values take over the bars, the roll and the player."""
         self._seed_bindings(lambda binding: binding.model is not None)
         document = self.project_settings
+        self.view.lyric_colors = tuple(getattr(document.lyric_colors, f"channel_{number}") for number in range(16))
+        self.sound_strip.update()
+        self.lyric_editor.lines.viewport().update()
         self.view.set_zoom(document.editor.zoom_x, document.editor.zoom_y)
         self.view.center_on(document.view.center_x, document.view.center_y)
         self.view.refresh()
@@ -1102,7 +1118,7 @@ class MainWindow(QMainWindow):
             self._locate_export_problem(gate)
             self.statusBar().showMessage(self._gate_message(gate))
             return False
-        dialog = AssDialog(self.settings, self)
+        dialog = AssDialog(self.settings, self, lyric_colors=self.view.lyric_colors)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
         selected = dialog.values()
@@ -1116,7 +1132,7 @@ class MainWindow(QMainWindow):
         )
         if not chosen:
             return False
-        if not self.export_ass(chosen, settings=AssSettings(**vars(selected.ass))):
+        if not self.export_ass(chosen, settings=self._ass_settings(selected.ass)):
             return False
         self.settings.ass = selected.ass
         self.settings_store.flush()
@@ -1146,7 +1162,10 @@ class MainWindow(QMainWindow):
         try:
             krc, data = self.ass_source()
             text = subtitle.build_ass(
-                krc, data, settings=settings or self._ass_settings(), wavetone=self.settings.midi.wavetone
+                krc,
+                data,
+                settings=self._with_lyric_colors(settings or self._ass_settings()),
+                wavetone=self.settings.midi.wavetone,
             )
             subtitle.save_export(target, krc, data, text, save_krc=save_krc, save_midi=save_midi)
         except (KrcError, ValueError, EOFError) as error:
@@ -1158,9 +1177,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(i18n.tr("Exported {name}", name=target.name))
         return True
 
-    def _ass_settings(self) -> AssSettings:
-        """The subtitle's own preferences, gathered for `karaoke.generate_ass`."""
-        return AssSettings(**vars(self.settings.ass))
+    def _with_lyric_colors(self, settings: AssSettings) -> AssSettings:
+        colors = {number: color.lstrip("#") for number, color in enumerate(self.view.lyric_colors)}
+        return replace(
+            settings,
+            overlay_color=colors[0],
+            channel_colors=",".join(f"{number}={color}" for number, color in colors.items()),
+        )
+
+    def _ass_settings(self, settings=None) -> AssSettings:
+        """Subtitle effects with the project's authoritative lyric colours."""
+        return self._with_lyric_colors(AssSettings(**vars(settings or self.settings.ass)))
 
     def load_project(self, path: str | Path) -> bool:
         """Open a project: its values come over the running ones, and its notes replace the roll."""

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Subtitle export options and channel colours, edited on a copy until the file is written."""
+"""Subtitle effects edited on a copy; primary colours belong to the project."""
 
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from namioto import settings as store
 from namioto.i18n import tr
 from namioto.karaoke import AssSettings
+from namioto.lyric_colors import DEFAULT_COLORS
+from namioto.ui.colors import bind_swatch
 from namioto.ui.form import add_row, field_editor
 
 GROUPS = (
@@ -30,7 +32,6 @@ GROUPS = (
     (
         "Colours and effects",
         (
-            "overlay_color",
             "base_outline_color",
             "overlay_outline_color",
             "overlay_blur_color",
@@ -48,14 +49,16 @@ GROUPS = (
 class AssDialog(QDialog):
     """The export form; accepting it does not change the program's saved preferences."""
 
-    def __init__(self, settings, parent=None):
+    def __init__(self, settings, parent=None, *, lyric_colors=DEFAULT_COLORS):
         super().__init__(parent)
         self.setWindowTitle(tr("Export ASS subtitle"))
         self._settings = store.clone(settings)
+        self._lyric_colors = lyric_colors
         self.editors = {}
         self._readers = {}
         self._writers = {}
         self.automatic = {}
+        self._swatches = {}
         fields = {field.name: field for section in store.SECTIONS if section.name == "ass" for field in section.fields}
         pages = QTabWidget()
         for title, names in GROUPS:
@@ -74,21 +77,6 @@ class AssDialog(QDialog):
                 else:
                     editor.valueChanged.connect(self._validate)
             pages.addTab(page, tr(title))
-
-        channel_page = QWidget()
-        channel_form = QFormLayout(channel_page)
-        self.channel_editors = {}
-        try:
-            channel_colours = AssSettings(channel_colors=settings.ass.channel_colors).channel_colours()
-        except ValueError:
-            channel_colours = {}
-        for channel in range(16):
-            editor = QLineEdit(channel_colours.get(channel, ""))
-            editor.setPlaceholderText(tr("Use overlay colour"))
-            editor.textChanged.connect(self._validate)
-            self.channel_editors[channel] = editor
-            channel_form.addRow(tr("Channel {number}", number=channel), self._colour_row(f"channel_{channel}", editor))
-        pages.addTab(channel_page, tr("Channel colours"))
 
         self.hint = QLabel()
         self.hint.setWordWrap(True)
@@ -112,6 +100,7 @@ class AssDialog(QDialog):
         picker = QPushButton(tr("Choose colour"))
         picker.clicked.connect(lambda: self._choose_colour(editor))
         layout.addWidget(picker)
+        self._swatches[name] = bind_swatch(editor, picker)
         if name in ("overlay_blur_color", "base_blur_color"):
             automatic = QCheckBox(tr("Automatic"))
             automatic.setChecked(not editor.text())
@@ -135,15 +124,16 @@ class AssDialog(QDialog):
             if name in self.automatic and self.automatic[name].isChecked():
                 value = ""
             store.set_value(self._settings, "ass", name, value)
-        self._settings.ass.channel_colors = ",".join(
-            f"{channel}={editor.text().strip()}"
-            for channel, editor in self.channel_editors.items()
-            if editor.text().strip()
-        )
         return self._settings
 
     def _validate(self, *_):
-        settings = AssSettings(**vars(self.values().ass))
+        settings = AssSettings(
+            **{
+                **vars(self.values().ass),
+                "overlay_color": self._lyric_colors[0].lstrip("#"),
+                "channel_colors": {number: color.lstrip("#") for number, color in enumerate(self._lyric_colors)},
+            },
+        )
         error = ""
         if not settings.font or any(char in settings.font for char in ",\n\r"):
             error = tr("Enter a font name without commas or line breaks")
@@ -172,6 +162,7 @@ class AssDialog(QDialog):
                     editor.blockSignals(True)
                     editor.setText(colour)
                     editor.blockSignals(False)
+                    self._swatches[name]()
         self.hint.setText(error)
         self.export_button.setEnabled(not error)
 
@@ -179,8 +170,6 @@ class AssDialog(QDialog):
         defaults = store.Settings()
         for name, write in self._writers.items():
             write(getattr(defaults.ass, name))
-        for editor in self.channel_editors.values():
-            editor.clear()
         for automatic in self.automatic.values():
             automatic.setChecked(True)
         self._validate()

@@ -33,6 +33,7 @@ from namioto import params
 from namioto.analysis.choices import CHANNEL_MODES
 from namioto.channels import CHANNEL_COUNT, Channel, valid_color
 from namioto.karaoke.operations import MAPPING_VERSION, Drop, Match, Merge, Operation, SoundRef
+from namioto.lyric_colors import DEFAULT_COLORS
 from namioto.params import Field, Section
 from namioto.utils import write_json
 
@@ -44,6 +45,14 @@ LYRIC_MODES = ("edit", "read")
 DIVISIONS = ("beats", "seconds")
 
 PROJECT_SECTIONS: tuple[Section, ...] = (
+    Section(
+        "lyric_colors",
+        "Lyric colours",
+        tuple(
+            Field(f"channel_{number}", "text", color, f"Channel {number}")
+            for number, color in enumerate(DEFAULT_COLORS)
+        ),
+    ),
     Section(
         "analysis",
         "Analysis",
@@ -289,6 +298,10 @@ def settings_from_dict(data: Any) -> ProjectSettings:
     for section in PROJECT_SECTIONS:
         for name, value in params.coerce_values(section.fields, data.get(section.name)).items():
             setattr(getattr(settings, section.name), name, value)
+    for number, default in enumerate(DEFAULT_COLORS):
+        name = f"channel_{number}"
+        color = valid_color(getattr(settings.lyric_colors, name))
+        setattr(settings.lyric_colors, name, color or default)
     return settings
 
 
@@ -646,8 +659,13 @@ def from_dict(data: Any) -> Project:
     if missing:
         filled = (*channels, *(Channel(channel=number) for number in missing))
         channels = tuple(sorted(filled, key=lambda channel: channel.channel))
+    settings = settings_from_dict(data)
+    if "lyric_colors" not in data:
+        for channel in channels:
+            if channel.color:
+                setattr(settings.lyric_colors, f"channel_{channel.channel}", channel.color)
     return Project(
-        settings=settings_from_dict(data),
+        settings=settings,
         audio=_audio(data.get("audio")),
         channels=channels,
         notes=notes,

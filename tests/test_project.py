@@ -49,6 +49,7 @@ def test_only_the_values_that_belong_to_the_document_are_written() -> None:
         "notes",
         "note_id",
         "lyrics",
+        "lyric_colors",
         "analysis",
         "spectrum",
         "playback",
