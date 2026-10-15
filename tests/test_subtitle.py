@@ -38,6 +38,22 @@ def test_unrenderable_input_is_rejected(exports, krc):
         subtitle.build_ass(krc, midi.to_bytes(channels, notes, 60))
 
 
+@pytest.mark.parametrize(("bpm", "duration"), [(60, 2000), (80, 1500), (120, 1000), (160, 1500)])
+def test_guide_dot_default_duration_follows_midi_tempo(bpm, duration):
+    channels = (Channel(channel=0),)
+    notes = (project.Note(10, 1, 60, 0),)
+    text = subtitle.build_ass("あ", midi.to_bytes(channels, notes, bpm))
+    assert f"{{\\k{duration // 10}}}●{{\\k{duration // 10}}}●{{\\k{duration // 10}}}●" in text
+
+
+def test_explicit_guide_dot_duration_overrides_tempo():
+    channels = (Channel(channel=0),)
+    notes = (project.Note(10, 1, 60, 0),)
+    settings = AssSettings(guide_dot_duration_ms=750)
+    text = subtitle.build_ass("あ", midi.to_bytes(channels, notes, 60), settings=settings)
+    assert "{\\k75}●{\\k75}●{\\k75}●" in text
+
+
 def test_overlapping_notes_are_not_silently_filtered():
     data = midi.to_bytes((Channel(channel=0),), (project.Note(0, 2, 60, 0), project.Note(1, 2, 62, 0)), 60)
     with pytest.raises(ValueError, match="conflict"):

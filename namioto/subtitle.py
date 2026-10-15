@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from namioto import midi
@@ -58,6 +59,9 @@ def build_ass(krc: str, data: bytes, *, settings: AssSettings | None = None, wav
     if not lines or not any(line.sounds for line in lines):
         raise ValueError("the lyrics have no sounds")
     imported = midi.read_bytes(data, wavetone=wavetone)
+    if settings.guide_dot_duration_ms == AssSettings().guide_dot_duration_ms:
+        duration = int(round(60 / imported.bpm * 4 * 1000))
+        settings = replace(settings, guide_dot_duration_ms=duration if duration < 1800 else duration // 2)
     if imported.dropped or imported.left_out:
         raise ValueError("the MIDI contains incomplete notes or unsupported channels")
     spans = [[None] * len(line.sounds) for line in lines]
