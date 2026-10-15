@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Note-domain spectrum analysis: a real STFT reduced to 84 note bands (C1-B7) and normalised.
+"""Qt-free note-domain spectra on 84 bands (C1-B7), normalised for the editor.
 
-Algorithm and parameters are ported from noteDigger (GPL-3.0, see NOTICE):
+WaveTone-style multirate correlation is the default; the original noteDigger
+STFT remains available through backend="notedigger" or stft_notes().
+
+The optional STFT algorithm and parameters are ported from noteDigger (GPL-3.0, see NOTICE):
 - `dataProcess/fft_real.js` — real FFT with a symmetric Hann window
 - `dataProcess/analyser.js` — `FreqTable`, the linear-to-note weight matrix, `normalize`, `autoFill`
 - `core/app_analyser.js` — the STFT driver: frame geometry and channel selection
 
 The note table is what the editor draws as the spectrum and what note extraction runs on; frame
 values are `sqrt(energy / sigma)` where `sigma` is the standard deviation of all energies of the
-song, which is what noteDigger's normalisation ends up with.
+song. The WaveTone-style path averages channel magnitudes before this normalisation.
 """
 
 from __future__ import annotations
@@ -106,6 +109,7 @@ class NoteSpectrum:
     hop: int
     a4: float
     sigma: float
+    backend: str = "notedigger"
 
     @property
     def frames(self) -> int:
@@ -133,6 +137,7 @@ class NoteSpectrum:
             "hop": self.hop,
             "a4": self.a4,
             "sigma": self.sigma,
+            "backend": self.backend,
             "peak_bands": [{"note": note_label(int(i)), "energy": float(energy[i])} for i in loudest],
         }
 
@@ -225,6 +230,46 @@ def stft_notes(
     )
 
 
+def wave_notes(
+    audio: np.ndarray | list[np.ndarray],
+    sample_rate: int,
+    *,
+    t_num: float = 40.0,
+    a4: float = 440.0,
+    progress=None,
+    timings: dict | None = None,
+) -> NoteSpectrum:
+    """Analyse variable-length frequency windows with WaveTone-style multirate correlation."""
+    from namioto.analysis.wave_spectrum import amplitudes
+
+    if sample_rate <= 0 or not math.isfinite(t_num) or t_num <= 0 or not math.isfinite(a4) or a4 <= 0:
+        raise ValueError("Sample rate, frame rate and A4 must be positive and finite")
+    selected = as_channels(audio)
+    length = min(len(channel) for channel in selected)
+    hop = round(sample_rate / t_num)
+    if hop <= 0:
+        raise ValueError("Frame rate exceeds the sample rate")
+    frames = 1 + (length - hop // 2) // hop
+    if frames <= 0:
+        raise ValueError(f"Audio too short: {length / sample_rate:.2f} s at {sample_rate} Hz is less than one frame")
+    centers = hop // 2 + np.arange(frames) * hop
+    start = time.perf_counter()
+    magnitude = amplitudes(
+        [channel[:length] for channel in selected], sample_rate, freq_table(a4), centers, t_num, progress
+    )
+    if timings is not None:
+        timings["correlate"] = time.perf_counter() - start
+    start = time.perf_counter()
+    energies = magnitude**2
+    sigma = float(energies.std())
+    table = (
+        (magnitude / math.sqrt(sigma)).astype(np.float32) if sigma > 0 else np.zeros_like(magnitude, dtype=np.float32)
+    )
+    if timings is not None:
+        timings["normalize"] = time.perf_counter() - start
+    return NoteSpectrum(table, 1000 / t_num, sample_rate, 0, hop, a4, sigma, "wavetone")
+
+
 def load_channels(path: str | Path, mode: str = "mono") -> tuple[list[np.ndarray], int]:
     """Decode `path` and select the channels to analyse, mirroring noteDigger's channel menu."""
     if mode not in CHANNEL_MODES:
@@ -252,6 +297,7 @@ def analyse(
     path: str | Path,
     *,
     channels: str = "mono",
+    backend: str = "wavetone",
     t_num: float = 40.0,
     fft_points: int = 8192,
     a4: float = 440.0,
@@ -259,9 +305,13 @@ def analyse(
     timings: dict | None = None,
 ) -> NoteSpectrum:
     start = time.perf_counter()
+    if backend not in ("wavetone", "notedigger"):
+        raise ValueError(f"Unknown spectrum backend: {backend!r}")
     selected, sample_rate = load_channels(path, channels)
     if timings is not None:
         timings["decode"] = time.perf_counter() - start
+    if backend == "wavetone":
+        return wave_notes(selected, sample_rate, t_num=t_num, a4=a4, progress=progress, timings=timings)
     return stft_notes(
         selected,
         sample_rate,
@@ -303,7 +353,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("audio", help="input audio file")
     parser.add_argument("--channels", choices=CHANNEL_MODES, default="mono", help="which channels to analyse")
     parser.add_argument("--t-num", type=float, default=40.0, help="analysis frames per second (default: 40)")
-    parser.add_argument("--fft-points", type=int, default=8192, help="real FFT size (default: 8192)")
+    parser.add_argument(
+        "--backend", choices=("wavetone", "notedigger"), default="wavetone", help="spectrum backend (default: wavetone)"
+    )
+    parser.add_argument(
+        "--fft-points", type=int, default=8192, help="noteDigger FFT size (default: 8192; ignored by wavetone)"
+    )
     parser.add_argument("--a4", type=float, default=440.0, help="frequency of A4 (default: 440)")
     parser.add_argument("--threshold", type=float, help="also report auto-filled notes above this value")
     parser.add_argument("--bench", action="store_true", help="print per-stage timings")
@@ -315,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     spectrum = analyse(
         args.audio,
         channels=args.channels,
+        backend=args.backend,
         t_num=args.t_num,
         fft_points=args.fft_points,
         a4=args.a4,

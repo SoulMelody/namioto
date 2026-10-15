@@ -263,7 +263,15 @@ def test_analyse_end_to_end(tmp_path):
     spectrum = analyse(path, timings=timings)
     assert spectrum.frames == 80  # 2 s at the default 40 frames per second
     assert note_label(int(spectrum.table.mean(axis=0).argmax())) == "A4"
-    assert {"decode", "weights", "fft", "reduce", "normalize"} <= set(timings)
+    assert spectrum.backend == "wavetone"
+    assert spectrum.fft_points == 0
+    assert {"decode", "correlate", "normalize"} <= set(timings)
+    legacy_timings: dict = {}
+    legacy = analyse(path, backend="notedigger", timings=legacy_timings)
+    assert legacy.backend == "notedigger"
+    decoded, rate = load_channels(path)
+    np.testing.assert_array_equal(legacy.table, stft_notes(decoded, rate).table)
+    assert {"decode", "weights", "fft", "reduce", "normalize"} <= set(legacy_timings)
 
 
 def test_auto_fill_matches_notedigger():
