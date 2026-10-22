@@ -38,11 +38,10 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
     QMenu,
-    QWidget,
 )
 
 from namioto.analysis.spectrum import MIDI_OFFSET, NOTE_COUNT, NoteSpectrum
-from namioto.channels import Channel, free_channel
+from namioto.channels import CHANNEL_COUNT, Channel, free_channel
 from namioto.document import MIN_DURATION, PITCH_COUNT, PITCH_MAX, PITCH_MIN, Document, Note
 from namioto.i18n import tr
 from namioto.interaction import Interaction, Tool
@@ -260,20 +259,28 @@ class NoteItem(QGraphicsRectItem):
         painter.restore()
 
 
-class _SelectionBox(QWidget):
+class _SelectionBox(QGraphicsRectItem):
     """The rectangle dragged over the roll, in the accent the palette carries.
 
-    Painted, not styled: it belongs to the roll, which this app draws itself.
+    Painted, not styled: it belongs to the roll, which this app draws itself. It is a scene item, so
+    the box frames the beats and rows it was dragged over and follows them through a scroll or a
+    zoom, instead of staying put on the screen while the notes move under it.
     """
 
-    def paintEvent(self, _event) -> None:
-        painter = QPainter(self)
-        accent = self.palette().highlight().color()
+    def __init__(self):
+        super().__init__()
+        # a press reads the notes and the grid under the box, never the box itself
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setZValue(float(CHANNEL_COUNT + 1))  # a note stacks by its channel, so this clears all of them
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        accent = option.palette.highlight().color()
         fill = QColor(accent)
         fill.setAlpha(40)
         painter.fillRect(self.rect(), fill)
-        painter.setPen(accent)
-        painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        painter.setPen(QPen(accent, 0))  # cosmetic, so the outline stays one pixel at any zoom
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(self.rect())
 
 
 class Drag(Enum):
@@ -300,7 +307,9 @@ class Gesture:
 
     `origin` is the scene point the press landed on, `target` the note it grabbed, `edge` the end a
     trim moves, `snapshot` the geometry the gesture measures from, `press` the click/drag boundary
-    `blocks.Press`, and `created` the note a draw opened, which a cancel takes away again.
+    `blocks.Press`, and `created` the note a draw opened, which a cancel takes away again. A select
+    keeps `pointer`, the screen point its box reaches, `framed`, the notes its box holds right now,
+    and `held`, the ones a shift press left selected.
     """
 
     kind: Drag
@@ -310,7 +319,9 @@ class Gesture:
     snapshot: dict[NoteItem, tuple[float, int, float]] = field(default_factory=dict)
     press: Press | None = None
     view_origin: QPoint = field(default_factory=QPoint)
-    rubber_origin: QPoint = field(default_factory=QPoint)
+    pointer: QPoint = field(default_factory=QPoint)
+    framed: set[NoteItem] = field(default_factory=set)
+    held: frozenset[Note] = frozenset()
     created: NoteItem | None = None
     candidate: tuple | None = None
     collision_index: dict[tuple[int, int], list[Note]] | None = None
@@ -401,7 +412,8 @@ class PianoRollView(QGraphicsView):
         self.setMouseTracking(True)
         self.setTransform(QTransform.fromScale(self._zoom_x, self._zoom_y))
 
-        self._rubber = _SelectionBox(self.viewport())
+        self._rubber = _SelectionBox()
+        scene.addItem(self._rubber)
         self._rubber.hide()
         self._initialized = False
 
@@ -1336,6 +1348,9 @@ class PianoRollView(QGraphicsView):
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
+        gesture = self._gesture
+        if gesture is not None and gesture.kind is Drag.SELECT:
+            self._framed_select(gesture)  # the far corner sits under the pointer, which the scroll moved
         self.view_changed.emit()
         self.viewport_changed.emit()
 
@@ -1571,8 +1586,15 @@ class PianoRollView(QGraphicsView):
             if ctrl or self.tool is Tool.SELECT:
                 if not shift:
                     self._clear_selection()
-                self._gesture = Gesture(Drag.SELECT, scene_pos, rubber_origin=pos)
-                self._rubber.setGeometry(QRect(pos, pos))
+                # what a shift press left selected is what the box frames on top of
+                gesture = Gesture(
+                    Drag.SELECT,
+                    scene_pos,
+                    pointer=pos,
+                    held=frozenset(item.note for item in self.selected_notes()),
+                )
+                self._gesture = gesture
+                self._framed_select(gesture)
                 self._rubber.show()
                 return
             if self._locked(self.active_channel):
@@ -1655,7 +1677,7 @@ class PianoRollView(QGraphicsView):
             gesture.press.follow(event.position())  # past the slop, the release stops being a click
         self.set_hover_pitch(self.pitch_at(scene_pos.y()))
 
-        if gesture is not None and gesture.kind is not Drag.PAN:
+        if gesture is not None and gesture.kind not in (Drag.PAN, Drag.SELECT):
             self._follow(pos, scene_pos)
 
         if gesture is None:
@@ -1678,16 +1700,8 @@ class PianoRollView(QGraphicsView):
             return
 
         if gesture.kind is Drag.SELECT:
-            self._rubber.setGeometry(QRect(gesture.rubber_origin, pos).normalized())
-            region = self.mapToScene(self._rubber.geometry()).boundingRect()
-            for item in self._scene.items(region):
-                # only the channel being edited answers a frame, the way noteDigger frames its channels
-                if (
-                    isinstance(item, NoteItem)
-                    and item.channel == self.active_channel
-                    and not self._locked(item.channel)
-                ):
-                    item.setSelected(True)
+            gesture.pointer = pos
+            self._framed_select(gesture)
             return
 
         if gesture.target is None or gesture.target not in gesture.snapshot:
@@ -1751,6 +1765,28 @@ class PianoRollView(QGraphicsView):
             note.set_range(start + delta_x, pitch - delta_row)
         self.view_changed.emit()
 
+    def _framed_select(self, gesture: Gesture) -> None:
+        """Frame the edited channel's notes with the box, and let go of the ones it leaves.
+
+        The box spans the scene point the press landed on and the scene point under the pointer, so a
+        scroll under a still pointer carries its far corner over the notes sliding past it, and a box
+        that comes back stops holding what it passed. The set is rebuilt rather than added to, so no
+        note stays framed that the box no longer covers.
+        """
+        rect = QRectF(gesture.origin, self.mapToScene(gesture.pointer)).normalized()
+        self._rubber.setRect(rect)
+        framed = {
+            item
+            for item in self._scene.items(rect)
+            # only the channel being edited answers a frame, the way noteDigger frames its channels
+            if isinstance(item, NoteItem) and item.channel == self.active_channel and not self._locked(item.channel)
+        }
+        for item in gesture.framed - framed:
+            item.setSelected(item.note in gesture.held)
+        for item in framed - gesture.framed:
+            item.setSelected(True)
+        gesture.framed = framed
+
     def _follow(self, pos: QPoint, scene_pos: QPointF) -> None:
         """A drag carries the playhead along and sounds every row it crosses, like a glissando."""
         if not self.playing:
@@ -1805,6 +1841,9 @@ class PianoRollView(QGraphicsView):
         hbar, vbar = self.horizontalScrollBar(), self.verticalScrollBar()
         hbar.setValue(hbar.value() + delta.x())
         vbar.setValue(vbar.value() + delta.y())
+        gesture = self._gesture
+        if gesture is not None and gesture.kind is Drag.SELECT:
+            self._framed_select(gesture)  # a zoom moves the far corner too, which the pointer holds
         self.view_changed.emit()
         self.viewport_changed.emit()
         self.zoom_changed.emit()

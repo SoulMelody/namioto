@@ -12,7 +12,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QMouseEvent
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
 from namioto import project
@@ -23,11 +23,33 @@ from namioto.ui.controls import Cluster
 from namioto.ui.roll import PianoRollView
 
 
+def wheel(widget, notches: int) -> None:
+    """Turn the wheel over a widget, as a driver would; a notch scrolls that widget's own axis."""
+    centre = QPointF(widget.rect().center())
+    event = QWheelEvent(
+        centre,
+        widget.mapToGlobal(centre),
+        QPoint(0, 0),
+        QPoint(0, notches),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase,
+        False,
+    )
+    widget.wheelEvent(event)
+
+
 def roll_mouse(
     window, kind, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier, button=Qt.MouseButton.LeftButton
 ) -> None:
     """Send a mouse event to the roll at a scene position, as a real click would arrive."""
-    position = window.view.mapFromScene(scene_pos)
+    roll_mouse_here(window, kind, window.view.mapFromScene(scene_pos), modifiers, button)
+
+
+def roll_mouse_here(
+    window, kind, position: QPoint, modifiers=Qt.KeyboardModifier.NoModifier, button=Qt.MouseButton.LeftButton
+) -> None:
+    """Send a mouse event to the roll at a position on the screen, where a pointer stays put."""
     event = QMouseEvent(
         kind,
         QPointF(position),

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QContextMenuEvent, QKeyEvent, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu
@@ -11,7 +11,7 @@ from namioto.channels import Channel
 from namioto.interaction import Tool
 from namioto.ui.roll import PITCH_MAX
 
-from .helpers import FakeOutput, draw_note, reset_channels, roll_mouse
+from .helpers import FakeOutput, draw_note, reset_channels, roll_mouse, roll_mouse_here, wheel
 
 
 def roll_context_menu(window, scene_pos: QPointF) -> None:
@@ -584,6 +584,37 @@ def test_clicking_a_note_makes_its_channel_active_and_drops_the_others(window) -
     assert window.view.active_channel == 1
     assert on_one.isSelected() and not on_zero.isSelected()
     reset_channels(window)
+
+
+def test_the_marquee_follows_the_pointer_across_a_scroll(window) -> None:
+    window.edit.select.click()
+    window.view.set_channels((Channel(channel=0),))
+    window.view.clear_notes()
+    framed = [window.view.add_note(60 + row, 2.0, 1.0) for row in range(3)]
+    swept = window.view.add_note(60, 6.0, 1.0)  # the scroll carries the box's far corner over it
+    window.view.centerOn(QPointF(3.0, PITCH_MAX - 61 + 0.5))
+    start = window.view.mapFromScene(QPointF(1.5, PITCH_MAX - 64 + 0.5))
+    end = window.view.mapFromScene(QPointF(4.0, PITCH_MAX - 58 + 0.5))
+
+    roll_mouse_here(window, QEvent.Type.MouseButtonPress, start)
+    roll_mouse_here(window, QEvent.Type.MouseMove, end)
+    assert window.view.selected_notes() == framed
+    seeks = []
+    window.view.seek_requested.connect(seeks.append)
+
+    wheel(window.view, -240)  # a wheel down scrolls the roll to the right
+    scrolled = window.view.horizontalScrollBar().value()
+    assert scrolled > 0
+    assert window.view._rubber.rect().topLeft().x() == pytest.approx(1.5, abs=0.05), "the press point holds"
+    assert window.view.selected_notes() == framed + [swept], "the far corner stays under the pointer"
+
+    roll_mouse_here(window, QEvent.Type.MouseMove, end - QPoint(scrolled, 0))  # back over the same beats
+    assert window.view.selected_notes() == framed, "a note the box leaves is let go"
+    assert seeks == [], "a box drag frames notes; it does not scrub the song"
+    roll_mouse_here(window, QEvent.Type.MouseButtonRelease, end - QPoint(scrolled, 0))
+    assert window.view.selected_notes() == framed
+    window.view.clear_notes()
+    window.edit.mode.click()
 
 
 def test_a_marquee_selects_only_the_active_channel(window) -> None:

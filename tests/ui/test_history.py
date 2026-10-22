@@ -342,12 +342,11 @@ def test_dragging_a_box_fills_the_selection_under_any_style(window) -> None:
         roll_mouse(window, QEvent.Type.MouseMove, QPointF(8.0, 66.0))
         rubber = window.view._rubber
         assert rubber.isVisible()
-        area = rubber.geometry().intersected(window.view.viewport().rect())
+        area = window.view.mapFromScene(rubber.rect()).boundingRect().intersected(window.view.viewport().rect())
         image = window.view.viewport().grab().toImage()
-        accent = rubber.palette().highlight().color()
+        accent = window.view.palette().highlight().color()
         canvas = image.pixelColor(area.left() - 20, area.center().y())
         inside = image.pixelColor(area.center())
-        border = image.pixelColor(area.topLeft())
 
         def from_accent(colour: QColor) -> int:
             """How far one pixel is from the palette's accent, across the three channels."""
@@ -356,6 +355,13 @@ def test_dragging_a_box_fills_the_selection_under_any_style(window) -> None:
                 + abs(colour.green() - accent.green())
                 + abs(colour.blue() - accent.blue())
             )
+
+        # the playhead sits on the box's left edge, so the outline is read off the top one, wherever
+        # the antialiased pixel of it landed
+        border = min(
+            (image.pixelColor(area.center().x(), y) for y in range(area.top() - 1, area.top() + 2)),
+            key=from_accent,
+        )
 
         # the accent is whatever the palette carries - blue, grey, red - so the pixels are measured
         # against it rather than against a colour this test would be guessing
