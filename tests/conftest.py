@@ -124,3 +124,19 @@ def quiet_midi():
     patcher.setitem(sys.modules, "rtmidi", fake_midi)
     yield
     patcher.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_system_qt():
+    """No test reads the plugin directory of the machine's own Qt.
+
+    A settings file that names none of its own starts from it, so what the box happens to have
+    installed would reach every window the suite builds; `tests/test_qtplugins.py` puts the real
+    detection back, since that is the one thing it checks.
+    """
+    from namioto import qtplugins
+
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(qtplugins, "system_dirs", lambda: [])
+    yield
+    patcher.undo()

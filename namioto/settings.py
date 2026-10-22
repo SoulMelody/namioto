@@ -55,6 +55,14 @@ SECTIONS: tuple[Section, ...] = (
                 "Style",
                 "Which widget style draws the window; the desktop's own unless another one is picked",
             ),
+            Field(
+                "system_qt_plugins",
+                "bool",
+                False,
+                "System Qt plugins",
+                "Search the plugin directories of the Qt this machine installed as well, so styles "
+                "such as Breeze or Kvantum can be picked; a change takes effect the next time it starts",
+            ),
         ),
     ),
     Section(

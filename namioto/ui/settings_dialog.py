@@ -11,10 +11,12 @@ transcription windows share.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QLibraryInfo, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from namioto import qtplugins
 from namioto import settings as store
 from namioto.i18n import tr
 from namioto.params import Field
@@ -42,6 +45,31 @@ ADVANCED = {
     "tempo": ("window_seconds", "window_hop_seconds"),
     "lyrics": ("temperature", "timeout"),
 }
+
+
+def system_plugins_can_help() -> bool:
+    """Whether this program's Qt could be missing the plugins the machine's own Qt has.
+
+    A PySide6 the distribution built for its own Qt searches the system directory already, and only
+    Linux has a Qt to find in the first place; either way the switch would change nothing.
+    """
+    if sys.platform != "linux":
+        return False
+    own = own_plugins_dir()
+    return not any(own.is_relative_to(path.resolve()) for path in qtplugins.system_dirs())
+
+
+def own_plugins_dir() -> Path:
+    """The plugin directory of the Qt this build of PySide6 draws with."""
+    return Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)).resolve()
+
+
+# the rows that are not built at all on a machine where the switch could change nothing
+
+
+def _shown(field: Field) -> bool:
+    """A row whose switch would change nothing on this machine is left out of the window."""
+    return field.name != "system_qt_plugins" or system_plugins_can_help()
 
 
 class SettingsStore(QObject):
@@ -142,7 +170,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
         advanced_names = ADVANCED.get(section.name, ())
         for advanced in (False, True):
-            rows = [field for field in section.fields if (field.name in advanced_names) is advanced]
+            rows = [field for field in section.fields if (field.name in advanced_names) is advanced and _shown(field)]
             if not rows:
                 continue
             form = QFormLayout()

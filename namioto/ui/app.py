@@ -32,7 +32,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QEvent, QLibraryInfo, QProcess, Qt, QThread, QTimer, QTranslator, Signal
+from PySide6.QtCore import (
+    QByteArray,
+    QCoreApplication,
+    QEvent,
+    QLibraryInfo,
+    QProcess,
+    Qt,
+    QThread,
+    QTimer,
+    QTranslator,
+    Signal,
+)
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -47,7 +58,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from namioto import i18n, ipc, lyrics, midi, params, project, subtitle
+from namioto import i18n, ipc, lyrics, midi, params, project, qtplugins, subtitle
 from namioto import settings as store
 from namioto import state as window_state
 from namioto.analysis import bpm
@@ -232,6 +243,8 @@ class MainWindow(QMainWindow):
         self.settings_store.changed.connect(self._on_settings_changed)
         self.settings_store.failed.connect(lambda message: self.statusBar().showMessage(message))
         self._theme = theme.apply(theme.running_app(), self.settings.general.style)
+        self._startup_style = self.settings.general.style
+        self._startup_plugins = self.settings.general.system_qt_plugins
         theme.hints().colorSchemeChanged.connect(self._on_color_scheme)
         self.overrides = dict(overrides or {})  # values this run was asked for, never written back
         self._display_overrides: dict[str, float] = {}
@@ -747,6 +760,17 @@ class MainWindow(QMainWindow):
             self.start_ipc()  # a switch flipped on reaches a running editor at once
         elif not settings.remote.enabled and self.ipc is not None:
             self.stop_ipc()
+        self._advise_restart()
+
+    def _advise_restart(self) -> None:
+        """Say what the settings window changed that only the next run can take up."""
+        pending = []
+        if self.settings.general.system_qt_plugins != self._startup_plugins:
+            pending.append(i18n.tr("Qt plugins"))
+        if self.settings.general.style != self._startup_style:
+            pending.append(i18n.tr("widget style"))
+        if pending:
+            self.statusBar().showMessage(i18n.tr("Restart namioto to apply: {what}", what=", ".join(pending)))
 
     def _apply_project_settings(self) -> None:
         """A document was opened or started: its values take over the bars, the roll and the player."""
@@ -2532,8 +2556,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    settings = store.load()
+    added = qtplugins.system_dirs() if settings.general.system_qt_plugins else []
+    if added:
+        # Qt reads its plugin paths once, while the application is being built
+        QCoreApplication.setLibraryPaths([*QCoreApplication.libraryPaths(), *(str(path) for path in added)])
     app = QApplication(sys.argv)
-    window = MainWindow(overrides={"channels": args.channels, "t_num": args.t_num})
+    window = MainWindow(settings, overrides={"channels": args.channels, "t_num": args.t_num})
     window.apply_overrides(gain=args.gain, contrast=args.contrast)
     if args.no_ipc:
         window.stop_ipc()
