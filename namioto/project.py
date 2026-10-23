@@ -199,7 +199,7 @@ PROJECT_SECTIONS: tuple[Section, ...] = (
                 48.0,
                 "Zoom x",
                 "Pixels per beat at startup",
-                low=12,
+                low=3,
                 high=900,
                 decimals=1,
                 reuse=True,

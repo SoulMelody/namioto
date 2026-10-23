@@ -352,7 +352,7 @@ class PianoRollView(QGraphicsView):
     lyric_highlight_changed = Signal()
 
     GRAB_PX = 7
-    MIN_ZOOM_X, MAX_ZOOM_X = 12.0, 900.0
+    MIN_ZOOM_X, MAX_ZOOM_X = 3.0, 900.0
     MIN_ZOOM_Y, MAX_ZOOM_Y = 8.0, 64.0
 
     def __init__(self, parent=None):
@@ -429,8 +429,7 @@ class PianoRollView(QGraphicsView):
         tempo = max(1.0, float(value))
         scale = tempo / self._bpm  # seconds = beats * 60 / bpm, so the beats scale with the tempo
         if scale != 1.0:
-            self._zoom_x = min(self.MAX_ZOOM_X, max(self.MIN_ZOOM_X, self._zoom_x / scale))
-            self.setTransform(QTransform.fromScale(self._zoom_x, self._zoom_y))
+            self._zoom_x /= scale
             for note in self.notes():
                 note.set_range(note.start * scale, note.pitch)
                 note.set_duration(note.duration * scale)
@@ -449,6 +448,7 @@ class PianoRollView(QGraphicsView):
 
     def _update_scene(self) -> None:
         self._scene.setSceneRect(QRectF(0.0, 0.0, self.content_beats(), PITCH_COUNT))
+        self._apply_zoom(self._zoom_x, self._zoom_y)
 
     def add_note(self, pitch: int, start: float, duration: float, channel: int | None = None) -> NoteItem:
         note = Note(pitch, start, duration, self.active_channel if channel is None else channel)
@@ -1236,11 +1236,19 @@ class PianoRollView(QGraphicsView):
 
     def set_zoom(self, zoom_x: float, zoom_y: float) -> None:
         """Start at a given zoom, the way `showEvent` centers the view where the session left it."""
-        self._zoom_x = min(self.MAX_ZOOM_X, max(self.MIN_ZOOM_X, zoom_x))
-        self._zoom_y = min(self.MAX_ZOOM_Y, max(self.MIN_ZOOM_Y, zoom_y))
-        self.setTransform(QTransform.fromScale(self._zoom_x, self._zoom_y))
+        self._apply_zoom(zoom_x, zoom_y)
         self.refresh()
         self.viewport_changed.emit()
+
+    def _apply_zoom(self, zoom_x: float, zoom_y: float) -> None:
+        viewport = self.maximumViewportSize()
+        minimum_x = max(self.MIN_ZOOM_X, viewport.width() / self.content_beats())
+        minimum_y = max(self.MIN_ZOOM_Y, viewport.height() / PITCH_COUNT)
+        self._zoom_x = max(minimum_x, min(self.MAX_ZOOM_X, zoom_x))
+        self._zoom_y = max(minimum_y, min(self.MAX_ZOOM_Y, zoom_y))
+        transform = QTransform.fromScale(self._zoom_x, self._zoom_y)
+        if self.transform() != transform:
+            self.setTransform(transform)
 
     def center_on(self, x: float, y: float) -> None:
         """Put (x, y) in the middle of the viewport, the way opening a project restores its view."""
@@ -1356,6 +1364,7 @@ class PianoRollView(QGraphicsView):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._apply_zoom(self._zoom_x, self._zoom_y)
         self.view_changed.emit()
         self.viewport_changed.emit()
 
@@ -1834,9 +1843,7 @@ class PianoRollView(QGraphicsView):
     def _zoom(self, factor_x: float, factor_y: float, anchor: QPoint) -> None:
         scene_pos = self.mapToScene(anchor)
         before = self.mapFromScene(scene_pos)
-        self._zoom_x = min(self.MAX_ZOOM_X, max(self.MIN_ZOOM_X, self._zoom_x * factor_x))
-        self._zoom_y = min(self.MAX_ZOOM_Y, max(self.MIN_ZOOM_Y, self._zoom_y * factor_y))
-        self.setTransform(QTransform.fromScale(self._zoom_x, self._zoom_y))
+        self._apply_zoom(self._zoom_x * factor_x, self._zoom_y * factor_y)
         delta = self.mapFromScene(scene_pos) - before
         hbar, vbar = self.horizontalScrollBar(), self.verticalScrollBar()
         hbar.setValue(hbar.value() + delta.x())

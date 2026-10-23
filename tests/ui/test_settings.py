@@ -10,6 +10,7 @@ from namioto import project
 from namioto import settings as store
 from namioto import state as window_state
 from namioto.analysis import devices
+from namioto.document import PITCH_COUNT
 from namioto.interaction import Interaction, Tool
 from namioto.ui.app import MainWindow, TempoLoader
 from namioto.ui.audio import find_port
@@ -313,11 +314,41 @@ def test_the_overtone_highlight_can_be_turned_off(window) -> None:
     window.view.set_hover_pitch(None)
 
 
+def test_zoom_keeps_both_axes_filling_the_viewport(window, qt_app) -> None:
+    view = window.view
+    window.show()
+    qt_app.processEvents()
+    view.set_zoom(0.01, 0.01)
+
+    def assert_filled():
+        size = view.viewport().size()
+        assert view.zoom[0] * view.content_beats() >= size.width()
+        assert view.zoom[1] * PITCH_COUNT >= size.height()
+
+    assert_filled()
+    view._zoom(0.01, 0.01, QPoint(0, 0))
+    assert_filled()
+    window.resize(window.width() + 200, window.height() + 200)
+    qt_app.processEvents()
+    assert_filled()
+    view.bpm = 240.0
+    assert_filled()
+    view.add_note(60, 500.0, 1.0)
+    view.set_zoom(0.01, 0.01)
+    assert view.zoom[0] == view.MIN_ZOOM_X
+    view.clear_notes()
+    assert_filled()
+
+
 def test_the_zoom_can_be_set_from_outside(window) -> None:
     window.view.set_zoom(96.0, 32.0)
     assert window.view.zoom == (96.0, 32.0)
     window.view.set_zoom(1.0, 500.0)  # both ends are held to what the roll can draw
-    assert window.view.zoom == (window.view.MIN_ZOOM_X, window.view.MAX_ZOOM_Y)
+    minimum_x = max(
+        window.view.MIN_ZOOM_X,
+        window.view.maximumViewportSize().width() / window.view.content_beats(),
+    )
+    assert window.view.zoom == (minimum_x, window.view.MAX_ZOOM_Y)
     window.view.set_zoom(48.0, 16.0)
 
 
