@@ -107,7 +107,7 @@ def test_invalid_color_tags(text):
 def test_krc_tracks_are_zero_based_without_reinterpreting_explicit_numbers():
     text = "あ\n@0{い}\n@1{う}\n@15{え}"
     assert [line.track for line in natural_sounds(text)] == [0, 0, 1, 15]
-    assert dumps(parse(text)) == "あ\nい\n@1{う}\n@15{え}"
+    assert dumps(parse(text)) == text
 
 
 @pytest.mark.parametrize(

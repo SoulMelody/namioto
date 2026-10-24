@@ -134,9 +134,10 @@ def _unwrap(text: str) -> tuple[str, list[tuple[int, int | None]], list[int]]:
             _, channel = opened.pop()
             at += 1
             continue
-        chars.append(text[at])
-        channels.append(channel)
-        positions.append(at)
+        if text[at] not in "\r\f\xa0":
+            chars.append(text[at])
+            channels.append(channel)
+            positions.append(at)
         at += 1
     if opened:
         raise KrcError("unclosed channel block")
@@ -164,7 +165,19 @@ def parse(text: str, merge: bool = True) -> Lyrics:
             raise error.orig_exc from None
         raise
     if merge:
-        return merge_words(lyrics)
-    if any(_has_join(unit) for chapter in lyrics.chapters for line in chapter.lines for unit in line.units):
+        lyrics = merge_words(lyrics)
+    elif any(_has_join(unit) for chapter in lyrics.chapters for line in chapter.lines for unit in line.units):
         merge_words(lyrics)
+    if not merge:
+        return lyrics
+    from namioto.karaoke.source import Source
+    from namioto.karaoke.writer import _canonical
+
+    starts = [
+        next(line.scan_values(lambda value: hasattr(value, "start_pos"))).start_pos
+        for line in tree.find_data("chapter_line")
+    ]
+    starts.extend(match.start() + match[0].index("-") for match in re.finditer(r"\n+-{3,}\n*", unwrapped))
+    line_numbers = tuple(text.count("\n", 0, positions[start]) for start in sorted(starts))
+    lyrics.source = Source(text, _canonical(lyrics, dotted=True), line_numbers)
     return lyrics

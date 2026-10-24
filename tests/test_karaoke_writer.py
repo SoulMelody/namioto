@@ -51,7 +51,7 @@ def test_dumping_is_idempotent():
 
 
 def test_a_track_and_a_chapter_separator_are_written():
-    assert dumps(parse("あ\n\n---\n\n@2{い}")) == "あ\n---\n@2{い}"
+    assert dumps(parse("あ\n\n---\n\n@2{い}")) == "あ\n\n---\n\n@2{い}"
 
 
 def test_a_bare_latin_run_gains_no_dot():
@@ -61,7 +61,7 @@ def test_a_bare_latin_run_gains_no_dot():
 
 def test_a_group_keeps_its_parentheses():
     assert dumps(parse("(F)(LO)(WER)")) == "(F)(LO)(WER)"
-    assert dumps(parse("(Turn).1")) == "(Turn)"
+    assert dumps(parse("(Turn).1")) == "(Turn).1"
 
 
 def test_a_ruby_keeps_its_parts_and_dot():

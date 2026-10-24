@@ -18,7 +18,7 @@ def merge_words(lyrics: Lyrics) -> Lyrics:
     for chapter in lyrics.chapters:
         lines = [Line([_merge_ruby(unit) for unit in _fold(line.units)]) for line in chapter.lines]
         chapters.append(Chapter(lines))
-    merged = Lyrics(chapters)
+    merged = Lyrics(chapters, source=lyrics.source)
     validate(merged)
     return merged
 

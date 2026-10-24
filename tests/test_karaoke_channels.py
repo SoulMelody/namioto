@@ -25,7 +25,7 @@ def test_color_and_owner_nesting_round_trips(text):
 
 def structure(value):
     if isinstance(value, dict):
-        return {key: structure(item) for key, item in value.items() if key != "channel"}
+        return {key: structure(item) for key, item in value.items() if key not in ("channel", "source")}
     if isinstance(value, list):
         return [structure(item) for item in value]
     return value

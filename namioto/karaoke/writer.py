@@ -2,8 +2,8 @@
 """Write a `Lyrics` model back out as `.krc` text.
 
 A group is written between `(...)`, a single word plain; the model is what survives, and a word
-that cannot be written raises `KrcError`. `.+` keeps its continuation relation. Comments, blank
-lines and the original spacing are gone.
+that cannot be written raises `KrcError`. `.+` keeps its continuation relation. Parsed models
+retain their concrete source syntax wherever edits allow it; new models use canonical syntax.
 
 Qt-free.
 """
@@ -24,8 +24,17 @@ def dumps(lyrics: Lyrics, *, dotted: bool = False) -> str:
     With `dotted`, every unit that carries an override is written with its `.N`, even where the
     override happens to equal the reading's own mora count - the mapping's canonical writer sets the
     override it wants written and leaves it off where it wants none. Without it, a `.N` equal to the
-    reading is dropped, which is what an ordinary edit of the file wants.
+    reading is dropped for newly constructed models. Parsed models preserve explicit annotations
+    and original formatting, including redundant overrides.
     """
+    if lyrics.source is not None:
+        from namioto.karaoke.source import restore
+
+        return restore(lyrics.source, _canonical(lyrics, dotted=True))
+    return _canonical(lyrics, dotted=dotted)
+
+
+def _canonical(lyrics: Lyrics, *, dotted: bool = False) -> str:
     if any(_has_join(unit) for chapter in lyrics.chapters for line in chapter.lines for unit in line.units):
         validate(lyrics)
     return SEPARATOR.join(_chapter_text(chapter, dotted) for chapter in lyrics.chapters)

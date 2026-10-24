@@ -14,10 +14,11 @@ from namioto.ui.align_dialog import AlignDialog, Aligner
 from .helpers import parameter_writer, wait_for_lyric_mapping
 
 
-def test_the_aligned_times_are_kept_in_the_project(own_window, tmp_path) -> None:
+@pytest.mark.parametrize("text", ["あい\n", "# header\n\nあい  # inline\n# footer\n"])
+def test_the_aligned_times_are_kept_in_the_project(own_window, tmp_path, text) -> None:
     own_window.project_path = tmp_path / "song.nto"
     own_window._watch_lyrics()
-    own_window._on_lyrics_saved("あい\n")
+    own_window._on_lyrics_saved(text)
     own_window.transport.bpm.setValue(60)
     own_window.view.set_notes([(60, 0, 1), (62, 1, 1)])
     own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms")
@@ -26,7 +27,7 @@ def test_the_aligned_times_are_kept_in_the_project(own_window, tmp_path) -> None
     assert own_window.save_project(tmp_path / "song.nto") is True
     saved = project.load(tmp_path / "song.nto")
     assert saved.lyrics == project.Lyrics(
-        text="あい", key=text_key("あい"), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),), flagged=(False,)
+        text=text, key=text_key(text), model="mms", raw=(((0.0, 1.0), (1.0, 1.0)),), flagged=(False,)
     )
     assert own_window.project_dirty is False
 

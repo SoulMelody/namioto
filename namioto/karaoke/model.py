@@ -17,7 +17,11 @@ from __future__ import annotations
 import re
 import unicodedata
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from namioto.karaoke.source import Source
 
 KANJI = re.compile(r"[\u4e00-\u9faf々]+$")
 LATIN = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ]+")
@@ -208,9 +212,10 @@ class Chapter:
 
 @dataclass
 class Lyrics:
-    """A whole `.krc`: its chapters."""
+    """A whole `.krc`: its chapters and optional concrete source for lossless edits."""
 
     chapters: list[Chapter]
+    source: Source | None = field(default=None, repr=False, compare=False)
 
     def __str__(self) -> str:
         return "\n----\n".join(str(chapter) for chapter in self.chapters)

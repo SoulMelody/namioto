@@ -194,7 +194,7 @@ def test_channel_rebuild_preserves_another_channels_literal_multi_note_group(own
     wait_for_lyric_mapping(own_window)
     own_window._adopt_alignment([[(0.0, 1.0)]], "mms", use_constraints=False, channel=0)
     wait_for_lyric_mapping(own_window)
-    assert own_window.lyrics_text == "@1{(あい).2}う"
+    assert own_window.lyrics_text == text
     assert own_window.view.lyric_mapped == (((10,), (20,), (30,)),)
 
 

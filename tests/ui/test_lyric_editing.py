@@ -520,7 +520,7 @@ def test_a_lyric_drag_is_kept_in_the_project(own_window, tmp_path) -> None:
 
     assert own_window.project_dirty is True
     assert own_window.save_project(project_path) is True
-    assert project.load(project_path).lyrics.text == "あい.0"
+    assert project.load(project_path).lyrics.text == "あい.0\n"
     assert project.load(project_path).lyrics.raw == (((0.0, 1.0), (1.0, 1.0)),)
 
 
