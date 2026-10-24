@@ -50,7 +50,9 @@ def test_the_export_button_writes_an_ass_subtitle(subtitle_window, monkeypatch, 
     assert "[Script Info]" in text
     assert "Dialogue: 0," in text
     assert "Style: K1,sans-serif,72," in text
-    assert "0:00:03.00,K1" in text
+    assert "0:00:03.20,K1" in text
+    assert r"\t(3000,3024,1," in text
+    assert "template" not in text
     assert own_window.view.notes() == before
     assert own_window.settings.ass.font_size == 72
     assert store.load().ass.font_size == 72

@@ -53,8 +53,8 @@ def test_palette_is_applied_when_project_settings_are_restored(own_window):
     from namioto.karaoke import generate_ass
 
     ass = generate_ass("@0{@c3{あ}}", [[(0, 1)]], settings=exported)
-    assert "[3]={'563412'" in ass
-    assert "\\-namioto_3_0_1000_1000" in ass
+    assert r"\1c&H563412&" in ass
+    assert "namioto_" not in ass
     own_window.project_settings = project.default_settings()
     own_window._apply_project_settings()
     assert own_window.view.lyric_color(3) == QColor(DEFAULT_COLORS[3])

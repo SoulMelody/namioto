@@ -109,7 +109,9 @@ Different channels can sing simultaneously.
 
 Use **Export → Export lyrics (.krc)…** to write the current KRC, including its groups and
 `.N` counts. Use **Export ASS subtitle…** for karaoke subtitles with syllable timing, ruby
-and gaps between notes, including the header expected by Aegisub kara-templater.
+and gaps between notes. The exported ASS is ready to play; no template processing is needed.
+Different words on the same displayed line can highlight at the same time. Readings sharing
+one base text must have non-overlapping, ordered times; export reports an error otherwise.
 
 GUI exports use the current lyric mapping. Set font, overlay colour, fades, lead time and
 guide dot in export settings. In **Channel colours**, leave a channel blank to inherit the

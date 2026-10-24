@@ -9,6 +9,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "sitiyou" }]
 dependencies = [
     "janome>=0.5.0",
+    "kara-templater==0.2.0",
     "lark>=1.3.1",
     "librosa>=1.0",
     "mido>=1.3.3",
@@ -62,6 +63,7 @@ url = "https://mirror.sjtu.edu.cn/pytorch-wheels/cpu"
 explicit = true
 
 [tool.uv.sources]
+kara-templater = { path = "../kara-templater", editable = true }
 torch = { index = "pytorch-cpu" }
 torchaudio = { index = "pytorch-cpu" }
 

@@ -43,7 +43,12 @@ def test_guide_dot_default_duration_follows_midi_tempo(bpm, duration):
     channels = (Channel(channel=0),)
     notes = (project.Note(10, 1, 60, 0),)
     text = subtitle.build_ass("あ", midi.to_bytes(channels, notes, bpm))
-    assert f"{{\\k{duration // 10}}}●{{\\k{duration // 10}}}●{{\\k{duration // 10}}}●" in text
+    from kara_templater import Document
+
+    dots = [e for e in Document.parse(text).lines if e.style == "LEAD" and e.layer == 3]
+    assert len(dots) == 3
+    for index, event in enumerate(dots):
+        assert rf"\t({index * duration},{(index + 1) * duration},1," in event.text
 
 
 def test_explicit_guide_dot_duration_overrides_tempo():
@@ -51,7 +56,12 @@ def test_explicit_guide_dot_duration_overrides_tempo():
     notes = (project.Note(10, 1, 60, 0),)
     settings = AssSettings(guide_dot_duration_ms=750)
     text = subtitle.build_ass("あ", midi.to_bytes(channels, notes, 60), settings=settings)
-    assert "{\\k75}●{\\k75}●{\\k75}●" in text
+    from kara_templater import Document
+
+    dots = [e for e in Document.parse(text).lines if e.style == "LEAD" and e.layer == 3]
+    assert len(dots) == 3
+    for index, event in enumerate(dots):
+        assert rf"\t({index * 750},{(index + 1) * 750},1," in event.text
 
 
 def test_overlapping_notes_are_not_silently_filtered():

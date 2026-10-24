@@ -1,135 +1,145 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Checks for the ASS subtitle: its header, its `\\k` stream, its gaps, dots and settings."""
+"""Final ASS events, structured timing, ruby layout and export settings."""
 
-from __future__ import annotations
+import re
+from dataclasses import replace
 
 import pytest
+from kara_templater import Document
 
 from namioto.karaoke import AssSettings, generate_ass
+from namioto.karaoke.ass import _convert
+from namioto.karaoke.sounds import natural_sounds
 
 
-def _dialogues(text, times, **kwargs):
-    return [line for line in generate_ass(text, times, **kwargs).splitlines() if line.startswith("Dialogue:")]
+def _source(text, spans, settings=None):
+    return _convert(natural_sounds(text)[0], spans, settings or AssSettings(), 0)
 
 
-def test_the_header_carries_the_styles_and_one_events_section():
-    ass = generate_ass("あ", [[(0.0, 0.5)]])
-    assert "[Script Info]" in ass
-    assert "[V4+ Styles]" in ass
-    assert ass.count("[Events]") == 1
-    for style in ("Style: K1,", "Style: K2,", "Style: LEAD,", "Style: H1,", "Style: H2,"):
-        assert style in ass
-    assert "template syl" in ass
-    assert "template furi" in ass
+def _events(text, spans, settings=None):
+    return Document.parse(generate_ass(text, spans, settings=settings)).lines
+
+
+def _surface(event):
+    return re.sub(r"\{[^}]*\}", "", event.text)
+
+
+def test_final_output_has_styles_but_no_templates_or_timing_protocol():
+    result = generate_ass("あ", [[(0, 0.5)]])
+    assert result.count("[Events]") == 1
+    for name in ("K1", "K2", "H1", "H2", "LEAD"):
+        assert f"Style: {name}," in result
+    for forbidden in ("template", "code syl", "namioto_", r"\k", "$sstart"):
+        assert forbidden not in result
+    assert len(Document.parse(result).lines) == 4
 
 
 @pytest.mark.parametrize("spacing", [5, 0, -2.5, 7.5])
 def test_font_spacing_reaches_every_style(spacing):
-    settings = AssSettings() if spacing == 5 else AssSettings(spacing=spacing)
-    ass = generate_ass("あ", [[(0.0, 0.5)]], settings=settings)
-    styles = [line for line in ass.splitlines() if line.startswith("Style:")]
-    assert len(styles) == 5
-    assert all(float(line.split(",")[13]) == spacing for line in styles)
+    document = Document.parse(generate_ass("青[あお]", [[(0, 0.5), (0.5, 1)]], settings=AssSettings(spacing=spacing)))
+    assert all(style.spacing == spacing for style in document.styles.values())
 
 
-@pytest.mark.parametrize(
-    ("text", "duration", "expected"),
-    [
-        ("abc", 1.0, r"{\k34}a{\k33}b{\k33}c"),
-        ("abc", 0.02, r"{\k2}abc"),
-        ("きょ", 1.01, r"{\k51}き{\k50}ょ"),
-        ("abc[あ]", 1.0, r"{\k100}abc|<あ"),
-    ],
-)
-def test_multicharacter_sounds_split_only_without_ruby_and_with_enough_time(text, duration, expected):
-    line = _dialogues(text, [[(0.0, duration)]])[0]
-    assert line.endswith(expected)
+@pytest.mark.parametrize("text,duration", [("abc", 1), ("abc", 0.02), ("きょ", 1.01), ("abc[あ]", 1)])
+def test_multicharacter_sound_retains_its_exact_time(text, duration):
+    unit = _source(text, [(0, duration)]).source.units[0]
+    assert unit.text == ("abc" if text.startswith("abc") else "きょ")
+    assert [(s.start_ms, s.end_ms) for s in unit.segments] == [(0, round(duration * 1000))]
 
 
-def test_a_ruby_word_writes_its_base_and_readings():
-    line = _dialogues("青[あお]", [[(0.0, 0.5), (0.5, 1.0)]])[0]
-    assert "\\k50}青|<あ" in line
-    assert "\\k50}#|お" in line
+@pytest.mark.parametrize("text,expected", [("青[あお]", ["あ", "お"]), ("京[きょう]", ["きょ", "う"])])
+def test_one_base_has_separate_ruby_times(text, expected):
+    source = _source(text, [(0, 1), (1.5, 2)])
+    assert len(source.source.units) == 1
+    assert [s.ruby for s in source.source.units[0].segments] == expected
+    events = _events(text, [[(0, 1), (1.5, 2)]])
+    base = [e for e in events if e.layer == 2 and e.style == "K1"]
+    assert len(base) == 1
+    assert [_surface(e) for e in events if e.layer == 2 and e.style.endswith("-furigana")] == expected
 
 
-def test_a_rest_between_sounds_writes_a_gap():
-    line = _dialogues("あい", [[(0.0, 0.5), (0.8, 1.0)]])[0]
-    assert "\\k50}あ" in line
-    assert "{\\k30}{\\k20}い" in line
+def test_shared_base_overlap_is_rejected_with_line_and_surface():
+    with pytest.raises(ValueError, match="lyric line 1:.*青"):
+        generate_ass("青[あお]", [[(0, 2), (1, 3)]])
 
 
-def test_a_small_kana_stays_one_sound_with_the_sound_before_it():
-    # 京[きょう] reads きょ and う - one span each, never き + ょ
-    line = _dialogues("京[きょう]", [[(0.0, 1.0), (1.0, 2.0)]])[0]
-    assert "\\k100}京|<きょ" in line
-    assert "\\k100}#|う" in line
+def test_rest_and_zero_duration_never_borrow_time():
+    source = _source("あい", [(0, 0.5), (0.8, 0.8)])
+    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == [(0, 500), (800, 800)]
+    result = generate_ass("あい", [[(0, 0.5), (0.8, 0.8)]])
+    assert r"\t(800,800," in result
+    assert r"\k" not in result
 
 
-def test_the_times_are_written_as_the_format_counts_them():
-    line = _dialogues("あ", [[(3661.23, 3661.5)]], settings=AssSettings(lead_time_ms=0))[0]
-    assert "1:01:01.23" in line
+def test_display_order_can_differ_from_time_order():
+    events = _events("あい", [[(2, 3), (0, 1)]])
+    overlays = [e for e in events if e.layer == 3]
+    assert [_surface(e) for e in overlays] == ["あ", "い"]
+    assert r"\t(2000,3000,0.5," in overlays[0].text
+    assert r"\t(0,1000,0.5," in overlays[1].text
+    assert {e.end_time for e in events} == {3200}
 
 
-def test_a_chapter_opens_with_three_guide_dots():
-    dialogues = _dialogues("あ", [[(5.0, 5.5)]])
-    assert dialogues[0].startswith("Dialogue: 0,")
-    assert ",LEAD,,0,0,0,,{\\k100}●{\\k100}●{\\k100}●" in dialogues[0]
-    assert dialogues[1].split(",", 4)[3] == "K1"
+def test_excess_simultaneous_rows_fail_instead_of_rendering_offscreen():
+    with pytest.raises(ValueError, match="does not fit vertically"):
+        generate_ass("\n".join("あ" for _ in range(8)), [[(0, 3)]] * 8)
 
 
-def test_a_first_word_too_soon_gets_no_dots():
-    dialogues = _dialogues("あ", [[(1.0, 1.5)]])
-    assert len(dialogues) == 1  # the line itself, no LEAD dot row
+def test_times_use_ass_centiseconds():
+    events = _events("あ", [[(3661.23, 3661.5)]], AssSettings(lead_time_ms=0))
+    main = [e for e in events if e.style == "K1"]
+    assert {e.start_time for e in main} == {3661230}
+    assert "1:01:01.23" in main[0].serialize()
 
 
-def test_an_input_override_does_not_change_the_natural_sounds():
-    spans = [(0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0), (1.0, 1.5)]
-    line = _dialogues("(幾千)[いくせん].1あ", [spans])[0]
-    assert "\\k25}幾千|<い" in line
-    assert "\\k25}#|く" in line
-    assert "\\k25}#|せ" in line
-    assert "\\k25}#|ん" in line
-    assert "\\k50}あ" in line
+def test_guide_dots_are_positioned_independent_events():
+    events = _events("あ", [[(5, 5.5)]])
+    dots = [e for e in events if e.style == "LEAD" and e.layer == 3]
+    assert len(dots) == 3
+    assert all(_surface(e) == "●" and e.start_time == 2000 and e.end_time == 5000 for e in dots)
+    for event, start in zip(dots, (0, 1000, 2000), strict=True):
+        assert rf"\t({start},{start + 1000},1," in event.text
 
 
-def test_a_ruby_of_even_morae_gets_one_glyph_per_sound():
-    # 胡椒[こ,しょう] is three sounds, not four: the old mora walk split しょ
-    line = _dialogues("胡椒[こ,しょう]", [[(0.0, 0.5), (0.5, 1.0), (1.0, 1.5)]])[0]
-    assert "\\k50}胡|<こ" in line
-    assert "\\k50}椒|しょ" in line
-    assert "\\k50}#|う" in line
+def test_first_word_too_soon_gets_no_dots():
+    assert not any(e.style == "LEAD" for e in _events("あ", [[(1, 1.5)]]))
 
 
-def test_a_merge_tiles_its_note_across_its_sounds():
-    line = _dialogues("(あい).1", [[(0.0, 0.5), (0.5, 1.0)]])[0]
-    assert "\\k50}あ" in line
-    assert "\\k50}い" in line
+def test_mapping_override_does_not_change_natural_sounds():
+    source = _source("(幾千)[いくせん].1あ", [(0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1), (1, 1.5)])
+    assert [u.text for u in source.source.units] == ["幾千", "あ"]
+    assert [s.ruby for s in source.source.units[0].segments] == ["い", "く", "せ", "ん"]
 
 
-def test_a_cross_container_merge_keeps_the_ruby_and_tiles_the_note():
-    line = _dialogues("泣[な]い.+", [[(0.0, 0.5), (0.5, 1.0)]])[0]
-    assert "\\k50}泣|<な" in line
-    assert "\\k50}い" in line
+def test_ruby_parts_have_distinct_bases():
+    source = _source("胡椒[こ,しょう]", [(0, 0.5), (0.5, 1), (1, 1.5)])
+    assert [u.text for u in source.source.units] == ["胡", "椒"]
+    assert [[s.ruby for s in u.segments] for u in source.source.units] == [["こ"], ["しょ", "う"]]
 
 
-def test_the_settings_name_the_font_and_the_overlay():
-    ass = generate_ass("あ", [[(0.0, 0.5)]], settings=AssSettings(font="Test Font", overlay_color="FF0000"))
-    assert "Style: K1,Test Font,96," in ass
-    assert r"\1c&H0000FF&" in ass  # RGB red is written in the ASS order
+@pytest.mark.parametrize("text", ["(あい).1", "泣[な]い.+"])
+def test_merge_keeps_sound_times(text):
+    source = _source(text, [(0, 0.5), (0.5, 1)])
+    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == [(0, 500), (500, 1000)]
 
 
-def test_an_unknown_track_style_is_refused():
+def test_font_and_rgb_colour_reach_final_output():
+    result = generate_ass("あ", [[(0, 0.5)]], settings=AssSettings(font="Test Font", overlay_color="FF0000"))
+    assert "Style: K1,Test Font,96," in result
+    assert r"\1c&H0000FF&" in result
+
+
+def test_unknown_track_style_is_refused():
     with pytest.raises(ValueError, match="track style"):
-        generate_ass("あ", [[(0.0, 0.5)]], settings=AssSettings(track_style={0: "nowhere"}))
+        generate_ass("あ", [[(0, 0.5)]], settings=AssSettings(track_style={0: "nowhere"}))
 
 
-def test_a_line_with_no_time_is_left_out():
-    ass = generate_ass("あ", [[(None, None)]])
-    assert "[Events]" in ass
-    assert "Dialogue:" not in ass
+def test_no_time_or_mismatched_spans_omits_line():
+    assert not _events("あ", [[(None, None)]])
+    assert not _events("あ", [[]])
 
 
-def test_layout_and_effect_options_reach_styles_and_templates():
+def test_layout_and_effect_options_reach_final_events():
     settings = AssSettings(
         font="Test Font",
         font_size=72,
@@ -148,12 +158,12 @@ def test_layout_and_effect_options_reach_styles_and_templates():
         fade_in_ms=300,
         fade_out_ms=150,
     )
-    ass = generate_ass("字[じ]", [[(5.0, 6.0)]], settings=settings)
-    assert "Style: K1,Test Font,72,&H00FFFFFF,&H000000FF,&H00563412" in ass
-    assert ",1,32,32,148,1" in ass
-    assert ",3,32,32,20,1" in ass
-    assert "Style: LEAD,sans-serif,72," in ass
-    assert ",1,32,32,276,1" in ass
+    result = generate_ass("字[じ]", [[(5, 6)]], settings=settings)
+    doc = Document.parse(result)
+    assert doc.styles["K1"].margin_v == 148
+    assert doc.styles["K2"].margin_v == 20
+    assert doc.styles["LEAD"].margin_v == 276
+    assert doc.styles["K1-furigana"].fontsize == 36
     for tag in (
         r"\bord7",
         r"\bord4",
@@ -165,16 +175,21 @@ def test_layout_and_effect_options_reach_styles_and_templates():
         r"\3c&HEFCDAB&",
         r"\3c&H302010&",
         r"\3c&H605040&",
-        "!$middle-6!",
-        "!$sleft-18!",
     ):
-        assert tag in ass
+        assert tag in result
+    shifted = _events("字[じ]", [[(5, 6)]], replace(settings, ruby_offset=0))
+    ruby = next(e for e in doc.lines if e.style == "K1-furigana")
+    unshifted_ruby = next(e for e in shifted if e.style == "K1-furigana")
+    position = re.search(r"\\pos\(([^,]+),([^)]+)\)", ruby.text)
+    unshifted_position = re.search(r"\\pos\(([^,]+),([^)]+)\)", unshifted_ruby.text)
+    assert position[1] == unshifted_position[1]
+    assert float(position[2]) == float(unshifted_position[2]) - 6
 
 
-def test_zero_borders_blur_and_ruby_offset_are_supported():
-    ass = generate_ass(
+def test_zero_borders_and_blur_are_supported():
+    result = generate_ass(
         "字[じ]",
-        [[(1.0, 2.0)]],
+        [[(1, 2)]],
         settings=AssSettings(
             border=0,
             border_furi=0,
@@ -184,46 +199,40 @@ def test_zero_borders_blur_and_ruby_offset_are_supported():
             clip_size=0,
         ),
     )
-    assert r"\bord0" in ass
-    assert r"\blur0" in ass
-    assert "!$middle!" in ass
-    assert "!$sleft-0!" in ass
+    assert r"\bord0" in result
+    assert r"\blur0" in result
+    assert "nan" not in result.lower()
 
 
-def test_positive_offset_moves_dialogues_and_guide_dots_without_changing_spans():
-    spans = [[(5.0, 5.5)]]
-    dialogues = _dialogues("あ", spans, settings=AssSettings(offset_ms=2000))
-    assert dialogues[0].startswith("Dialogue: 0,0:00:04.00,0:00:07.00,LEAD")
-    assert dialogues[1].startswith("Dialogue: 0,0:00:02.00,0:00:07.50,K1")
-    assert spans == [[(5.0, 5.5)]]
+def test_positive_offset_moves_lyrics_and_dots_without_mutating_spans():
+    spans = [[(5, 5.5)]]
+    events = _events("あ", spans, AssSettings(offset_ms=2000))
+    assert {(e.start_time, e.end_time) for e in events if e.style == "LEAD"} == {(4000, 7000)}
+    assert {(e.start_time, e.end_time) for e in events if e.style == "K1"} == {(2000, 7700)}
+    assert spans == [[(5, 5.5)]]
 
 
-def test_negative_offset_trims_elapsed_karaoke_without_borrowing_time_back():
-    dialogues = _dialogues("青[あお]い", [[(0.0, 1.0), (1.0, 2.0), (2.5, 3.0)]], settings=AssSettings(offset_ms=-1500))
-    assert len(dialogues) == 1
-    assert dialogues[0].startswith("Dialogue: 0,0:00:00.00,0:00:01.50,K1")
-    assert r"{\k0}青|<あ{\k50}#|お{\k50}{\k50}い" in dialogues[0]
-    assert r"\k-" not in dialogues[0]
+def test_negative_offset_clips_elapsed_segments_without_borrowing():
+    source = _source("青[あお]い", [(0, 1), (1, 2), (2.5, 3)], AssSettings(offset_ms=-1500))
+    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == [(0, 0), (0, 500), (1000, 1500)]
+    assert [s.ruby for s in source.source.units[0].segments] == ["あ", "お"]
 
 
-def test_a_partial_syllable_keeps_only_its_time_after_zero():
-    line = _dialogues("あい", [[(0.0, 1.0), (1.0, 2.0)]], settings=AssSettings(offset_ms=-250))[0]
-    assert r"{\k0}{\k75}あ{\k100}い" in line
-    assert ",0:00:00.00,0:00:01.75,K1" in line
+def test_partial_syllable_keeps_only_time_after_zero():
+    source = _source("あい", [(0, 1), (1, 2)], AssSettings(offset_ms=-250))
+    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == [(0, 750), (750, 1750)]
 
 
 def test_lines_fully_before_zero_are_omitted():
-    dialogues = _dialogues("あ\nい", [[(0.0, 1.0)], [(3.0, 4.0)]], settings=AssSettings(offset_ms=-2000))
-    assert len(dialogues) == 1
-    assert "あ" not in dialogues[0]
-    assert r"{\k100}い" in dialogues[0]
+    events = _events("あ\nい", [[(0, 1)], [(3, 4)]], AssSettings(offset_ms=-2000))
+    assert {_surface(e) for e in events} == {"い"}
 
 
-def test_auto_base_blur_follows_the_manual_overlay_blur():
+def test_auto_base_blur_follows_manual_overlay_blur():
     settings = AssSettings(overlay_blur_color="123456")
     overlay, base = settings.blur_colours()
     assert overlay == "123456"
     assert base != AssSettings().blur_colours()[1]
-    ass = generate_ass("あ", [[(0.0, 1.0)]], settings=settings)
-    assert r"\3c&H563412&" in ass
-    assert rf"\3c&H{base[4:] + base[2:4] + base[:2]}&" in ass
+    result = generate_ass("あ", [[(0, 1)]], settings=settings)
+    assert r"\3c&H563412&" in result
+    assert rf"\3c&H{base[4:] + base[2:4] + base[:2]}&" in result

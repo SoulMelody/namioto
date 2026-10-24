@@ -24,6 +24,7 @@ pyinstaller_common=(
     --clean
     --paths .
     --specpath build
+    --additional-hooks-dir scripts/pyinstaller-hooks
 )
 
 build_wheel() {
@@ -41,7 +42,7 @@ build_cli() {
 freeze_cli() {
     local entry="$1" name="$2"
     shift 2
-    uv run --with pyinstaller pyinstaller "${pyinstaller_common[@]}" \
+    uv run --no-editable --with pyinstaller pyinstaller "${pyinstaller_common[@]}" \
         --name "$name" \
         --onedir \
         "$@" \
