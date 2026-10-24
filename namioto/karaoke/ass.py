@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Compile authoritative KRC and independent Sound times into playable ASS.
 
-Namioto owns lyric semantics, row scheduling and its built-in effects. The
-kara-templater library owns text measurement, ruby layout and ASS serialization.
-No intermediate karaoke tags or executable templates are emitted. Qt-free.
+Namioto owns lyric semantics and row scheduling. The kara-templater library
+owns text measurement, ruby layout, the sweep preset and ASS serialization.
+No intermediate karaoke tags are emitted. Explicitly supplied trusted templates
+can replace the preset using the same measured layout and independent times. Qt-free.
 """
 
 from __future__ import annotations
@@ -12,9 +13,20 @@ import colorsys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
-from kara_templater import Document, KaraokeLine, Record, Segment, Style, TextUnit, layout_line
+from kara_templater import (
+    Document,
+    KaraokeLine,
+    Line,
+    Record,
+    Segment,
+    Style,
+    SweepSettings,
+    TextUnit,
+    apply_templates,
+    layout_line,
+    render_sweep,
+)
 
-from namioto.karaoke.ass_effects import render_unit
 from namioto.karaoke.sounds import natural_sounds
 
 FALLBACK_COLOR = "0000FF"
@@ -22,30 +34,22 @@ TRACK_STYLES = {"default": ("K1", "K2"), "top": ("H1", "H2")}
 
 
 @dataclass(frozen=True)
-class AssSettings:
+class AssSettings(SweepSettings):
     """Export preferences; colours are RGB hex, with automatic blur colours."""
 
     font: str = "sans-serif"
     overlay_color: str = FALLBACK_COLOR
-    fade_in_ms: int = 800
-    fade_out_ms: int = 200
     lead_time_ms: int = 5000
     guide_dot_duration_ms: int = 1000
     offset_ms: int = 0
     font_size: int = 96
     spacing: float = 5
-    border: int = 5
-    border_furi: int = 3
     margin_h: int = 64
     margin_v: int = 48
-    ruby_offset: int = 10
     base_outline_color: str = "222222"
     overlay_outline_color: str = "EFEFEF"
-    blur: int = 10
-    blur_scale: float = 2.0
     overlay_blur_color: str = ""
     base_blur_color: str = ""
-    clip_size: int = 24
     track_style: Mapping[int, str] = field(default_factory=dict)
     channel_colors: Mapping[int, str] | str = ""
 
@@ -238,9 +242,21 @@ def _style(name, settings):
 
 
 def generate_ass(
-    lyrics_text: str, spans: Sequence[Sequence[tuple | None]], *, settings: AssSettings | None = None
+    lyrics_text: str,
+    spans: Sequence[Sequence[tuple | None]],
+    *,
+    settings: AssSettings | None = None,
+    effect=render_sweep,
+    templates: Document | None = None,
 ) -> str:
-    """Compile KRC with seconds-valued Sound spans into final, independently timed events."""
+    """Compile KRC and Sound spans, optionally executing a trusted ASS template document.
+
+    Templates run Python without a sandbox. Only explicitly supplied, trusted
+    documents may be used. Their styles override matching generated styles;
+    template comments are copied, while dialogue and metadata are not imported.
+    """
+    if templates is not None and effect is not render_sweep:
+        raise ValueError("templates and a custom effect cannot be combined")
     settings = settings or AssSettings()
     palette = settings.channel_colours()
     lines = []
@@ -250,12 +266,27 @@ def generate_ass(
             lines.append(converted)
     rows = _schedule(lines, settings)
     styles = {name: _style(name, settings) for name in dict.fromkeys(("K1", "K2", "LEAD", "H1", "H2", *rows))}
+    template_styles = templates.styles if templates is not None else {}
+    styles.update({name: style for name, style in template_styles.items() if not name.endswith("-furigana")})
     ruby_styles = {
-        name: replace(style, name=name + "-furigana", fontsize=style.fontsize / 2, outline=settings.border_furi)
+        name: template_styles.get(
+            name + "-furigana",
+            replace(style, name=name + "-furigana", fontsize=style.fontsize / 2, outline=settings.border_furi),
+        )
         for name, style in styles.items()
         if name != "LEAD"
     }
-    events = []
+    template_events = (
+        [
+            line
+            for line in templates.lines
+            if line.comment and line.effect.split() and line.effect.split()[0].lower() in {"template", "code"}
+        ]
+        if templates is not None
+        else []
+    )
+    events = list(template_events)
+    layouts = {}
 
     def resolved_colours(colour):
         owned = replace(settings, overlay_color=palette.get(colour, settings.overlay_color))
@@ -282,10 +313,33 @@ def generate_ass(
         ]
         if any(box.top < 0 or box.top + box.height > 1080 for box in boxes):
             raise ValueError(f"subtitle row {name} does not fit vertically; reduce font size or simultaneous lines")
+        if templates is not None and not guide:
+            layout = replace(
+                layout,
+                units=tuple(
+                    replace(
+                        unit,
+                        segments=tuple(
+                            replace(segment, ruby=replace(segment.ruby, top=segment.ruby.top + settings.ruby_offset))
+                            if segment.ruby is not None
+                            else segment
+                            for segment in unit.segments
+                        ),
+                    )
+                    for unit in layout.units
+                ),
+            )
+            events.append(
+                Line(
+                    text="".join(unit.source.text for unit in layout.units), start_time=show, end_time=hide, style=name
+                )
+            )
+            layouts[len(events)] = layout
+            return
         for index, (unit, colour) in enumerate(zip(layout.units, colours, strict=True)):
             per_segment = tuple(resolved_colours(c) for c in segment_colours[index]) if segment_colours else ()
             events.extend(
-                render_unit(
+                effect(
                     unit,
                     name,
                     show,
@@ -312,6 +366,10 @@ def generate_ass(
                 render(source, (0, 0, 0), "LEAD", start, line.first, guide=True)
     for line in lines:
         render(line.source, line.colours, line.style, line.show, line.hide, segment_colours=line.segment_colours)
+    if templates is not None:
+        for event in events[len(template_events) :]:
+            if event.style == "LEAD":
+                event.effect = "guide"
     header = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -332,4 +390,7 @@ def generate_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         *events,
     ]
-    return Document(header, Record(res_x=1920, res_y=1080, video_x_correct_factor=1)).dumps()
+    document = Document(header, Record(res_x=1920, res_y=1080, video_x_correct_factor=1))
+    if templates is not None:
+        document = apply_templates(document, layouts=layouts)
+    return document.dumps()

@@ -24,6 +24,59 @@ def _surface(event):
     return re.sub(r"\{[^}]*\}", "", event.text)
 
 
+def test_trusted_templates_use_independent_times_and_style_overrides():
+    from kara_templater import Line, Record, Style
+
+    templates = Document(
+        [
+            Style(name="K1", fontname="sans-serif", fontsize=72, align=8, margin_v=100),
+            Line(comment=True, style="K1", effect="template syl multi noblank", text='!retime("syl")!{$sleft,$stop}'),
+            Line(comment=True, style="K1", effect="template furi", text='!retime("syl")!{$sleft,$stop}'),
+            Line(text="not imported", style="K1"),
+        ],
+        Record(),
+    )
+    result = Document.parse(generate_ass("青[あお]", [[(0, 0.5), (1, 1.5)]], templates=templates))
+    events = [line for line in result.lines if line.effect == "fx"]
+    assert len(events) == 4
+    assert [(line.start_time, line.end_time) for line in events] == [(0, 500), (1000, 1500)] * 2
+    assert [line.style for line in events] == ["K1", "K1", "K1-furigana", "K1-furigana"]
+    assert result.styles["K1"].fontsize == 72
+    assert not any(line.text == "not imported" for line in result.lines)
+    assert templates.lines[0].text == '!retime("syl")!{$sleft,$stop}'
+
+
+def test_templates_keep_builtin_countdown_and_reject_custom_effect():
+    from kara_templater import Line, Record
+
+    templates = Document([Line(comment=True, style="K1", effect="template syl noblank", text="")], Record())
+    result = Document.parse(generate_ass("あ", [[(6, 7)]], templates=templates))
+    assert len([line for line in result.lines if line.effect == "guide"]) == 12
+    assert len([line for line in result.lines if line.effect == "fx"]) == 1
+    with pytest.raises(ValueError, match="cannot be combined"):
+        generate_ass("あ", [[(0, 1)]], templates=templates, effect=lambda *args: [])
+
+
+def test_custom_effect_receives_structured_layout_and_independent_times():
+    from kara_templater import Line
+
+    calls = []
+
+    def effect(unit, style, show, hide, settings, colours, **options):
+        calls.append((unit, style, show, hide, settings, colours, options))
+        return [Line(text=unit.source.text, start_time=show, end_time=hide, style=style)]
+
+    result = generate_ass("青[あお]", [[(0, 0.5), (1, 1.5)]], effect=effect)
+    assert len(calls) == 1
+    unit, style, show, hide, settings, colours, options = calls[0]
+    assert [(s.source.start_ms, s.source.end_ms) for s in unit.segments] == [(0, 500), (1000, 1500)]
+    assert all(s.ruby is not None for s in unit.segments)
+    assert len(options["segment_colours"]) == 2
+    events = Document.parse(result).lines
+    assert len(events) == 1
+    assert events[0].text == "青"
+
+
 def test_final_output_has_styles_but_no_templates_or_timing_protocol():
     result = generate_ass("あ", [[(0, 0.5)]])
     assert result.count("[Events]") == 1
