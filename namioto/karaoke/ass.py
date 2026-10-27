@@ -150,12 +150,18 @@ def _convert(line, spans, settings, index):
                 unit = units[-1]
                 segments = unit.segments + ((segment,) if segment is not None else ())
                 try:
-                    units[-1] = TextUnit(unit.text, segments)
+                    units[-1] = replace(unit, segments=segments)
                 except ValueError as error:
                     raise ValueError(f"lyric line {index + 1}: {error}") from error
                 segment_colours[-1] += (colour,)
             else:
-                units.append(TextUnit(sound.base if sound.rubied else sound.reading, (segment,) if segment else ()))
+                units.append(
+                    TextUnit(
+                        sound.base if sound.rubied else sound.reading,
+                        (segment,) if segment else (),
+                        ruby_continuation=container.key[0] == "part" and container.key[2] > 0,
+                    )
+                )
                 channels.append(sound.channel)
                 colours.append(colour)
                 segment_colours.append((colour,) if segment else ())
@@ -186,7 +192,7 @@ def _convert(line, spans, settings, index):
             anchor = following[1]
         else:
             anchor = previous[1] if previous is not None else first
-        units[position] = TextUnit(unit.text, (Segment(anchor, anchor),))
+        units[position] = replace(unit, segments=(Segment(anchor, anchor),))
         segment_colours[position] = (colour,)
     entries = [
         (i, j, channel, segment)
@@ -218,7 +224,7 @@ def _convert(line, spans, settings, index):
         start = max(0, segment.start_ms + shift)
         adjusted[i][j] = replace(segment, start_ms=start, end_ms=start + duration)
         shift += duration - (segment.end_ms - segment.start_ms)
-    units = [TextUnit(unit.text, tuple(segments)) for unit, segments in zip(units, adjusted, strict=True)]
+    units = [replace(unit, segments=tuple(segments)) for unit, segments in zip(units, adjusted, strict=True)]
     first = min(segment.start_ms for unit in units for segment in unit.segments)
     last = max(segment.end_ms for unit in units for segment in unit.segments)
     return _DisplayLine(

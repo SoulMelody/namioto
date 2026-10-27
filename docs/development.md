@@ -4,7 +4,7 @@
 
 ## Source setup
 
-Install uv, Python 3.12+ and a C++17 compiler. Place a `kara-templater` 0.2.0 source
+Install uv, Python 3.12+ and a C++17 compiler. Place a `kara-templater` 0.2.1 source
 checkout beside this repository (`../kara-templater`); uv uses it as an editable dependency.
 Its native text metrics also need the font/shaping build dependencies listed in that project's
 installation guide. Then run from the repository root:
@@ -45,7 +45,7 @@ for the enforced boundaries.
 ./build.sh clean
 ```
 
-Publish `kara-templater` 0.2.0 before distributing Namioto: its wheel metadata pins that version
+Publish `kara-templater` 0.2.1 before distributing Namioto: its wheel metadata pins that version
 from the package index, not the editable source path. Frozen CLI/GUI builds collect the library's
 native text metrics and package license metadata.
 

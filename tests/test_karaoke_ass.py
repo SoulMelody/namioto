@@ -5,7 +5,7 @@ import re
 from dataclasses import replace
 
 import pytest
-from kara_templater import Document
+from kara_templater import Document, Style, layout_line
 
 from namioto.karaoke import AssSettings, generate_ass
 from namioto.karaoke.ass import _convert
@@ -187,6 +187,30 @@ def test_mapping_override_does_not_change_natural_sounds():
     source = _source("(幾千)[いくせん].1あ", [(0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1), (1, 1.5)])
     assert [u.text for u in source.source.units] == ["幾千", "あ"]
     assert [s.ruby for s in source.source.units[0].segments] == ["い", "く", "せ", "ん"]
+
+
+@pytest.mark.parametrize("text", ["情熱[じょう,ねつ]", "行先[ゆく,さき]"])
+def test_comma_separated_ruby_is_one_layout_group(text):
+    source = _source(text, [(0, 0.5), (0.5, 1), (1, 1.5), (1.5, 2)])
+    assert [u.ruby_continuation for u in source.source.units] == [False, True]
+    layout = layout_line(source.source, style=Style(fontsize=96, spacing=5))
+    first, second = layout.units
+    assert second.box.left == pytest.approx(first.box.right)
+    rubies = [s.ruby for u in layout.units for s in u.segments]
+    for left, right in zip(rubies, rubies[1:], strict=False):
+        assert left.right == pytest.approx(right.left)
+    assert (rubies[0].left + rubies[-1].right) / 2 == pytest.approx((first.box.left + second.box.right) / 2)
+    assert [(s.source.start_ms, s.source.end_ms) for u in layout.units for s in u.segments] == [
+        (0, 500),
+        (500, 1000),
+        (1000, 1500),
+        (1500, 2000),
+    ]
+
+
+def test_separate_ruby_words_keep_separate_layout_groups():
+    source = _source("情[じょう]熱[ねつ]", [(0, 0.5), (0.5, 1), (1, 1.5), (1.5, 2)])
+    assert all(not u.ruby_continuation for u in source.source.units)
 
 
 def test_ruby_parts_have_distinct_bases():
