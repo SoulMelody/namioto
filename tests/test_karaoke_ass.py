@@ -116,12 +116,37 @@ def test_shared_base_overlap_is_rejected_with_line_and_surface():
         generate_ass("青[あお]", [[(0, 2), (1, 3)]])
 
 
-def test_rest_and_zero_duration_never_borrow_time():
+def test_zero_duration_borrows_time_without_removing_the_rest():
     source = _source("あい", [(0, 0.5), (0.8, 0.8)])
-    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == [(0, 500), (800, 800)]
+    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == [(0, 420), (720, 800)]
     result = generate_ass("あい", [[(0, 0.5), (0.8, 0.8)]])
-    assert r"\t(800,800," in result
+    assert r"\t(720,800,0.5," in result
     assert r"\k" not in result
+
+
+@pytest.mark.parametrize(
+    "text,spans,expected",
+    [
+        ("あい.0", [(0, 1), (1, 1)], [(0, 920), (920, 1000)]),
+        ("あ.0い", [(0, 0), (0, 1)], [(0, 80), (80, 1000)]),
+        ("あ.0", [(1, 1)], [(1000, 1010)]),
+        ("@0{あ}@1{い.0}", [(0, 1), (1, 1)], [(0, 1000), (1000, 1010)]),
+        ("青[あお]", [(0, 1), (1, 1)], [(0, 920), (920, 1000)]),
+        ("あ@c1{い.0}", [(0, 1), (1, 1)], [(0, 920), (920, 1000)]),
+    ],
+)
+def test_borrowed_display_times(text, spans, expected):
+    original = list(spans)
+    source = _source(text, spans)
+    assert [(s.start_ms, s.end_ms) for u in source.source.units for s in u.segments] == expected
+    assert spans == original
+
+
+def test_guide_dots_share_fades_and_never_scale():
+    dots = [e for e in _events("あ", [[(5, 6)]]) if e.style == "LEAD"]
+    assert len(dots) == 12
+    assert all(r"\fad(800,200)" in e.text for e in dots)
+    assert all(r"\fsc" not in e.text for e in dots)
 
 
 def test_display_order_can_differ_from_time_order():

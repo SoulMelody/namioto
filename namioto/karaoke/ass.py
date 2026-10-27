@@ -10,6 +10,7 @@ can replace the preset using the same measured layout and independent times. Qt-
 from __future__ import annotations
 
 import colorsys
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
@@ -118,7 +119,7 @@ class _DisplayLine:
 def _convert(line, spans, settings, index):
     if len(spans) != len(line.sounds):
         return None
-    units, colours, segment_colours = [], [], []
+    units, colours, segment_colours, channels = [], [], [], []
     first, last = None, 0
     for container_index, container in enumerate(line.containers):
         owned = [sound for sound in line.sounds if sound.container == container_index]
@@ -127,6 +128,7 @@ def _convert(line, spans, settings, index):
             if container.key[0] == "top":
                 for atom in range(cursor, sound.first_atom):
                     units.append(TextUnit(container.atoms[atom]))
+                    channels.append(container.channels[atom])
                     colour = container.color_channels[atom]
                     colours.append(container.channels[atom] if colour is None else colour)
                     segment_colours.append(())
@@ -154,12 +156,14 @@ def _convert(line, spans, settings, index):
                 segment_colours[-1] += (colour,)
             else:
                 units.append(TextUnit(sound.base if sound.rubied else sound.reading, (segment,) if segment else ()))
+                channels.append(sound.channel)
                 colours.append(colour)
                 segment_colours.append((colour,) if segment else ())
             cursor = sound.last_atom + 1
         if container.key[0] == "top":
             for atom in range(cursor, len(container.atoms)):
                 units.append(TextUnit(container.atoms[atom]))
+                channels.append(container.channels[atom])
                 colour = container.color_channels[atom]
                 colours.append(container.channels[atom] if colour is None else colour)
                 segment_colours.append(())
@@ -184,6 +188,39 @@ def _convert(line, spans, settings, index):
             anchor = previous[1] if previous is not None else first
         units[position] = TextUnit(unit.text, (Segment(anchor, anchor),))
         segment_colours[position] = (colour,)
+    entries = [
+        (i, j, channel, segment)
+        for i, (unit, channel) in enumerate(zip(units, channels, strict=True))
+        for j, segment in enumerate(unit.segments)
+    ]
+    durations = [segment.end_ms - segment.start_ms for _, _, _, segment in entries]
+    for position, (i, _, channel, segment) in enumerate(entries):
+        if durations[position] or not units[i].text.strip() or (settings.offset_ms < 0 and segment.end_ms == 0):
+            continue
+        for direction in (-1, 1):
+            for donor in range(position + direction, len(entries) if direction == 1 else -1, direction):
+                if entries[donor][2] != channel:
+                    break
+                if durations[donor] >= 160:
+                    durations[donor] -= 80
+                    durations[position] = 80
+                    break
+            if durations[position]:
+                break
+        if not durations[position]:
+            durations[position] = 10
+    adjusted = [list(unit.segments) for unit in units]
+    shift, previous_channel = 0, None
+    for (i, j, channel, segment), duration in zip(entries, durations, strict=True):
+        if channel != previous_channel:
+            shift = 0
+        previous_channel = channel
+        start = max(0, segment.start_ms + shift)
+        adjusted[i][j] = replace(segment, start_ms=start, end_ms=start + duration)
+        shift += duration - (segment.end_ms - segment.start_ms)
+    units = [TextUnit(unit.text, tuple(segments)) for unit, segments in zip(units, adjusted, strict=True)]
+    first = min(segment.start_ms for unit in units for segment in unit.segments)
+    last = max(segment.end_ms for unit in units for segment in unit.segments)
     return _DisplayLine(
         KaraokeLine(tuple(units)), tuple(colours), tuple(segment_colours), line.track, line.chapter, index, first, last
     )
@@ -338,18 +375,24 @@ def generate_ass(
             return
         for index, (unit, colour) in enumerate(zip(layout.units, colours, strict=True)):
             per_segment = tuple(resolved_colours(c) for c in segment_colours[index]) if segment_colours else ()
-            events.extend(
-                effect(
-                    unit,
-                    name,
-                    show,
-                    hide,
-                    settings,
-                    resolved_colours(colour),
-                    guide=guide,
-                    segment_colours=per_segment,
-                )
+            rendered = effect(
+                unit,
+                name,
+                show,
+                hide,
+                settings,
+                resolved_colours(colour),
+                guide=guide,
+                segment_colours=per_segment,
             )
+            if guide:
+                for event in rendered:
+                    event.text = re.sub(
+                        r"\\fad\([^)]*\)",
+                        lambda _: rf"\fad({settings.fade_in_ms},{settings.fade_out_ms})",
+                        event.text,
+                    )
+            events.extend(rendered)
 
     firsts = {}
     for line in lines:

@@ -73,20 +73,20 @@ def test_colour_only_tags_preserve_punctuation_colours(text):
     assert [(int(r"\1c&H0000FF&" in e.text), _surface(e)) for e in rendered] == punctuation
 
 
-def test_punctuation_never_borrows_time_from_its_owner():
+def test_punctuation_borrows_time_only_from_its_own_channel():
     source = _convert(natural_sounds("@0{Rolling! }@1{Ah—}")[0], [(0, 1), (1, 2)], AssSettings(), 0)
     assert [(u.text, [(s.start_ms, s.end_ms) for s in u.segments]) for u in source.source.units] == [
-        ("Rolling", [(0, 1000)]),
-        ("!", [(1000, 1000)]),
+        ("Rolling", [(0, 920)]),
+        ("!", [(920, 1000)]),
         (" ", [(1000, 1000)]),
-        ("Ah", [(1000, 2000)]),
-        ("—", [(2000, 2000)]),
+        ("Ah", [(1000, 1920)]),
+        ("—", [(1920, 2000)]),
     ]
     assert source.colours == (0, 0, 0, 1, 1)
 
 
 @pytest.mark.parametrize("start", [0.5, 2])
-def test_new_channel_opening_punctuation_does_not_shift_its_first_sound(start):
+def test_new_channel_opening_punctuation_borrows_from_its_first_sound(start):
     text = "よ！@1{（(ハイ).1 い・く・よ）}"
     spans = [
         (0, 1),
@@ -98,9 +98,9 @@ def test_new_channel_opening_punctuation_does_not_shift_its_first_sound(start):
     ]
     source = _convert(natural_sounds(text)[0], spans, AssSettings(), 0)
     unit = next(u for u in source.source.units if u.text == "ハ")
-    assert unit.segments[0].start_ms == round(start * 1000)
+    assert unit.segments[0].start_ms == round(start * 1000) + 80
     punctuation = next(u for u in source.source.units if u.text == "（").segments[0]
-    assert punctuation.start_ms == punctuation.end_ms == round(start * 1000)
+    assert (punctuation.start_ms, punctuation.end_ms) == (round(start * 1000), round(start * 1000) + 80)
 
 
 @pytest.mark.parametrize("start", [10, 20])
@@ -116,9 +116,9 @@ def test_repeated_channel_run_keeps_its_own_times(start):
             onset = index
         spans.append((onset, onset + 1))
     source = _convert(natural_sounds(text)[0], spans, AssSettings(), 0)
-    assert next(u for u in source.source.units if u.text == "コ").segments[0].start_ms == start * 1000
+    assert next(u for u in source.source.units if u.text == "コ").segments[0].start_ms == start * 1000 + 80
     openings = [u.segments[0] for u in source.source.units if u.text == "（"]
-    assert [(s.start_ms, s.end_ms) for s in openings] == [(4000, 4000), (start * 1000, start * 1000)]
+    assert [(s.start_ms, s.end_ms) for s in openings] == [(4000, 4080), (start * 1000, start * 1000 + 80)]
 
 
 def test_multiline_scope_does_not_share_note_cursors():
