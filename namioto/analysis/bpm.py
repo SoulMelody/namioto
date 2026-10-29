@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The tempo algorithms behind one switch: WaveTone's volume-envelope DFT (the default), the librosa
-beat tracker and the TempoCNN model.
+"""The tempo algorithms behind one switch: WaveTone's DFT over an onset-flux envelope (the default),
+the librosa beat tracker and the TempoCNN model.
 
 Each returns the same `BpmEstimate`, so the editor offers the number and where it came from without
 knowing which algorithm ran. TempoCNN brings ONNX and its model with it, so it is imported only when
@@ -17,7 +17,7 @@ from namioto.analysis.beats import WINDOW_HOP_SECONDS, WINDOW_SECONDS
 from namioto.analysis.choices import ALGORITHMS
 
 SOURCES = {
-    "wavetone": "WaveTone volume-envelope DFT",
+    "wavetone": "WaveTone onset-flux DFT",
     "librosa": "Librosa beat tracking and least-squares fit",
     "tempocnn": "TempoCNN model",
 }

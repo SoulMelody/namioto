@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Tempo (BPM) estimation with WaveTone's own static analysis.
 
-The absolute volume change from one frame to the next is read as a periodic signal: for each
-candidate tempo its first two harmonics are summed, and the strongest is refined to a hundredth of
-a BPM. Reversed from WaveTone 2.73's `awlib.dll` (`dfttempo_awd`); unlike the beat trackers it does
-not pick a metrical relative of the beat.
+The spectrum's rise from one frame to the next is read as a periodic signal: for each candidate
+tempo its first two harmonics are summed, and the strongest is refined to a hundredth of a BPM.
+WaveTone's `dfttempo_awd`; unlike the beat trackers it does not pick a metrical relative of the
+beat.
 """
 
 from __future__ import annotations
@@ -17,20 +17,38 @@ from pathlib import Path
 import librosa
 import numpy as np
 
-FRAME = 1024
+HOP = 512
+WINDOW = 2048
+BLOCK = 1024
 COARSE_BPM = np.arange(60, 240)
 FINE_SPAN = 0.5
 FINE_STEP = 0.01
 SECOND_HARMONIC = 0.5
 
 
-def volume_change(mono: np.ndarray, sample_rate: int, frame: int = FRAME) -> tuple[np.ndarray, float]:
-    """The absolute change of the frame's peak volume, and the rate it is sampled at."""
-    count = len(mono) // frame
-    if count < 2:
+def onset_envelope(
+    mono: np.ndarray, sample_rate: int, *, hop: int = HOP, window: int = WINDOW
+) -> tuple[np.ndarray, float]:
+    """How much each frame's spectrum grew over the one before it, and the rate it is sampled at.
+
+    The rectified spectral flux of a Hann window: a plain amplitude envelope cannot see an onset
+    that arrives at a constant loudness. Spectra are taken a block at a time, so a whole song's
+    windows are never held at once.
+    """
+    frames_in_audio = (len(mono) - window) // hop + 1
+    if frames_in_audio < 2:
         raise ValueError("Audio is too short to measure a tempo from")
-    volume = np.abs(mono[: count * frame].reshape(count, frame)).max(axis=1)
-    return np.abs(np.diff(volume)), sample_rate / frame
+    tapered = np.hanning(window)
+    flux = []
+    previous = None
+    for start in range(0, frames_in_audio, BLOCK):
+        windows = np.lib.stride_tricks.sliding_window_view(mono[start * hop :], window)[::hop][:BLOCK]
+        spectrum = np.abs(np.fft.rfft(windows * tapered, axis=1))
+        if previous is not None:
+            spectrum = np.vstack([previous, spectrum])
+        flux.append(np.maximum(np.diff(spectrum, axis=0), 0.0).sum(axis=1))
+        previous = spectrum[-1]
+    return np.concatenate(flux), sample_rate / hop
 
 
 def score(envelope: np.ndarray, rate: float, bpms: np.ndarray) -> np.ndarray:
@@ -45,28 +63,29 @@ def score(envelope: np.ndarray, rate: float, bpms: np.ndarray) -> np.ndarray:
     return out
 
 
-def estimate_array(mono: np.ndarray, sample_rate: int, *, frame: int = FRAME) -> float:
-    envelope, rate = volume_change(mono, sample_rate, frame)
+def estimate_array(mono: np.ndarray, sample_rate: int, *, hop: int = HOP, window: int = WINDOW) -> float:
+    envelope, rate = onset_envelope(mono, sample_rate, hop=hop, window=window)
     if not envelope.any():
-        raise ValueError("Found no volume change to measure a tempo from")
+        raise ValueError("Found no onset to measure a tempo from")
     coarse = COARSE_BPM[int(np.argmax(score(envelope, rate, COARSE_BPM)))]
     fine = np.round(np.arange(coarse - FINE_SPAN, coarse + FINE_SPAN + 1e-9, FINE_STEP), 2)
     return float(fine[int(np.argmax(score(envelope, rate, fine)))])
 
 
-def estimate(path: str | Path, *, frame: int = FRAME) -> float:
+def estimate(path: str | Path, *, hop: int = HOP, window: int = WINDOW) -> float:
     mono, sample_rate = librosa.load(path, sr=None, mono=True)
-    return estimate_array(np.clip(mono, -1.0, 1.0), sample_rate, frame=frame)
+    return estimate_array(np.clip(mono, -1.0, 1.0), sample_rate, hop=hop, window=window)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="namioto-cli wavetone", description=__doc__)
     parser.add_argument("audio", help="input audio file")
-    parser.add_argument("--frame", type=int, default=FRAME, help="volume envelope frame in samples")
+    parser.add_argument("--hop", type=int, default=HOP, help="onset envelope hop in samples")
+    parser.add_argument("--window", type=int, default=WINDOW, help="onset envelope FFT window in samples")
     parser.add_argument("--json", action="store_true", help="print the estimate as JSON")
     args = parser.parse_args(argv)
 
-    bpm = estimate(args.audio, frame=args.frame)
+    bpm = estimate(args.audio, hop=args.hop, window=args.window)
 
     if args.json:
         json.dump({"bpm": bpm}, sys.stdout, indent=2)

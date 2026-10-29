@@ -202,7 +202,7 @@ CATALOGS: dict[str, dict[str, str]] = {
         ", over {windows} windows: {agreement} of them agree.": "，共 {windows} 个窗口，其中 {agreement} 一致。",
         "\nBeat fit residual {ms} ms.": "\n节拍拟合残差 {ms} ms。",
         "{detail}\nNothing changes until you click the tick.": "{detail}\n点击对勾后才会生效。",
-        "WaveTone volume-envelope DFT": "WaveTone 音量包络 DFT",
+        "WaveTone onset-flux DFT": "WaveTone 谱通量 DFT",
         "Librosa beat tracking and least-squares fit": "Librosa 节拍跟踪与最小二乘拟合",
         "TempoCNN model": "TempoCNN 模型",
         "Double tempo  (*)": "速度加倍  (*)",

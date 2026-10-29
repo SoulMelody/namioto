@@ -27,7 +27,7 @@ uv run namioto-cli tempocnn song.mp3
 ```
 
 Spectrum analyses 84 bands (C1–B7); `--bench` adds timings and `--threshold` adds detected
-note spans. WaveTone's volume-envelope estimator is the editor default. `tempo` uses a
+note spans. WaveTone's onset-flux DFT estimator is the editor default. `tempo` uses a
 librosa beat tracker and least-squares fit; local estimates use 12-second windows, 6 seconds
 apart. JSON output includes beats. TempoCNN works best on full mixes rather than stems.
 
