@@ -3,7 +3,7 @@
 
 A match spans its first note's start to its last note's end; a merge splits its one note evenly
 between its Sounds, so the members tile the note instead of each covering the whole of it; a drop has
-no block at all. This is the only place the derived span is computed, so the roll and the subtitle
+no block at all. This is the only place the derived span is computed, so the roll and the lyric map
 read the same times. Qt-free.
 """
 

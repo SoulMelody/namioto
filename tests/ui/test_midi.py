@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog
 from namioto import midi, project
 from namioto import settings as store
 from namioto.channels import Channel
-from namioto.lyrics import text_key
+from namioto.project import text_key
 from namioto.ui.app import MainWindow
 from namioto.ui.midi_dialog import MidiImportDialog
 from namioto.ui.open_dialog import OpenAudioDialog

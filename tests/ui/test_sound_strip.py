@@ -10,7 +10,7 @@ from namioto import project
 from namioto.channels import Channel
 from namioto.karaoke.operations import Drop, Match, Merge, SoundRef
 from namioto.karaoke.sounds import natural_sounds
-from namioto.lyrics import text_key
+from namioto.project import text_key
 from namioto.ui import theme
 
 from .helpers import sound_mouse, wait_for_lyric_mapping
@@ -391,7 +391,7 @@ def test_a_label_is_dropped_when_it_does_not_fit(window) -> None:
 def test_without_alignment_lyrics_use_faithful_mapping(own_window, tmp_path) -> None:
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="あい\n", mode="read")
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     own_window.transport.bpm.setValue(60.0)  # a beat is a second, so notes read in seconds
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 2.0, 1.0, 0)))
@@ -405,7 +405,7 @@ def test_without_alignment_lyrics_use_faithful_mapping(own_window, tmp_path) -> 
 def test_an_alignment_puts_each_sound_on_the_note_its_time_covers(own_window, tmp_path) -> None:
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="あい\n", mode="read")
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 2.0, 0),))  # one note under both sounds
@@ -424,7 +424,7 @@ def test_moving_a_lyric_line_preserves_its_mapping_as_krc(own_window, tmp_path) 
     own_window._stored_lyrics = project.Lyrics(
         text="(あい).1", key=text_key("(あい).1"), raw=(((0.0, 1.0), (1.0, 1.0)),)
     )
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_times == (((0.0, 1.0), (1.0, 2.0)),)
     own_window.view.set_active_channel(1)

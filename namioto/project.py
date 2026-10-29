@@ -14,13 +14,13 @@ preferences are in `namioto.settings`, and the window's state in `namioto.state`
 window keeps every change the user makes to one in `namioto.state`, and the next document starts
 from it.
 
-`Lyrics` carries the authoritative `.krc` text and auxiliary alignment evidence keyed by that
-text. Legacy edit sessions are read for migration. External text editing uses a temporary working
-copy; the project remains the source of truth.
+`Lyrics` carries the authoritative lyric text and auxiliary alignment evidence keyed by that
+text. Legacy edit sessions are read for migration. The project remains the source of truth.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import warnings
@@ -325,9 +325,9 @@ class Note(NamedTuple):
 
 
 class Lyrics(NamedTuple):
-    """The authoritative KRC text and auxiliary alignment evidence.
+    """The authoritative lyric text and auxiliary alignment evidence.
 
-    The text is the source of truth for temporary editing copies and exports.
+    The text is the source of truth; the times stored beside it are derived from it.
     `key` is the hash of the text the times were made from, so a changed text invalidates them;
     `raw` holds one `(onset, raw_length)` in seconds per Sound, `None` where none was found; `scores`
     holds the aligner's own score per sound beside it; `flagged` holds one bool per line, true where
@@ -347,6 +347,11 @@ class Lyrics(NamedTuple):
     operations: tuple = ()
     version: int = MAPPING_VERSION
     use_constraints: bool = False
+
+
+def text_key(text: str) -> str:
+    """A short key for the project's lyric text, so the times stored beside it can tell when it changed."""
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(frozen=True)

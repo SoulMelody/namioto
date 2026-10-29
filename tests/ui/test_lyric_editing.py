@@ -13,7 +13,7 @@ from namioto import project
 from namioto.channels import Channel
 from namioto.karaoke.operations import Drop, Match, Merge, SoundRef
 from namioto.karaoke.sounds import natural_sounds
-from namioto.lyrics import text_key
+from namioto.project import text_key
 from namioto.ui import theme
 
 from .helpers import _mapped_pair, drag_sound, sound_mouse, wait_for_lyric_mapping
@@ -248,7 +248,7 @@ def test_middle_group_member_cannot_be_dropped_from_the_menu(own_window, tmp_pat
     own_window._stored_lyrics = project.Lyrics(
         text="(あいう).1", key=text_key("(あいう).1"), raw=(((0.0, 1.0), (1.0, 1.0), (2.0, 1.0)),)
     )
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     baseline = own_window.view.lyric_operations
     assert isinstance(baseline[0], Merge)
@@ -310,12 +310,11 @@ def test_a_cross_container_merge_is_green_and_exports_a_continuation(own_window,
     own_window._stored_lyrics = project.Lyrics(
         text="泣[な]い.+", key=text_key("泣[な]い.+"), raw=(((0.0, 0.5), (0.5, 0.5)),)
     )
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_operations == (Merge((SoundRef(0, 0), SoundRef(0, 1)), 1, confirmed=True),)
     assert own_window.view.lyric_red == ((False, False),)
-    assert own_window.export_krc(tmp_path / "exported.krc")
-    assert (tmp_path / "exported.krc").read_text(encoding="utf-8") == "泣[な]い.+"
+    assert own_window._canonical_mapping(own_window.lyrics_text, own_window.view.lyric_operations) == "泣[な]い.+"
 
 
 def test_undo_alignment_restores_literal_krc_continuations(own_window, tmp_path) -> None:
@@ -323,7 +322,7 @@ def test_undo_alignment_restores_literal_krc_continuations(own_window, tmp_path)
     own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 1.0, 1.0, 0)))
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="泣[な]い.+")
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms", use_constraints=False)
     wait_for_lyric_mapping(own_window)
@@ -366,7 +365,7 @@ def test_a_grouped_run_is_marked_on_the_strip(own_window, tmp_path) -> None:
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 2.0, 0),))
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms")
     wait_for_lyric_mapping(own_window)
 
@@ -400,7 +399,6 @@ def test_shared_sound_blocks_have_a_thin_internal_separator(window) -> None:
 
 
 def test_a_sound_that_covers_no_note_is_marked_grey(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("あか\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(
         text="あか\n", key=text_key("あか\n"), model="mms", raw=(((0.0, 1.0), (3.0, 0.5)),)
@@ -409,7 +407,7 @@ def test_a_sound_that_covers_no_note_is_marked_grey(own_window, tmp_path) -> Non
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 1.0, 0),))
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
 
     assert own_window.view.lyric_zero == ((False, True),)
@@ -424,13 +422,12 @@ def test_pattern_weights_apply_to_both_aligners_without_changing_evidence(own_wi
     own_window.view.set_notes(((60, 0.0, 1.0, 0),))
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text=text, key=text_key(text), model=model, raw=raw)
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     own_window._adopt_alignment(raw, model)
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_operations == (Merge((SoundRef(0, 0), SoundRef(0, 1)), 1, confirmed=True),)
     assert own_window.view.lyric_raw == raw
-    assert own_window.export_krc(tmp_path / "exported.krc")
-    assert (tmp_path / "exported.krc").read_text(encoding="utf-8") == "泣[な]い.+"
+    assert own_window._canonical_mapping(own_window.lyrics_text, own_window.view.lyric_operations) == "泣[な]い.+"
 
 
 @pytest.mark.parametrize("raw_count", [1, 3])
@@ -449,7 +446,7 @@ def test_loading_lyrics_discards_evidence_with_a_different_sound_count(own_windo
         flagged=(True,),
     )
 
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
 
     assert own_window.lyrics_text == text
@@ -462,7 +459,6 @@ def test_loading_lyrics_discards_evidence_with_a_different_sound_count(own_windo
 
 
 def test_short_sounds_on_one_note_fall_to_zero(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("きにく\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(
         text="きにく\n", key=text_key("きにく\n"), model="mms", raw=(((0.0, 0.9), (0.9, 0.05), (0.95, 0.05)),)
@@ -471,7 +467,7 @@ def test_short_sounds_on_one_note_fall_to_zero(own_window, tmp_path) -> None:
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 1.0, 0),))  # one note under three sounds: the first keeps it
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
 
     assert own_window.view.lyric_raw == (((0.0, 0.9), (0.9, 0.05), (0.95, 0.05)),)
@@ -480,7 +476,6 @@ def test_short_sounds_on_one_note_fall_to_zero(own_window, tmp_path) -> None:
 
 
 def test_a_block_is_the_note_the_sound_maps_to(own_window, tmp_path) -> None:
-    (tmp_path / "song.krc").write_text("タに\n", encoding="utf-8")
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(
         text="タに\n", key=text_key("タに\n"), model="mms", raw=(((0.0, 0.8), (0.8, 0.5)),)
@@ -489,7 +484,7 @@ def test_a_block_is_the_note_the_sound_maps_to(own_window, tmp_path) -> None:
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 1.0, 0.4, 0)))
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
 
     # タ sits on note 0 and に on note 1: a block is the whole note a sound maps to, not its raw span
@@ -510,7 +505,7 @@ def test_a_lyric_drag_is_kept_in_the_project(own_window, tmp_path) -> None:
     own_window.transport.bpm.setValue(60.0)  # a beat is a second, so notes read in seconds
     own_window.view.set_channels((Channel(channel=0),))
     own_window.view.set_notes(((60, 0.0, 2.0, 0),))
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     own_window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0)]], "mms")
     wait_for_lyric_mapping(own_window)
     own_window.sound_strip.setVisible(True)
@@ -527,7 +522,7 @@ def test_a_lyric_drag_is_kept_in_the_project(own_window, tmp_path) -> None:
 def test_notes_on_another_channel_are_not_mapped(own_window, tmp_path) -> None:
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="あい\n", mode="read")
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=1),))
     own_window.view.set_notes(((60, 0.0, 1.0, 1), (62, 1.0, 1.0, 1)))

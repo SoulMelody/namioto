@@ -98,37 +98,6 @@ The default model is Meta's MMS; `yohane` is a karaoke fine-tune. `--dir` or
 `$NAMIOTO_ALIGN_MODEL` selects a converted model. See [development](development.md#model-conversion)
 for conversion tools.
 
-## Export ASS subtitles
-
-```bash
-uv run namioto-cli ass --krc song.krc --midi song.mid --out song.ass
-uv run namioto-cli ass --krc song.krc --midi song.mid --out song.ass --watch
-uv run namioto-cli ass --session --out song.ass --watch
-uv run namioto-cli ass --session --out song.ass --save-krc song.krc --save-midi song.mid
-```
-
-File mode uses the mapping already in KRC. Session mode uses the editor's current mapping
-and requires an editor started with `uv run namioto --ipc`. Intermediate KRC/MIDI files are
-written only when requested. Session CLI outputs are written on the CLI machine.
-
-`--watch` builds immediately and rebuilds after changes settle. Invalid inputs leave the
-last successful ASS intact. A disconnected session exits instead of selecting another
-editor. Stop watching with `Ctrl+C`.
-
-Settings resolve per field in this order:
-
-1. Command-line option.
-2. `NAMIOTO_ASS_` environment variable, using the uppercase field name.
-3. Current GUI export setting, in session mode only.
-4. Built-in default.
-
-Saved user preferences are not a CLI fallback. For example, `--font-size` corresponds to
-`NAMIOTO_ASS_FONT_SIZE`; spacing defaults to 5. `--channel-colors '0=FF0000,1=00FF00'`
-selects red and green highlights. GUI and ctl exports ignore these environment variables.
-
-File mode removes WaveTone's leading MIDI bar by default; pass `--no-wavetone` for ordinary
-MIDI. Session mode follows the editor's compatibility setting.
-
 ## Remote control
 
 Remote control is off by default. Start with `uv run namioto --ipc`, or enable it in
@@ -143,7 +112,6 @@ uv run namioto-ctl notes
 uv run namioto-ctl document.add_notes notes='[{"pitch":60,"start":0.5,"duration":1.0}]'
 uv run namioto-ctl project.save path=song.nto
 uv run namioto-ctl audio.open path=song.mp3 analysis='{"channels":"both"}'
-uv run namioto-ctl project.export_ass path=song.ass
 uv run namioto-ctl methods
 uv run namioto-ctl --watch toggle
 ```
@@ -151,10 +119,6 @@ uv run namioto-ctl --watch toggle
 Parameters use `NAME=VALUE` with JSON types preserved. A short alias can take a single
 positional value. `seek` also accepts `beat=8` or `fraction=0.5`. Calls that would discard
 unsaved notes fail with `dirty` unless passed `force=true`.
-
-`project.export_ass` writes on the editor's machine and accepts `save_krc=PATH` and
-`save_midi=PATH`. Session ASS commands accept `--endpoint`, `--token`, `--run` and `--timeout`
-like ctl.
 
 ### Endpoints and authentication
 

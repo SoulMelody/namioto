@@ -32,7 +32,7 @@ class Field:
     """One parameter: its default, how to read it back, and how a form shows it."""
 
     name: str
-    kind: str  # bool, int, float, choice, device, text, secret or style
+    kind: str  # bool, int, float, choice, device, text or style
     default: Any
     caption: str
     tooltip: str = ""

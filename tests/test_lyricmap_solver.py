@@ -169,13 +169,14 @@ def test_an_exact_tie_prefers_the_earlier_match():
 def test_an_empirical_pair_can_outweigh_match_and_drop():
     raw = [[Raw(0.0, 0.76), Raw(0.76, 0.24)]]
     notes = _notes((0.0, 1.0))
-    assert _solve("ない", raw, notes)[1] == [Merge((SoundRef(0, 0), SoundRef(0, 1)), 1)]
-    assert _solve("なか", raw, notes)[1] == [Match(SoundRef(0, 0), (1,)), Drop(SoundRef(0, 1))]
+    assert _solve("もー", raw, notes)[1] == [Merge((SoundRef(0, 0), SoundRef(0, 1)), 1)]
+    assert _solve("もか", raw, notes)[1] == [Match(SoundRef(0, 0), (1,)), Drop(SoundRef(0, 1))]
 
 
-def test_an_empirical_weight_resolves_an_unweighted_tie():
+def test_a_pair_without_a_long_vowel_mark_falls_to_the_earlier_match():
     assert _solve("あい", [[Raw(0.0, 0.75), Raw(0.75, 0.25)]], _notes((0.0, 1.0)))[1] == [
-        Merge((SoundRef(0, 0), SoundRef(0, 1)), 1)
+        Match(SoundRef(0, 0), (1,)),
+        Drop(SoundRef(0, 1)),
     ]
 
 
@@ -212,7 +213,7 @@ def test_multiplicative_weights_preserve_a_zero_cost_merge():
 
 
 def test_the_whole_merge_cost_including_first_onset_and_line_end_is_weighted():
-    lines = natural_sounds("ない")
+    lines = natural_sounds("もー")
     context = _context(lines, [[Raw(0.1, 0.5), Raw(0.6, 0.6)]], _notes((0.0, 1.0)))
     assert _merge_base(context, 0, 2, 0) == pytest.approx(0.32)
     assert _match_base(context, 0, 0, 1) == pytest.approx(0.1)

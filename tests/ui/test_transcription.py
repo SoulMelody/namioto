@@ -92,7 +92,7 @@ def test_transcription_phase_estimation_is_optional(own_window) -> None:
     assert dialog._snapped(raw) == [(0.25, 0.75, 60.0), (0.75, 1.25, 62.0)]
     assert dialog.offset == 0.0
     dialog._parameters["estimate_phase"] = True
-    assert dialog._snapped(raw) == pytest.approx(raw)
+    assert dialog._snapped(raw) == [pytest.approx(values) for values in raw]
     assert dialog.offset == pytest.approx(0.15)
     assert transcription.run_key("/tmp/song.wav", dialog._parameters) == transcription.run_key(
         "/tmp/song.wav", dict(dialog._parameters, estimate_phase=False)

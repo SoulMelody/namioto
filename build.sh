@@ -24,7 +24,6 @@ pyinstaller_common=(
     --clean
     --paths .
     --specpath build
-    --additional-hooks-dir scripts/pyinstaller-hooks
 )
 
 build_wheel() {
@@ -34,9 +33,7 @@ build_wheel() {
 build_cli() {
     uv sync --extra cpu
     freeze_cli namioto/cli.py namioto-cli \
-        --collect-submodules namioto.analysis \
-        --hidden-import namioto.ass_cli \
-        --collect-all janome
+        --collect-submodules namioto.analysis
 }
 
 freeze_cli() {
@@ -59,7 +56,6 @@ build_app() {
         --onedir \
         --windowed \
         --collect-data qtawesome \
-        --collect-all janome \
         namioto/ui/app.py
     copy_licenses dist/namioto
 }

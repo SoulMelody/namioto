@@ -4,10 +4,7 @@
 
 ## Source setup
 
-Install uv, Python 3.12+ and a C++17 compiler. Place a `kara-templater` 0.2.1 source
-checkout beside this repository (`../kara-templater`); uv uses it as an editable dependency.
-Its native text metrics also need the font/shaping build dependencies listed in that project's
-installation guide. Then run from the repository root:
+Install uv, Python 3.12+ and a C++17 compiler, then run from the repository root:
 
 ```bash
 uv sync --extra cpu
@@ -45,10 +42,6 @@ for the enforced boundaries.
 ./build.sh clean
 ```
 
-Publish `kara-templater` 0.2.1 before distributing Namioto: its wheel metadata pins that version
-from the package index, not the editable source path. Frozen CLI/GUI builds collect the library's
-native text metrics and package license metadata.
-
 Published wheels include the native extension; source distributions require compilation.
 Neither wheels nor frozen builds bundle analysis models. Model publishing uses
 `scripts/upload_models.sh`; preserve each model's license and attribution in [NOTICE](../NOTICE).
@@ -73,7 +66,7 @@ The checkpoints are Meta's MMS forced aligner and
 | --- | --- |
 | `namioto/ui/` | Qt editor, dialogs, spectrum rendering and remote-control server |
 | `namioto/analysis/` | Spectrum, tempo, transcription, alignment, model downloads and devices |
-| `namioto/karaoke/` | KRC parsing, transformations and subtitle output |
+| `namioto/karaoke/` | The project's `.krc` lyric text: parsing, natural sounds, canonical rebuild, mapping operations |
 | `namioto/lyricmap/` | Lyrics-to-notes mapping and export validation |
 | `namioto/document.py`, `project.py`, `midi.py` | Notes, project persistence and MIDI interchange |
 | `namioto/settings.py`, `state.py` | Preferences and remembered UI/new-project values |

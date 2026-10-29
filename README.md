@@ -11,9 +11,10 @@ notes against what you hear and see.
 - Transcribe by hand with a pitch spectrum, slowed-down playback and a snap grid.
 - Import MIDI and edit up to 16 channels with separate instruments, colours and mute controls.
 - Extract singing-voice notes with [GAME](https://github.com/openvpi/GAME).
-- Add lyrics and readings, adjust their note mapping, and export karaoke ASS subtitles.
-- Save your work as a `.nto` project; export MIDI, KRC lyrics or ASS subtitles.
-- Run analysis and exports from the command line, or control a running editor remotely.
+- Add lyrics and readings, and adjust how the sounds map onto notes.
+- Save your work as a `.nto` project and export MIDI.
+- Run analysis and singing-voice extraction from the command line, or control a running editor
+  remotely.
 
 ## Feature previews
 
@@ -24,8 +25,9 @@ Slow playback down, adjust the grid, and check notes against the recording.
 
 ### Map lyrics onto notes
 
-Readings appear on notes, while the lyrics strip shows how sounds share or consume note slots.
-Edit the mapping directly, with each gesture kept as one undo step.
+The words belong to the project: write them in the Lyrics window, and the readings appear on
+notes. The lyrics strip shows how sounds share or consume note slots, and the mapping is edited
+directly, with each gesture kept as one undo step.
 
 ![Lyrics mapped to vocal notes](docs/lyrics-mapping.png)
 
@@ -37,13 +39,6 @@ separated vocal. These previews show the setup dialogs, not completed inference 
 | Singing-voice transcription | Lyrics alignment |
 | --- | --- |
 | ![GAME transcription options](docs/transcription.png) | ![Lyrics alignment options](docs/alignment.png) |
-
-### Export karaoke subtitles
-
-Export the mapped lyrics as ASS, with timing, font, layout and per-channel highlight options.
-See the [lyrics guide](docs/lyrics.md) for the editing and export workflow.
-
-![ASS subtitle export options](docs/ass-export.png)
 
 ## Install and launch
 
@@ -80,7 +75,8 @@ FluidSynth. Without a recognised synth, notes are silent; recording playback sti
    pitch. If a tempo suggestion appears, accept it or enter the BPM yourself.
 4. Select the **Pen** tool to enter edit mode. Drag across an empty area to draw a note;
    drag a note to move it, or its edge to resize it. Set **Snap** to the note length you need.
-5. Save with `Ctrl+S`. Use **Export → Export MIDI…** when you want to use the notes elsewhere.
+5. Save with `Ctrl+S`. Use **Export** to write a MIDI file when you want to use the notes
+   elsewhere.
 
 The project stores a reference to the audio, not a copy: keep the recording available when
 moving your project. Changing BPM moves the beat grid, not the notes.
@@ -93,8 +89,8 @@ It is enabled by default and adds/removes WaveTone's leading bar.
 | Guide | What it covers |
 | --- | --- |
 | [Using the editor](docs/usage.md) | Projects, spectrum, editing shortcuts, playback, channels and settings |
-| [Lyrics and karaoke](docs/lyrics.md) | KRC import, readings, alignment, mapping and ASS export |
-| [Command-line tools](docs/cli.md) | Analysis, subtitle export, watch mode and remote control |
+| [Lyrics](docs/lyrics.md) | Lyric text, readings, alignment and the mapping onto notes |
+| [Command-line tools](docs/cli.md) | Analysis, singing-voice extraction, alignment and remote control |
 | [Development](docs/development.md) | Source setup, tests, packaging and model conversion |
 
 ## License

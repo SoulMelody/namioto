@@ -13,7 +13,6 @@ COMMANDS = {
     "spectrum": "namioto.analysis.spectrum",
     "game": "namioto.analysis.game",
     "align": "namioto.analysis.align",
-    "ass": "namioto.ass_cli",
 }
 
 

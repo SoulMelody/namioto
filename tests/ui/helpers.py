@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication
 from namioto import project
 from namioto.analysis.spectrum import NOTE_COUNT, NoteSpectrum
 from namioto.channels import Channel
-from namioto.lyrics import text_key
+from namioto.project import text_key
 from namioto.ui.controls import Cluster
 from namioto.ui.roll import PianoRollView
 
@@ -248,7 +248,7 @@ def _mapped_pair(own_window, tmp_path, raw=((0.0, 1.0), (1.0, 1.0))) -> None:
     own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 1.0, 1.0, 0)))
     own_window.project_path = tmp_path / "song.nto"
     own_window._stored_lyrics = project.Lyrics(text="あい", key=text_key("あい"), raw=(raw,))
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
 
 

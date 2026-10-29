@@ -19,10 +19,9 @@ def test_project_palette_round_trip(tmp_path):
     assert "lyric_colors" not in remembered
 
 
-def test_legacy_project_palette_uses_midi_colors_not_ass_colors():
+def test_legacy_project_palette_comes_from_the_midi_channel_colours():
     data = project.to_dict(project.Project(channels=(Channel(channel=2, color="#123456"),)))
     del data["lyric_colors"]
-    data["ass"] = {"overlay_color": "FFFFFF", "channel_colors": "2=ABCDEF"}
     loaded = project.from_dict(data)
     assert loaded.settings.lyric_colors.channel_2 == "#123456"
     assert loaded.settings.lyric_colors.channel_1 == DEFAULT_COLORS[1]

@@ -13,7 +13,7 @@ from namioto import settings as store
 from namioto.channels import Channel
 from namioto.karaoke.operations import Drop, Match, SoundRef
 from namioto.karaoke.sounds import natural_sounds
-from namioto.lyrics import text_key
+from namioto.project import text_key
 from namioto.ui.align_dialog import AlignDialog
 from namioto.ui.palette_dialog import PaletteDialog
 
@@ -34,7 +34,7 @@ def _mixed_lyrics(own_window, tmp_path, *, confirmed=True):
         raw=(((0.0, 1.0),), ((4.0, 1.0),), ((2.0, 1.0),)),
         operations=(Match(SoundRef(2, 0), (20,), confirmed=True),) if confirmed else (),
     )
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
 
 
@@ -44,9 +44,9 @@ def test_mixed_channels_all_use_faithful_mapping(own_window, tmp_path):
     assert {ref.line for op in own_window.view.lyric_operations for ref in op.sounds} == {0, 1, 2}
     assert Match(SoundRef(2, 0), (20,), confirmed=True) in own_window.view.lyric_operations
     assert not own_window._lyric_error
-    assert own_window.export_krc(tmp_path / "mixed.krc")
-    assert natural_sounds((tmp_path / "mixed.krc").read_text())[1].track == 1
-    assert own_window.export_ass(tmp_path / "mixed.ass")
+    rebuilt = own_window._canonical_mapping(own_window.lyrics_text, own_window.view.lyric_operations)
+    assert natural_sounds(rebuilt)[1].track == 1
+    assert not own_window.project_path.with_suffix(".krc").exists()
 
 
 def test_alignment_adopts_all_channel_rows(own_window, tmp_path):
@@ -147,7 +147,7 @@ def test_assigning_one_sound_changes_only_ownership_and_is_one_undo_step(own_win
     own_window.view.set_channels((Channel(channel=0), Channel(channel=1)))
     own_window.view.set_notes(((60, 0.0, 1.0, 0, 10), (62, 1.0, 1.0, 0, 20), (64, 1.0, 1.0, 1, 30)))
     own_window._stored_lyrics = project.Lyrics(text=text, key=text_key(text), raw=(((0.0, 1.0), (1.0, 1.0)),))
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     before = own_window.view.undo_stack.count()
     raw = own_window.view.lyric_raw
@@ -209,7 +209,7 @@ def test_project_colour_pickers_validate_and_leave_preferences_untouched(own_win
     assert own_window.view.lyric_color(1).name() == "#ff0000"
     assert own_window.view.lyric_color(2).name() == "#00ff00"
     assert own_window.view.channel_color(1) == original_midi
-    assert own_window._ass_settings().channel_colours()[1] == "FF0000"
+    assert own_window.project_settings.lyric_colors.channel_1 == "#ff0000"
     dialog.color_editors[1].setText("invalid")
     assert picker.icon().isNull()
     assert not dialog._buttons.button(QDialogButtonBox.StandardButton.Apply).isEnabled()
@@ -245,7 +245,7 @@ def test_alignment_flags_never_mark_notes_red_and_are_undoable(own_window, tmp_p
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_red == ((False, False),)
     assert own_window.lyrics_text == "あい"
-    assert own_window.export_krc(tmp_path / "low.krc")
+    assert own_window._canonical_mapping(own_window.lyrics_text, own_window.view.lyric_operations) == "あい"
     own_window.view.undo()
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_raw == raw
@@ -359,7 +359,7 @@ def test_alignment_of_one_channel_in_a_shared_line_preserves_the_other_krc_slots
     own_window.view.set_channels((Channel(channel=1), Channel(channel=2)))
     own_window.view.set_notes(((60, 0, 1, 1, 10), (62, 1, 1, 1, 20)))
     own_window._stored_lyrics = project.Lyrics(text=text)
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     own_window._adopt_alignment([[(0.0, 2.0)]], "mms", channel=1)
     wait_for_lyric_mapping(own_window)

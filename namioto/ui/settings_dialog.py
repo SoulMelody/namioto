@@ -2,8 +2,7 @@
 """The settings window, and the store that keeps the file in step with what is running.
 
 The window is built from `namioto.settings`: one page per section named below, one row per field of
-it. `editor` holds the switches the program remembers by itself; `ass` is edited in the subtitle
-export form instead.
+it. The `editor` section holds the switches the program remembers by itself, so it gets no page.
 
 `field_editor`, `add_row` and `advanced_section` come from `namioto.ui.form`, which the align and
 transcription windows share.
@@ -39,11 +38,10 @@ from namioto.ui.form import add_row, advanced_section, field_editor
 
 SAVE_DELAY_MS = 1000
 
-PAGES = ("general", "devices", "tempo", "lyrics", "network", "midi", "remote")
+PAGES = ("general", "devices", "tempo", "network", "midi", "remote")
 # the rows a page folds away under its Advanced heading
 ADVANCED = {
     "tempo": ("window_seconds", "window_hop_seconds"),
-    "lyrics": ("temperature", "timeout"),
 }
 
 
@@ -155,9 +153,7 @@ class SettingsDialog(QDialog):
         self.applied.emit(self.values())
 
     def restore_defaults(self) -> None:
-        ass = self._settings.ass
         self._settings = store.Settings()
-        self._settings.ass = ass
         for _section, field, _read_value, write in self._rows:
             write(field.default)
 

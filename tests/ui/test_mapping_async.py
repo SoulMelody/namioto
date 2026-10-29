@@ -7,7 +7,7 @@ from PySide6.QtCore import QEvent
 from namioto import project
 from namioto.karaoke.operations import Match, SoundRef
 from namioto.karaoke.sounds import natural_sounds
-from namioto.lyrics import text_key
+from namioto.project import text_key
 
 from .helpers import _manual_mapping, _mapped_pair, sound_mouse, wait_for_lyric_mapping
 
@@ -129,30 +129,21 @@ def test_continuous_edits_only_queue_the_latest_mapping(own_window, tmp_path, mo
     assert not own_window.view.lyric_mapping_pending
 
 
-def test_pending_mapping_blocks_lyric_actions_and_exports_but_not_saving_or_midi(own_window, tmp_path, monkeypatch):
+def test_pending_mapping_blocks_lyric_actions_but_not_saving_or_midi(own_window, tmp_path, monkeypatch):
     _mapped_pair(own_window, tmp_path)
     workers = _manual_mapping(monkeypatch)
     before = own_window.view.undo_stack.count()
     operations = own_window.view.lyric_operations
     own_window._remap_lyrics()
     assert own_window.view.lyric_mapping_pending
-    assert not own_window.transport.export_krc_action.isEnabled()
-    assert not own_window.transport.export_ass_action.isEnabled()
-    assert own_window.transport.export_midi_action.isEnabled()
-    assert not own_window.export_krc(tmp_path / "pending.krc")
-    assert not own_window.export_ass(tmp_path / "pending.ass")
-    assert not (tmp_path / "pending.krc").exists()
-    assert not (tmp_path / "pending.ass").exists()
-    assert own_window._verification().counts() == {"mapping_pending": 1}
+    assert own_window.transport.export.isEnabled()  # a MIDI export does not wait for the lyrics
     own_window._on_lyric_action("drop", 0, 1)
     assert own_window.view.lyric_operations == operations
     assert own_window.view.undo_stack.count() == before
     assert own_window.save_project(tmp_path / "pending.nto")
     assert own_window.export_midi(tmp_path / "pending.mid")
     workers[0].complete()
-    assert own_window.transport.export_krc_action.isEnabled()
-    assert own_window.transport.export_ass_action.isEnabled()
-    assert own_window.export_krc(tmp_path / "ready.krc")
+    assert not own_window.view.lyric_mapping_pending
     assert own_window.view.undo_stack.count() == before
 
 
@@ -223,7 +214,7 @@ def test_time_edit_undo_and_redo_preserve_sparse_note_ids_and_anchors(own_window
     own_window._stored_lyrics = project.Lyrics(
         text="あい", key=text_key("あい"), raw=(((0.0, 1.0), (1.0, 1.0)),), operations=(anchor,)
     )
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     wait_for_lyric_mapping(own_window)
     view = own_window.view
     view.begin_gesture("Move lyrics")

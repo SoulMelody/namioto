@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Outbound requests: the GitHub mirror and the proxy, read from the settings when a call is made.
 
-Every address the program fetches on its own goes through here - a release download and the lyrics
-API alike - so the two settings have one meaning wherever a request is built. `mirrored` puts the
+Every address the program fetches on its own - a release download - goes through here, so the two
+settings have one meaning wherever a request is built. `mirrored` puts the
 GitHub mirror in front of a github.com address, and `opener` is the `urlopen`-shaped callable the
 proxy setting asks for. Reading the settings at call time, rather than once at import, is what lets
 a change take effect without a restart. Qt-free on purpose.

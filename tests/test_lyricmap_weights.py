@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Pattern precedence, dictionary boundaries and conservative empirical preferences."""
+"""Pattern precedence and the long-vowel empirical preference."""
 
 import pytest
 
@@ -11,34 +11,23 @@ def _weights(text):
     return weights.merge_weights(natural_sounds(text)[0])
 
 
-@pytest.mark.parametrize(
-    "text", ["ない", "いい", "こう", "せい", "はい", "泣[な]い", "今日[きょう]", "もー", "字[も]ー"]
-)
-def test_empirical_pairs_receive_the_configured_weight(text):
+@pytest.mark.parametrize("text", ["もー", "字[も]ー"])
+def test_a_long_vowel_mark_makes_its_pair_empirical(text):
     assert _weights(text)[0] == (0.8,)
 
 
-def test_a_particle_and_the_next_verb_do_not_form_an_empirical_pair():
-    rows = _weights("私[わたし]はいない")
-    assert rows[3][0] == 1.0
-    assert rows[5][0] == 0.8
-
-
-@pytest.mark.parametrize("text", ["な い", "な、い", "字[ない]", "qzx[ない]"])
-def test_word_boundaries_unknown_words_and_mismatched_ruby_receive_no_discount(text):
+@pytest.mark.parametrize(
+    "text",
+    ["ない", "いい", "こう", "せい", "はい", "泣[な]い", "今日[きょう]", "な い", "な、い", "字[ない]", "qzx[ない]"],
+)
+def test_a_pair_without_a_long_vowel_mark_receives_no_discount(text):
     assert _weights(text)[0] == (1.0,)
 
 
-def test_an_indivisible_ruby_crossing_words_does_not_invent_a_boundary():
-    rows = _weights("(私は)[わたしは]いない")
-    assert rows[3][0] == 1.0
-    assert rows[5][0] == 0.8
-
-
-def test_a_multi_part_ruby_can_keep_connections_inside_one_word():
+def test_a_multi_part_ruby_keeps_the_size_rule_between_its_parts():
     rows = _weights("胡椒[こ,しょう]")
     assert rows[0] == (1.0, 1.5)
-    assert rows[1] == (0.8,)
+    assert rows[1] == (1.0,)
 
 
 @pytest.mark.parametrize("text", ["っき", "きっ", "ッキ", "キッ", "っきちく", "きちくっ"])
@@ -66,7 +55,7 @@ def test_input_mapping_annotations_do_not_change_pattern_weights():
 
 
 def test_analysis_offsets_preserve_leading_spaces():
-    assert _weights("　ない　")[0] == (0.8,)
+    assert _weights("　ない　")[0] == (1.0,)
 
 
 def test_pattern_parameters_are_adjustable_without_stale_weight_caches(monkeypatch):

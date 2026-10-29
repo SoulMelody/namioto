@@ -9,7 +9,7 @@ location and analysis options, then creates the project. MIDI files are imported
 open project, not opened as standalone projects.
 
 - **Save**: `Ctrl+S`; **Save As**: `Ctrl+Shift+S`.
-- **Export**: MIDI, KRC lyrics or ASS subtitles. Exporting does not replace saving the project.
+- **Export**: MIDI. Exporting does not replace saving the project.
 - A `*` in the title means there are unsaved changes. Switching projects or closing asks
   before discarding them. An unnamed sketch closes without asking.
 
@@ -114,8 +114,6 @@ The gear opens Settings. Changes to interface language take effect on the next r
 | Tempo | Estimation algorithm; WaveTone is the default |
 | WaveTone compatibility | Leading-bar handling for MIDI |
 | Network | GitHub download mirror and HTTP proxy |
-| Lyrics | OpenAI-compatible endpoint and external KRC editor |
-| ASS subtitle | Font, colours, fades, lead time and guide dot |
 | Remote | Optional remote-control server |
 
 Auto-save is off by default. When enabled, it saves the open project after editing stops and

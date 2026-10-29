@@ -123,12 +123,6 @@ Third-party code and assets
 - Signalsmith Linear (https://github.com/Signalsmith-Audio/linear) — MIT; the FFT and vector
   helpers Signalsmith Stretch is built on. Vendored as `vendor/signalsmith-linear/`.
 
-### kara-templater
-- License: MIT
-- Used for: structured karaoke text measurement, ruby layout and ASS serialization.
-- Native text metrics use libass (ISC), with its font and shaping dependencies. Frozen builds
-  include the package metadata and its bundled license texts.
-
 ### Dependencies (all AGPL-compatible)
 | Component | License |
 | --- | --- |
@@ -140,8 +134,6 @@ Third-party code and assets
 | numpy, scipy, scikit-learn, joblib, pooch, soundfile | BSD-3-Clause |
 | qtawesome, qtpy | MIT |
 | mido | MIT |
-| kara-templater | MIT |
-| libass | ISC |
 | miniaudio (vendored) | Unlicense OR MIT-0 |
 | Signalsmith Stretch, Signalsmith Linear (vendored) | MIT |
 | pybind11 (build) | BSD-3-Clause |

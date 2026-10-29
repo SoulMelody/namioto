@@ -441,8 +441,6 @@ class TransportBar(_Group):
     open_requested = Signal()
     save_requested = Signal()
     export_midi_requested = Signal()
-    export_krc_requested = Signal()
-    export_ass_requested = Signal()
     auto_page_toggled = Signal(bool)
     overtone_toggled = Signal(bool)
     division_changed = Signal(str)
@@ -452,17 +450,10 @@ class TransportBar(_Group):
         self.setObjectName("transportBar")
         self.open = icon_button("open", tr("Open a project (.nto) — Ctrl+O"))
         self.save = icon_button("save", tr("Save the project — Ctrl+S, with Shift for Save As"))
-        self.export = icon_button("export", tr("Export: the notes as MIDI, the lyrics as .krc, or a subtitle as .ass"))
-        self.export_menu = QMenu(self.export)
-        self.export_midi_action = self.export_menu.addAction(tr("Export MIDI…"))
-        self.export_krc_action = self.export_menu.addAction(tr("Export lyrics (.krc)…"))
-        self.export_ass_action = self.export_menu.addAction(tr("Export ASS subtitle…"))
-        self.export_midi_action.triggered.connect(lambda: self.export_midi_requested.emit())
-        self.export_krc_action.triggered.connect(lambda: self.export_krc_requested.emit())
-        self.export_ass_action.triggered.connect(lambda: self.export_ass_requested.emit())
+        self.export = icon_button("export", tr("Export the notes as a MIDI file"))
         self.open.clicked.connect(self.open_requested)
         self.save.clicked.connect(self.save_requested)
-        self.export.clicked.connect(self._show_export_menu)
+        self.export.clicked.connect(self.export_midi_requested)
         self.rewind = icon_button("rewind", tr("Rewind to the beginning"))
         self.stop = icon_button("stop", tr("Stop"))
         self.play_from_start = icon_button("playstart", tr("Play from the beginning"))
@@ -584,9 +575,6 @@ class TransportBar(_Group):
         self.play_pause.setIcon(icons.icon("pause" if playing else "play"))
         self.play_pause.setToolTip(tr("Pause playback (Space)") if playing else tr("Play from the cursor (Space)"))
 
-    def _show_export_menu(self) -> None:
-        self.export_menu.exec(self.export.mapToGlobal(QPoint(0, self.export.height())))
-
     def set_position(self, seconds: float) -> None:
         self.position.setText(format_time(seconds))
 
@@ -639,10 +627,7 @@ class EditBar(_Group):
         self.transcribe = icon_button("transcribe", tr("Transcribe the singing voice of the loaded audio with GAME"))
         self.transcribe.setEnabled(False)
         self.transcribe.clicked.connect(self.transcribe_requested)
-        self.lyrics = icon_button(
-            "lyrics",
-            tr("Lyrics: import a .krc, annotate plain text with a model, or edit a temporary copy externally"),
-        )
+        self.lyrics = icon_button("lyrics", tr("Lyrics: edit the text the project sings"))
         self.lyrics.setEnabled(False)
         self.lyrics.clicked.connect(self.lyrics_requested)
         self.align = icon_button("align", tr("Align lyrics: put a time on every sound with the forced aligner"))

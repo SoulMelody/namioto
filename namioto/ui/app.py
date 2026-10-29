@@ -11,8 +11,8 @@ walk that table, and `_seeding` keeps an apply's quiet writes from counting as u
 is the document: opening audio needs one (the sibling `.nto` when there is one, else a name from the
 chooser), a MIDI is imported into the project already open and never on its own, and the Open dialog
 offers its filter only inside a project; switching documents goes through `_confirm_discard` first.
-The Export button is a menu: MIDI, the lyrics as a canonical `.krc` (`karaoke.rebuild`, gated by
-`lyricmap.verify`), or a karaoke subtitle as `.ass` (`karaoke.generate_ass`).
+The Export button writes the roll out as a MIDI file. The lyrics live inside the project rather than
+in a file of their own: `karaoke.rebuild`, gated by `lyricmap.verify`, keeps their mapping readable.
 
 Dirty state covers notes, channels, tempo, audio and the lyric times, and is asked about only once
 the document has a file name. `general.auto_save` (off by default) writes the open project once an
@@ -29,7 +29,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 from PySide6.QtCore import (
@@ -37,7 +36,6 @@ from PySide6.QtCore import (
     QCoreApplication,
     QEvent,
     QLibraryInfo,
-    QProcess,
     Qt,
     QThread,
     QTimer,
@@ -58,7 +56,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from namioto import i18n, ipc, lyrics, midi, params, project, qtplugins, subtitle
+from namioto import i18n, ipc, midi, params, project, qtplugins
 from namioto import settings as store
 from namioto import state as window_state
 from namioto.analysis import bpm
@@ -66,24 +64,20 @@ from namioto.analysis.spectrum import CHANNEL_MODES, NoteSpectrum
 from namioto.channels import Channel, free_channel
 from namioto.channels import audible as audible_channels
 from namioto.channels import set_field as channel_set_field
-from namioto.karaoke import AssSettings, KrcError
+from namioto.karaoke import KrcError
 from namioto.karaoke.canonical import rebuild
 from namioto.karaoke.operations import SoundRef
 from namioto.karaoke.parser import parse
 from namioto.karaoke.sounds import natural_sounds
 from namioto.karaoke.sounds import set_channel as set_sound_channel
 from namioto.karaoke.writer import dumps
-from namioto.lyricmap import constraints, faithful, faithful_gate
+from namioto.lyricmap import faithful
 from namioto.lyricmap.channels import split as split_channels
 from namioto.lyricmap.editing import detach, note_runs, operation_at
 from namioto.lyricmap.notes import TimedNote, resolve
-from namioto.lyricmap.problems import Problem
-from namioto.lyricmap.verify import Gate
-from namioto.lyrics import text_key
 from namioto.playback import note_frequency
 from namioto.ui import theme
 from namioto.ui.align_dialog import AlignDialog
-from namioto.ui.ass_dialog import AssDialog
 from namioto.ui.audio import open_player
 from namioto.ui.channel_panel import ChannelPanel
 from namioto.ui.controls import ControlArea, EditBar, MixBar, TransportBar
@@ -92,7 +86,7 @@ from namioto.ui.ipc_server import IpcServer
 from namioto.ui.loading import LoadingThread
 from namioto.ui.lyric_editor import LyricEditor
 from namioto.ui.lyric_map import LyricMapper, map_lyrics
-from namioto.ui.lyrics_dialog import LyricsDialog, LyricsWatcher
+from namioto.ui.lyrics_dialog import LyricsDialog
 from namioto.ui.midi_dialog import MidiImportDialog
 from namioto.ui.open_dialog import OpenAudioDialog
 from namioto.ui.palette_dialog import PaletteDialog
@@ -136,14 +130,6 @@ def _audio_filter() -> str:
 
 def _midi_filter() -> str:
     return i18n.tr("MIDI file ({patterns})", patterns=" ".join(f"*{suffix}" for suffix in midi.SUFFIXES))
-
-
-def _lyrics_filter() -> str:
-    return i18n.tr("Lyrics file (*{suffix})", suffix=lyrics.SUFFIX)
-
-
-def _ass_filter() -> str:
-    return i18n.tr("ASS subtitle (*.ass)")
 
 
 _translators: list[QTranslator] = []
@@ -228,7 +214,6 @@ class SongLoader(LoadingThread):
 
 class MainWindow(QMainWindow):
     transport_changed = Signal(bool)  # whether the transport is running, on every change
-    subtitle_changed = Signal()
 
     def __init__(self, settings=None, overrides: dict | None = None):
         super().__init__()
@@ -256,7 +241,6 @@ class MainWindow(QMainWindow):
         self.lyrics_text = ""
         self._stored_lyrics: project.Lyrics | None = None
         self._lyric_migration_error = ""
-        self._lyrics_directory: TemporaryDirectory | None = None
         self._lyric_key = ""
         self._lyric_model = ""
         self._lyric_flags: tuple[bool, ...] = ()
@@ -304,8 +288,6 @@ class MainWindow(QMainWindow):
         self._current_player_key = self._player_key()
         self.player.gain = self.project_settings.playback.midi_volume / 100.0
         self.song = SongPlayer(self)
-        self.lyrics_watcher = LyricsWatcher(self)
-        self.lyrics_watcher.changed.connect(self._on_lyrics_file_changed)
         self.position_timer = QTimer(self)
         self.position_timer.setInterval(POSITION_INTERVAL_MS)
         self.position_timer.timeout.connect(self._show_position)
@@ -386,8 +368,6 @@ class MainWindow(QMainWindow):
         self.transport.open_requested.connect(self._on_open)
         self.transport.save_requested.connect(self._on_save)
         self.transport.export_midi_requested.connect(self._on_export_midi)
-        self.transport.export_krc_requested.connect(self._on_export_krc)
-        self.transport.export_ass_requested.connect(self._on_export_ass)
         self.edit.transcribe_requested.connect(self._open_transcription)
         self.edit.lyrics_requested.connect(self._open_lyrics)
         self.edit.align_requested.connect(self._open_align)
@@ -448,13 +428,16 @@ class MainWindow(QMainWindow):
             (QKeySequence.StandardKey.Undo, self.view.undo),
             (QKeySequence.StandardKey.Redo, self.view.redo),
         ):
-            QShortcut(QKeySequence(standard), self).activated.connect(slot)
-        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self.view.redo)
+            # `QKeySequence(standard)` keeps only the first binding, so Redo would lose Ctrl+Shift+Z
+            # on X11 and Windows; the whole platform list is bound instead
+            shortcut = QShortcut(self)
+            shortcut.setKeys(QKeySequence.keyBindings(standard))
+            shortcut.activated.connect(slot)
         self.cursor_note = QLabel()
         self.statusBar().addPermanentWidget(self.cursor_note)
         self._restore_session()
         self._show_hint()
-        self._watch_lyrics()
+        self._restore_lyrics()
         self._update_status()
         self.view.setFocus()  # the roll holds the keyboard, so the bar opens without a focus ring on its first button
         if self.settings.remote.enabled:
@@ -532,7 +515,6 @@ class MainWindow(QMainWindow):
         points at no file, its notes and lyrics are gone, and the analysis values that came with it
         are the ones the next `load_audio` reads.
         """
-        self._release_lyrics_copy()
         self._loading = True
         try:
             self.project_settings = project.default_settings(self.state.project)
@@ -554,7 +536,7 @@ class MainWindow(QMainWindow):
             self.view.set_spectrum(None)
             self.view.undo_stack.clear()
             self._apply_project_settings()
-            self._watch_lyrics()
+            self._restore_lyrics()
         finally:
             self._loading = False
         self._remap_lyrics()
@@ -578,7 +560,6 @@ class MainWindow(QMainWindow):
         self.view.lyric_colors = tuple(colors)
         self.sound_strip.update()
         self.lyric_editor.lines.viewport().update()
-        self.subtitle_changed.emit()
         self._mark_dirty()
 
     def _make_bindings(self) -> tuple[_Binding, ...]:
@@ -752,7 +733,6 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(self, settings) -> None:
         """The settings window applied: the program's own preferences take over at once."""
         self.settings = settings
-        self.subtitle_changed.emit()
         self._seed_bindings(lambda binding: binding.model is None)
         self._apply_theme()
         self._update_status()
@@ -1032,189 +1012,6 @@ class MainWindow(QMainWindow):
             target = target.with_name(target.name + midi.SUFFIXES[0])
         return self.export_midi(target)
 
-    def _on_export_krc(self) -> bool:
-        """Write the lyrics out as a `.krc`, with the mapping's groups and `.N` folded in."""
-        if not self.lyrics_text:
-            self.statusBar().showMessage(i18n.tr("There are no lyrics to export"))
-            return False
-        name = Path(self.audio_path).stem if self.audio_path is not None else "untitled"
-        suggested = Path(self._start_directory()) / f"{name}{lyrics.SUFFIX}"
-        chosen, _filter = QFileDialog.getSaveFileName(
-            self,
-            i18n.tr("Export lyrics"),
-            str(suggested),
-            _lyrics_filter(),
-        )
-        if not chosen:
-            return False
-        return self.export_krc(chosen)
-
-    def export_krc(self, path: str | Path) -> bool:
-        """Write the lyrics and the current mapping to `path`, adding the `.krc` suffix if missing."""
-        target = Path(path)
-        if target.suffix.lower() != lyrics.SUFFIX:
-            target = target.with_name(target.name + lyrics.SUFFIX)
-        gate = self._verification()
-        if not gate.open():
-            self._locate_export_problem(gate)
-            self.statusBar().showMessage(self._gate_message(gate))
-            return False
-        try:
-            lyrics.save(target, gate.canonical)
-        except OSError as failure:
-            self.statusBar().showMessage(i18n.tr("Lyrics file could not be written: {error}", error=failure))
-            return False
-        self.statusBar().showMessage(i18n.tr("Exported {name}", name=target.name))
-        return True
-
-    def _verification(self, subtitle: bool = False):
-        """Run the one gate over the mapping the strip shows."""
-        if self._lyric_migration_error:
-            return Gate((Problem("invalid_lyrics", self._lyric_migration_error),))
-        if self.view.lyric_mapping_pending:
-            return Gate((Problem("mapping_pending", "the lyric mapping is still being calculated"),))
-        lines = list(self.view.lyric_lines)
-        if not lines:
-            return Gate((Problem("no_lyric_sounds", "the lyrics have no sounds"),))
-        if any(not 0 <= ref.line < len(lines) for op in self.view.lyric_operations for ref in op.sounds):
-            return Gate((Problem("invalid_anchor", "an operation names a missing lyric line"),))
-        issues = []
-        try:
-            parts = split_channels(self.lyrics_text)
-        except KrcError as error:
-            return Gate((Problem("invalid_lyrics", str(error)),))
-        for channel, part in parts.items():
-            text = part.text
-            resolved = resolve(tuple(TimedNote(*note) for note in self._target_notes(channel)), include_branches=False)
-            try:
-                spans = faithful.read(text, resolved.stream)
-            except (KrcError, ValueError) as error:
-                issues.append(Problem("invalid_lyrics", str(error)))
-                continue
-            if subtitle:
-                dropped = tuple(ref for ref, (_run, slots) in constraints.read(text).items() if slots == 0)
-                gate = faithful_gate(
-                    spans,
-                    resolved.stream,
-                    filtered=resolved.filtered,
-                    subtitle=True,
-                    dropped=dropped,
-                )
-                for problem in gate.problems:
-                    if problem.code == "incomplete_alignment":
-                        refs = tuple(part.refs[ref.line][ref.index] for ref in problem.refs)
-                    elif problem.code == "filtered_note":
-                        refs = problem.refs
-                    else:
-                        refs = tuple(ref for row in part.refs for ref in row)[:1]
-                    issues.append(Problem(problem.code, problem.message, refs))
-        if issues:
-            return Gate(tuple(issues))
-        return Gate((), self.lyrics_text)
-
-    def _gate_message(self, gate) -> str:
-        counts = gate.counts()
-        summary = ", ".join(f"{code} ×{count}" for code, count in sorted(counts.items()))
-        locations = [
-            (ref.line, ref.index) for problem in gate.problems for ref in problem.refs if isinstance(ref, SoundRef)
-        ]
-        if locations:
-            row, index = locations[0]
-            summary += i18n.tr(" (line {line}, sound {sound})", line=row + 1, sound=index + 1)
-        return i18n.tr("The mapping cannot be exported: {problems}", problems=summary)
-
-    def _locate_export_problem(self, gate) -> None:
-        for problem in gate.problems:
-            for ref in problem.refs:
-                if isinstance(ref, SoundRef):
-                    self.sound_strip.reveal_sound(ref.line, ref.index)
-                    return
-
-    def _on_export_ass(self) -> bool:
-        """Write the lyrics out as a karaoke subtitle, timed by the mapping the strip shows."""
-        if not self.lyrics_text or not self.view.lyric_lines:
-            message = self._lyric_error if self.lyrics_text else i18n.tr("There are no lyrics to export")
-            self.statusBar().showMessage(message or i18n.tr("There are no lyrics to export"))
-            return False
-        if not self.view.notes():
-            self.statusBar().showMessage(i18n.tr("There are no notes to time the subtitle with"))
-            return False
-        gate = self._verification(subtitle=True)
-        if not gate.open():
-            self._locate_export_problem(gate)
-            self.statusBar().showMessage(self._gate_message(gate))
-            return False
-        dialog = AssDialog(self.settings, self, lyric_colors=self.view.lyric_colors)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return False
-        selected = dialog.values()
-        name = Path(self.audio_path).stem if self.audio_path is not None else "untitled"
-        suggested = Path(self._start_directory()) / f"{name}.ass"
-        chosen, _filter = QFileDialog.getSaveFileName(
-            self,
-            i18n.tr("Export ASS subtitle"),
-            str(suggested),
-            _ass_filter(),
-        )
-        if not chosen:
-            return False
-        if not self.export_ass(chosen, settings=self._ass_settings(selected.ass)):
-            return False
-        self.settings.ass = selected.ass
-        self.settings_store.flush()
-        self.subtitle_changed.emit()
-        return True
-
-    def ass_source(self) -> tuple[str, bytes]:
-        """Export the current KRC first, then MIDI, as one GUI-thread snapshot."""
-        gate = self._verification(subtitle=True)
-        if not gate.open():
-            self._locate_export_problem(gate)
-            raise ValueError(self._gate_message(gate))
-        krc = gate.canonical
-        data = midi.to_bytes(**self._midi_export())
-        return krc, data
-
-    def export_ass(
-        self,
-        path: str | Path,
-        *,
-        settings: AssSettings | None = None,
-        save_krc: str | Path | None = None,
-        save_midi: str | Path | None = None,
-    ) -> bool:
-        """Build the subtitle from the current KRC and MIDI exports, optionally saving both."""
-        target = subtitle.ass_path(path)
-        try:
-            krc, data = self.ass_source()
-            text = subtitle.build_ass(
-                krc,
-                data,
-                settings=self._with_lyric_colors(settings or self._ass_settings()),
-                wavetone=self.settings.midi.wavetone,
-            )
-            subtitle.save_export(target, krc, data, text, save_krc=save_krc, save_midi=save_midi)
-        except (KrcError, ValueError, EOFError) as error:
-            self.statusBar().showMessage(i18n.tr("The subtitle could not be built: {error}", error=error))
-            return False
-        except OSError as error:
-            self.statusBar().showMessage(i18n.tr("Subtitle file could not be written: {error}", error=error))
-            return False
-        self.statusBar().showMessage(i18n.tr("Exported {name}", name=target.name))
-        return True
-
-    def _with_lyric_colors(self, settings: AssSettings) -> AssSettings:
-        colors = {number: color.lstrip("#") for number, color in enumerate(self.view.lyric_colors)}
-        return replace(
-            settings,
-            overlay_color=colors[0],
-            channel_colors=",".join(f"{number}={color}" for number, color in colors.items()),
-        )
-
-    def _ass_settings(self, settings=None) -> AssSettings:
-        """Subtitle effects with the project's authoritative lyric colours."""
-        return self._with_lyric_colors(AssSettings(**vars(settings or self.settings.ass)))
-
     def load_project(self, path: str | Path) -> bool:
         """Open a project: its values come over the running ones, and its notes replace the roll."""
         try:
@@ -1222,7 +1019,6 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as error:
             self.statusBar().showMessage(i18n.tr("Project could not be opened: {error}", error=error))
             return False
-        self._release_lyrics_copy()
         self._loading = True
         try:
             self.project_settings = opened.settings
@@ -1233,7 +1029,7 @@ class MainWindow(QMainWindow):
             self._lyric_alignment = None
             self._lyric_migration_error = ""
             self._lyric_key = ""
-            self._watch_lyrics()
+            self._restore_lyrics()
             missing = self._open_audio(project.resolve_audio(self.project_path, opened.audio))
             self.view.set_channels(opened.channels)
             loaded = (
@@ -1310,7 +1106,7 @@ class MainWindow(QMainWindow):
         self.project_dirty = False
         self.autosave_timer.stop()
         self._stored_lyrics = lyrics_times
-        self._watch_lyrics()
+        self._restore_lyrics()
         self.state.last_audio_dir = str(target.parent)
         self._save_state()
         self._update_status()
@@ -1482,39 +1278,11 @@ class MainWindow(QMainWindow):
             i18n.tr("GAME found {notes} notes on channel {channel}", notes=len(arriving), channel=0)
         )
 
-    def lyrics_path(self) -> Path | None:
-        """The document's temporary KRC working copy, never a project-directory sidecar."""
-        if self.project_path is None:
-            return None
-        if self._lyrics_directory is None:
-            self._lyrics_directory = TemporaryDirectory(prefix="namioto-lyrics-")
-        return Path(self._lyrics_directory.name) / "lyrics.krc"
-
-    def _prepare_lyrics_copy(self) -> Path | None:
-        try:
-            path = self.lyrics_path()
-            if path is None:
-                return None
-            lyrics.save(path, self.lyrics_text)
-        except OSError as error:
-            self.lyrics_watcher.watch(None)
-            self.statusBar().showMessage(str(error))
-            return None
-        self.lyrics_watcher.watch(path)
-        return path
-
-    def _release_lyrics_copy(self) -> None:
-        self.lyrics_watcher.watch(None)
-        if self._lyrics_directory is not None:
-            self._lyrics_directory.cleanup()
-            self._lyrics_directory = None
-
     def _update_lyric_controls(self) -> None:
         named = self.project_path is not None
         self.edit.lyrics.setEnabled(named)
         self.edit.align.setEnabled(named)
         self.view.lyric_editable = True
-        self.lyrics_watcher.watch(self.lyrics_path() if self._lyrics_directory is not None else None)
 
     def _lyrics_text_editable(self) -> bool:
         return not self.view.gesture_active and not self._lyric_migration_error
@@ -1543,9 +1311,9 @@ class MainWindow(QMainWindow):
                     raise KrcError(result.error) from None
                 operations = result.operations
             text = self._canonical_mapping(stored.text, operations)
-            self._stored_lyrics = stored._replace(text=text, key=text_key(text), mode="read", operations=())
+            self._stored_lyrics = stored._replace(text=text, key=project.text_key(text), mode="read", operations=())
             self._lyric_key = ""
-            self._watch_lyrics()
+            self._restore_lyrics()
             return True
         except (KrcError, ValueError) as error:
             self._lyric_migration_error = i18n.tr(
@@ -1556,8 +1324,8 @@ class MainWindow(QMainWindow):
             self.view.lyric_editable = False
             return False
 
-    def _watch_lyrics(self) -> None:
-        """Restore project lyrics and watch only the temporary editing copy."""
+    def _restore_lyrics(self) -> None:
+        """Take the project's stored lyrics as the ones the roll shows."""
         stored = self._stored_lyrics
         self.lyrics_text = stored.text if stored is not None else ""
         self._update_lyric_controls()
@@ -1568,7 +1336,7 @@ class MainWindow(QMainWindow):
         """Derive the sounds of the open `.krc` and lay them onto the notes the project kept."""
         text = self.lyrics_text
         self.view.lyric_text = text
-        key = text_key(text) if text else ""
+        key = project.text_key(text) if text else ""
         if key == self._lyric_key and bool(self.view.lyric_lines) == bool(text):
             return False
         self._lyric_key = key
@@ -1637,10 +1405,7 @@ class MainWindow(QMainWindow):
 
     def _set_lyric_mapping_pending(self, pending: bool) -> None:
         self.view.lyric_mapping_pending = pending
-        self.transport.export_krc_action.setEnabled(not pending)
-        self.transport.export_ass_action.setEnabled(not pending)
         self._lyric_map_status.setVisible(pending)
-        self.subtitle_changed.emit()
 
     def _invalidate_lyric_mapping(self) -> None:
         self._lyric_alignment = None
@@ -1767,17 +1532,8 @@ class MainWindow(QMainWindow):
         """Read a text into a `.krc` with a model, or by pasting what a web model answered."""
         if not self._lyrics_text_editable():
             return
-        path = self._prepare_lyrics_copy()
-        if path is None:
-            return
-        dialog = LyricsDialog(
-            path,
-            self.settings.lyrics,
-            parent=self,
-            source_directory=self.project_path.parent if self.project_path else None,
-        )
+        dialog = LyricsDialog(self.lyrics_text, parent=self)
         dialog.saved.connect(self._on_lyrics_saved)
-        dialog.open_requested.connect(self._open_lyrics_editor)
         dialog.exec()
 
     def _on_lyrics_saved(self, text: str) -> bool:
@@ -1799,7 +1555,7 @@ class MainWindow(QMainWindow):
             self.lyrics_text = text
             self._stored_lyrics = None
             if same_sounds:
-                self._lyric_key = text_key(text)
+                self._lyric_key = project.text_key(text)
                 self.view.lyric_text = text
                 self.view.load_lyrics(lines, self.view.lyric_times, raw=self.view.lyric_raw)
             else:
@@ -1807,31 +1563,6 @@ class MainWindow(QMainWindow):
         self._remap_lyrics()
         self._mark_dirty()
         return True
-
-    def _on_lyrics_file_changed(self) -> None:
-        path = self.lyrics_path()
-        if path is None or not path.is_file():
-            return
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            self.statusBar().showMessage(i18n.tr("The lyrics could not be read: {error}", error=error))
-            return
-        if text == self.lyrics_text:
-            return
-        if self._on_lyrics_saved(text):
-            self.statusBar().showMessage(i18n.tr("Lyrics reloaded from {name}", name=path.name))
-
-    def _open_lyrics_editor(self) -> None:
-        if not self._lyrics_text_editable():
-            return
-        path = self._prepare_lyrics_copy()
-        if path is None:
-            return
-        command = lyrics.editor_command(self.settings.lyrics.editor)
-        started, _pid = QProcess.startDetached(command[0], [*command[1:], str(path)])
-        if not started:
-            self.statusBar().showMessage(i18n.tr("The lyrics editor could not be started"))
 
     def _open_align(self) -> None:
         """Ask the forced aligner for a time on every sound of the project lyrics."""
@@ -1992,24 +1723,21 @@ class MainWindow(QMainWindow):
         with self.view.lyric_edit(i18n.tr("Align lyrics")):
             self.lyrics_text = text
             self.view.lyric_text = text
-            self._lyric_key = text_key(text)
+            self._lyric_key = project.text_key(text)
             self._lyric_model = model
             self._lyric_flags = snapshot["flagged"]
             self._lyric_scores = None
             self._lyric_problems = None
             self.view.lyric_evidence = (model, snapshot["flagged"], (), ())
             self.view.load_lyrics(natural_sounds(text), self.view.lyric_times, raw=snapshot["raw"])
-        self._prepare_lyrics_copy()
         self._remap_lyrics()
         self._mark_dirty()
         self.statusBar().showMessage(i18n.tr("Aligned {lines} lines", lines=len(refs)))
 
     def _restore_lyric_text(self, text: str) -> None:
         self.lyrics_text = text
-        self._lyric_key = text_key(text) if text else ""
+        self._lyric_key = project.text_key(text) if text else ""
         self._lyric_model, self._lyric_flags, self._lyric_scores, self._lyric_problems = self.view.lyric_evidence
-        if self._lyrics_directory is not None:
-            self._prepare_lyrics_copy()
 
     def _apply_lyric_editor(self, source, text, note_ids, channel):
         if (
@@ -2037,7 +1765,7 @@ class MainWindow(QMainWindow):
                 item.note.channel = channel
             self.lyrics_text = text
             self.view.lyric_text = text
-            self._lyric_key = text_key(text)
+            self._lyric_key = project.text_key(text)
             same_sounds = [[sound.reading for sound in line.sounds] for line in lines] == [
                 [sound.reading for sound in line.sounds] for line in self.view.lyric_lines
             ]
@@ -2088,7 +1816,7 @@ class MainWindow(QMainWindow):
         self._lyric_drag_valid = False
         if runs is None:
             self.lyrics_text = self._lyric_drag_request["text"]
-            self._lyric_key = text_key(self.lyrics_text)
+            self._lyric_key = project.text_key(self.lyrics_text)
             self._apply_lyric_mapping(self._lyric_drag_result)
             self._lyric_map_result = self._lyric_drag_result
             self._set_lyric_mapping_pending(False)
@@ -2110,7 +1838,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(str(error))
             return
         self.lyrics_text = text
-        self._lyric_key = text_key(text)
+        self._lyric_key = project.text_key(text)
         self._apply_lyric_mapping(mapping)
         self._lyric_map_result = mapping
         self._lyric_drag_valid = True
@@ -2125,7 +1853,6 @@ class MainWindow(QMainWindow):
         self._lyric_drag_result = None
         if valid:
             self.view.commit_gesture()
-            self._prepare_lyrics_copy()
             self._mark_dirty()
         else:
             self._invalidate_lyric_mapping()
@@ -2195,7 +1922,6 @@ class MainWindow(QMainWindow):
         self.settings_store.flush()
         self._save_state()
         self.stop_ipc()
-        self._release_lyrics_copy()
         self.song.close()  # the engine owns the audio device, so it leaves before the window does
         super().closeEvent(event)
 

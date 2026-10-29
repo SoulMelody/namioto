@@ -145,7 +145,7 @@ def test_notes_running_out_inside_a_shared_unit_leave_the_rest_untimed():
     assert read("(あいう).2", _notes((0.0, 1.0))) == [[(0.0, 1.0), None, None]]
 
 
-def test_the_read_only_subtitle_gate():
+def test_the_read_only_gate():
     notes = _notes((0.0, 1.0))
     assert faithful_gate(read("あ", notes), notes).open()
     assert faithful_gate(read("あい", notes), notes).counts() == {"incomplete_alignment": 1}

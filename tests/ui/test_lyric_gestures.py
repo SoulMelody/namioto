@@ -17,7 +17,7 @@ def _gesture_lyrics(window, tmp_path, text, count=6):
     window.view.set_notes(tuple((60 + index, index, 1, 0, index + 1) for index in range(count)))
     window._stored_lyrics = project.Lyrics(text=text)
     window._lyric_key = ""
-    window._watch_lyrics()
+    window._restore_lyrics()
     wait_for_lyric_mapping(window)
 
 
@@ -157,9 +157,9 @@ def test_shift_resize_truncates_only_the_display_and_is_persisted(own_window, tm
     _shift_lyric(own_window, 0.75, 2.75)
     assert own_window.lyrics_text == "あ.3い.3"
     assert own_window.view.lyric_mapped == (((1, 2, 3), ()),)
+    assert own_window.view.lyric_zero == ((False, True),)  # い.3 has no notes left to hold it
     assert own_window.save_project(own_window.project_path)
     assert project.load(own_window.project_path).lyrics.text == "あ.3い.3"
-    assert not own_window.export_ass(tmp_path / "incomplete.ass")
     own_window.view.set_notes(tuple((60 + index, index, 1, 0, index + 1) for index in range(6)))
     wait_for_lyric_mapping(own_window)
     assert own_window.view.lyric_mapped == (((1, 2, 3), (4, 5, 6)),)

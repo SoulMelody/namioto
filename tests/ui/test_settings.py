@@ -47,7 +47,7 @@ def test_the_settings_window_lists_every_visible_field(own_window) -> None:
     }
     assert names == expected  # `editor` has no page: its switches are what the program remembers itself
     pages = [dialog.findChild(QTabWidget).tabText(index) for index in range(dialog.findChild(QTabWidget).count())]
-    assert pages == ["General", "Devices", "Tempo", "Lyrics", "Network", "MIDI", "Remote"]
+    assert pages == ["General", "Devices", "Tempo", "Network", "MIDI", "Remote"]
     dialog.close()
 
 
@@ -104,7 +104,6 @@ def test_the_gpu_row_says_whether_its_runtime_is_installed(qt_app, monkeypatch) 
 
 
 def test_restoring_defaults_puts_every_widget_back(own_window) -> None:
-    own_window.settings.ass.font_size = 72
     dialog = SettingsDialog(own_window.settings, parent=own_window)
     row_writer(dialog, "tempo", "window_seconds")(8.0)
     row_writer(dialog, "midi", "wavetone")(False)
@@ -114,7 +113,6 @@ def test_restoring_defaults_puts_every_widget_back(own_window) -> None:
     values = dialog.values()
     assert store.get_value(values, "midi", "wavetone") is True
     assert store.get_value(values, "tempo", "window_seconds") == 12.0
-    assert values.ass.font_size == 72
     dialog.close()
 
 
@@ -366,14 +364,10 @@ def test_the_transport_carries_the_project_buttons() -> None:
     bar.open_requested.connect(lambda: seen.append("open"))
     bar.save_requested.connect(lambda: seen.append("save"))
     bar.export_midi_requested.connect(lambda: seen.append("export midi"))
-    bar.export_krc_requested.connect(lambda: seen.append("export lyrics"))
-    bar.export_ass_requested.connect(lambda: seen.append("export subtitle"))
     bar.open.click()
     bar.save.click()
-    bar.export_midi_action.trigger()
-    bar.export_krc_action.trigger()
-    bar.export_ass_action.trigger()
-    assert seen == ["open", "save", "export midi", "export lyrics", "export subtitle"]
+    bar.export.click()
+    assert seen == ["open", "save", "export midi"]
 
 
 def test_the_edit_bar_carries_the_wand() -> None:

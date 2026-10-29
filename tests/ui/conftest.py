@@ -4,13 +4,8 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from namioto import project
-from namioto.channels import Channel
-from namioto.lyrics import text_key
 from namioto.ui import theme
 from namioto.ui.app import MainWindow
-
-from .helpers import wait_for_lyric_mapping
 
 DEMO_NOTES = (
     (60, 0.0, 1.0),
@@ -68,9 +63,9 @@ def own_window(tmp_path, monkeypatch):
 
 @pytest.fixture
 def lyrics_window(own_window, tmp_path):
-    """A window with a project open, so the lyrics have a file to sit beside."""
+    """A window with a project open, so the lyrics have a project to belong to."""
     own_window.project_path = tmp_path / "song.nto"
-    own_window._watch_lyrics()
+    own_window._restore_lyrics()
     return own_window
 
 
@@ -78,16 +73,4 @@ def lyrics_window(own_window, tmp_path):
 def midi_window(own_window, tmp_path):
     """A window with a project open: a MIDI is imported into one, never on its own."""
     own_window.project_path = tmp_path / "song.nto"
-    return own_window
-
-
-@pytest.fixture
-def subtitle_window(own_window, tmp_path):
-    own_window.transport.bpm.setValue(60.0)
-    own_window.view.set_channels((Channel(channel=0),))
-    own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 1.0, 1.0, 0)))
-    own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = project.Lyrics(text="あい", key=text_key("あい"), raw=(((0.0, 1.0), (1.0, 1.0)),))
-    own_window._watch_lyrics()
-    wait_for_lyric_mapping(own_window)
     return own_window

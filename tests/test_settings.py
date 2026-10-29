@@ -22,39 +22,6 @@ def settings_file(tmp_path, monkeypatch) -> Path:
     return path
 
 
-def test_ass_settings_keep_existing_preferences_and_default_new_fields(settings_file) -> None:
-    from namioto.karaoke import AssSettings
-
-    existing = {
-        "font": "Old Font",
-        "overlay_color": "123456",
-        "fade_in_ms": 400,
-        "fade_out_ms": 100,
-        "lead_time_ms": 3000,
-        "guide_dot_duration_ms": 500,
-    }
-    settings_file.write_text(json.dumps({"version": 1, "ass": existing}))
-    loaded = store.load()
-    for name, value in existing.items():
-        assert getattr(loaded.ass, name) == value
-    assert AssSettings(**vars(store.Settings().ass)) == AssSettings()
-    assert loaded.ass.font_size == 96
-    assert loaded.ass.overlay_blur_color == ""
-    assert loaded.ass.offset_ms == 0
-    loaded.ass.ruby_offset = -10
-    loaded.ass.offset_ms = -123
-    loaded.ass.overlay_blur_color = "ABCDEF"
-    store.save(loaded)
-    assert vars(store.load().ass) == vars(loaded.ass)
-
-
-def test_ass_settings_do_not_read_the_original_environment(settings_file, monkeypatch) -> None:
-    monkeypatch.setenv("FONTNAME", "Environment Font")
-    monkeypatch.setenv("BORD", "20")
-    assert store.load().ass.font == "sans-serif"
-    assert store.load().ass.border == 5
-
-
 def test_missing_file_gives_the_defaults(settings_file) -> None:
     loaded = store.load()
     assert store.to_dict(loaded) == store.to_dict(store.Settings())
@@ -88,7 +55,6 @@ def test_a_round_trip_keeps_every_value(settings_file) -> None:
     store.set_value(original, "general", "language", "zh")
     store.set_value(original, "devices", "gpu", "cuda")
     store.set_value(original, "tempo", "window_seconds", 8.0)
-    store.set_value(original, "lyrics", "model", "deepseek-chat")
     store.set_value(original, "network", "proxy", "http://127.0.0.1:7890")
     store.set_value(original, "midi", "wavetone", False)
     store.set_value(original, "editor", "auto_page", True)
@@ -126,7 +92,6 @@ def test_values_of_the_wrong_type_fall_back_one_by_one(settings_file) -> None:
             {
                 "devices": {"gpu": 5, "power": None},
                 "tempo": {"window_seconds": "long"},
-                "lyrics": {"temperature": True},
                 "editor": {"auto_page": 0},
             }
         )
@@ -135,40 +100,29 @@ def test_values_of_the_wrong_type_fall_back_one_by_one(settings_file) -> None:
     assert store.get_value(loaded, "devices", "gpu") == ""
     assert store.get_value(loaded, "devices", "power") == "high-performance"
     assert store.get_value(loaded, "tempo", "window_seconds") == 12.0
-    assert store.get_value(loaded, "lyrics", "temperature") == 0.2
     assert store.get_value(loaded, "editor", "auto_page") is False
 
 
 def test_values_out_of_range_are_brought_back_in(settings_file) -> None:
-    settings_file.write_text(
-        json.dumps(
-            {
-                "tempo": {"window_seconds": -5.0, "window_hop_seconds": 1000.0},
-                "lyrics": {"temperature": 9.0, "timeout": 0.0},
-            }
-        )
-    )
+    settings_file.write_text(json.dumps({"tempo": {"window_seconds": -5.0, "window_hop_seconds": 1000.0}}))
     loaded = store.load()
     assert store.get_value(loaded, "tempo", "window_seconds") == 2.0
     assert store.get_value(loaded, "tempo", "window_hop_seconds") == 60.0
-    assert store.get_value(loaded, "lyrics", "temperature") == 2.0
-    assert store.get_value(loaded, "lyrics", "timeout") == 1.0
 
 
 def test_values_snap_to_the_step_they_are_shown_on(settings_file) -> None:
-    settings_file.write_text(json.dumps({"tempo": {"window_seconds": 12.6}, "lyrics": {"temperature": 1.234}}))
+    settings_file.write_text(json.dumps({"tempo": {"window_seconds": 12.6}}))
     loaded = store.load()
     assert store.get_value(loaded, "tempo", "window_seconds") == 13.0
-    assert store.get_value(loaded, "lyrics", "temperature") == 1.2
 
 
 def test_text_is_trimmed_and_bounded(settings_file) -> None:
-    settings_file.write_text(json.dumps({"lyrics": {"api_base": "  " + "x" * 9999 + "  "}}))
+    settings_file.write_text(json.dumps({"network": {"proxy": "  " + "x" * 9999 + "  "}}))
     loaded = store.load()
-    assert len(store.get_value(loaded, "lyrics", "api_base")) == params.TEXT_LIMIT
+    assert len(store.get_value(loaded, "network", "proxy")) == params.TEXT_LIMIT
 
-    settings_file.write_text(json.dumps({"lyrics": {"api_base": None}}))
-    assert store.get_value(store.load(), "lyrics", "api_base") == ""
+    settings_file.write_text(json.dumps({"network": {"proxy": None}}))
+    assert store.get_value(store.load(), "network", "proxy") == ""
 
 
 def test_saving_leaves_nothing_half_written(settings_file) -> None:

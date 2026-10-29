@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Checks for the derived spans the roll and the subtitle read - never persisted as fact."""
+"""Checks for the derived spans the roll and the lyric map read - never persisted as fact."""
 
 from __future__ import annotations
 

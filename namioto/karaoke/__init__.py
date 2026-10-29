@@ -4,11 +4,10 @@
 `model.py` holds the tree (`Word`/`Ruby`/`Line`/`Chapter`/`Lyrics`), `parser.parse` reads a `.krc`
 into it, `writer.dumps` writes an edited tree back out, `transforms` holds the optional passes over
 one, `sounds.py` reads a lyric as its natural Sounds, `canonical.py` rebuilds a `.krc` from a
-mapping, `operations.py` holds the mapping's operations, and `ass` writes the subtitle those Sounds
-time. The whole package is Qt-free; the names it re-exports are its public surface.
+mapping, and `operations.py` holds the mapping's operations. The whole package is Qt-free; the names
+it re-exports are its public surface.
 """
 
-from namioto.karaoke.ass import AssSettings, generate_ass
 from namioto.karaoke.canonical import rebuild
 from namioto.karaoke.model import Chapter, Group, KrcError, Line, Lyrics, Ruby, Unit, Word
 from namioto.karaoke.operations import Drop, Match, Merge, Operation, SoundRef
@@ -25,7 +24,6 @@ from namioto.karaoke.transforms import flatten_ruby, merge_words
 from namioto.karaoke.writer import dumps
 
 __all__ = [
-    "AssSettings",
     "Chapter",
     "Container",
     "Drop",
@@ -44,7 +42,6 @@ __all__ = [
     "Word",
     "dumps",
     "flatten_ruby",
-    "generate_ass",
     "merge_words",
     "natural_sounds",
     "natural_tokens",

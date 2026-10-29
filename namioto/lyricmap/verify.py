@@ -2,9 +2,9 @@
 """The one gate every lyric export passes through: the issues that block it, and the canonical `.krc`.
 
 A button, a colour or a caught exception must never decide on its own whether a mapping may leave the
-editor, so the KRC and the subtitle both ask this. It reports locatable problems - a filtered note,
-an anchor that no longer holds, a merge the format cannot write - and, when
-nothing is wrong, hands back the canonical `.krc` the subtitle is generated from. Qt-free.
+editor, so every export asks this. It reports locatable problems - a filtered note, an anchor that no
+longer holds, a merge the format cannot write - and, when nothing is wrong, hands back the canonical
+`.krc`. Qt-free.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from namioto.karaoke.canonical import rebuild
 from namioto.karaoke.model import KrcError
-from namioto.karaoke.operations import Drop, Operation, SoundRef, partition
+from namioto.karaoke.operations import Operation, SoundRef, partition
 from namioto.karaoke.sounds import SoundLine
 from namioto.lyricmap import problems as codes
 from namioto.lyricmap.notes import Note
@@ -49,14 +49,12 @@ def verify(
     filtered: Sequence = (),
     flagged: Sequence[bool] = (),
     broken: bool = False,
-    subtitle: bool = False,
     pending: bool = False,
 ) -> Gate:
     """Everything that blocks the mapping's export, and the canonical `.krc` if nothing does.
 
     `broken` says the lyrics could not even be normalised into Sounds; `filtered` is the notes a
-    conflict kept out of the stream; `subtitle` adds the subtitle's own condition that at least one
-    Sound is actually shown. `pending` blocks export until the current mapping is ready.
+    conflict kept out of the stream. `pending` blocks export until the current mapping is ready.
     """
     if pending:
         return Gate((Problem(codes.MAPPING_PENDING, "the lyric mapping is still being calculated"),))
@@ -101,8 +99,6 @@ def verify(
         except KrcError as error:
             code = codes.ROUND_TRIP_MISMATCH if "round_trip_mismatch" in str(error) else codes.UNWRITABLE_MERGE
             issues.append(Problem(code, str(error)))
-        if subtitle and operations and all(isinstance(operation, Drop) for operation in operations):
-            issues.append(Problem(codes.ROUND_TRIP_MISMATCH, "the subtitle would have nothing to show"))
         if not issues:
             return Gate((), canonical)
     return Gate(tuple(issues))
@@ -113,14 +109,13 @@ def faithful_gate(
     notes: Sequence[Note],
     *,
     filtered: Sequence = (),
-    subtitle: bool = False,
     dropped: Sequence[SoundRef] = (),
 ) -> Gate:
-    """The faithful subtitle gate checks NOTE coverage without solver operations.
+    """The faithful gate checks NOTE coverage without solver operations.
 
-    The KRC itself may always be copied, so this concerns the subtitle alone: the target channel must
-    have notes, no conflict may have filtered one out, and every Sound it is to render must have a
-    definite time. A Sound may use fewer remaining notes than requested; explicit `.0` Sounds are
+    The KRC itself may always be copied, so this concerns the timed mapping alone: the target channel
+    must have notes, no conflict may have filtered one out, and every Sound it is to render must have
+    a definite time. A Sound may use fewer remaining notes than requested; explicit `.0` Sounds are
     excluded from the missing-time check.
     """
     issues: list[Problem] = []
@@ -136,6 +131,4 @@ def faithful_gate(
     )
     if missing:
         issues.append(Problem(codes.INCOMPLETE_ALIGNMENT, "a sound has unmatched NOTE slots", missing))
-    if subtitle and all(span is None for row in spans for span in row):
-        issues.append(Problem(codes.NO_LYRIC_SOUNDS, "the subtitle would have nothing to show"))
     return Gate(tuple(issues))
