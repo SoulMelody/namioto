@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Song playback: the decoded file handed to the native realtime engine.
+"""Song playback: the decoded file handed to the realtime engine in `namioto.audio`.
 
-The stretching, the ring and the audio device all live in `namioto._audio`; this wrapper only
-carries the window's surface - a `finished` signal and the settings - over to them. The position
-stays in the song's own seconds whatever rate it is played at, because the engine counts the source
-timeline and re-anchors on every speed change and seek.
+The stretching, the ring and the audio device all live there; this wrapper only carries the window's
+surface - a `finished` signal and the settings - over to them. The position stays in the song's own
+seconds whatever rate it is played at, because the engine counts the source timeline and re-anchors
+on every speed change and seek.
 
 Resolve librosa's audio decoder at import time so its first import does not race across the
 song, spectrum and tempo workers while the GUI restores note items.
@@ -19,7 +19,7 @@ import numpy as np
 from librosa import load as decode_audio
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from namioto import _audio
+from namioto.audio import Output
 
 ENGINE_RATE = 48000
 BLOCK_FRAMES = 1024
@@ -41,7 +41,7 @@ class SongPlayer(QObject):
     def __init__(self, parent=None, sample_rate: int = ENGINE_RATE):
         super().__init__(parent)
         self._sample_rate = sample_rate
-        self._output = _audio.Output(sample_rate, BLOCK_FRAMES)
+        self._output = Output(sample_rate, BLOCK_FRAMES)
         self._opened = False
         self._finished_poll = QTimer(self)
         self._finished_poll.setInterval(FINISHED_POLL_MS)

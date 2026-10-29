@@ -4,7 +4,7 @@
 
 ## Source setup
 
-Install uv, Python 3.12+ and a C++17 compiler, then run from the repository root:
+Install uv, Python 3.12+ and PortAudio, then run from the repository root:
 
 ```bash
 uv sync --extra cpu
@@ -12,9 +12,9 @@ uv run namioto
 ```
 
 Choose `--extra cuda` or `--extra webgpu` instead if needed; see [devices](cli.md#devices-and-models).
-The native audio extension is built with meson-python and pybind11. Build isolation is disabled
-for this package, so the development group provides its build tools. Editing native sources
-rebuilds the extension on the next import.
+Audio output goes through `sounddevice`, which needs the system PortAudio its Linux wheel does not
+carry - `libportaudio2` on Debian, `portaudio` on Arch. Everything else is a prebuilt wheel, MIDI
+ports included, so no compiler, meson or pybind11 is involved at any point.
 
 ## Tests and lint
 
@@ -42,7 +42,6 @@ for the enforced boundaries.
 ./build.sh clean
 ```
 
-Published wheels include the native extension; source distributions require compilation.
 Neither wheels nor frozen builds bundle analysis models. Model publishing uses
 `scripts/upload_models.sh`; preserve each model's license and attribution in [NOTICE](../NOTICE).
 
@@ -71,7 +70,7 @@ The checkpoints are Meta's MMS forced aligner and
 | `namioto/document.py`, `project.py`, `midi.py` | Notes, project persistence and MIDI interchange |
 | `namioto/settings.py`, `state.py` | Preferences and remembered UI/new-project values |
 | `namioto/cli.py`, `ipc.py` | Headless tasks and remote-control client/protocol |
-| `audio/`, `vendor/`, `meson.build` | Native audio backend and vendored dependencies |
+| `namioto/audio/` | Song playback: the phase vocoder, the transport and the `sounddevice` output |
 | `tests/`, `scripts/` | Tests and developer tools |
 
 Read module docstrings before changes. Keep Qt imports under `namioto/ui/`; core analysis,

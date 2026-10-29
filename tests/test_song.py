@@ -15,7 +15,6 @@ import pytest
 import soundfile
 from PySide6.QtWidgets import QApplication
 
-from namioto import _audio
 from namioto.ui import theme
 from namioto.ui.song import ENGINE_RATE, SongPlayer, load_song
 
@@ -95,7 +94,7 @@ def test_speed_and_gain_reach_the_engine() -> None:
 
 
 class FakeOutput:
-    """The native engine with no device behind it, so the wrapper's plumbing can be checked."""
+    """The engine with no device behind it, so the wrapper's plumbing can be checked."""
 
     def __init__(self, *_args) -> None:
         self.loaded = True
@@ -140,7 +139,7 @@ class FakeOutput:
 
 def test_the_wrapper_opens_once_and_reports_finished(monkeypatch) -> None:
     fake = FakeOutput()
-    monkeypatch.setattr(_audio, "Output", lambda *args: fake)
+    monkeypatch.setattr("namioto.ui.song.Output", lambda *args: fake)
     player = SongPlayer()
     received: list[bool] = []
     player.finished.connect(lambda: received.append(True))

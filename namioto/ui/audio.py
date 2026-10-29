@@ -294,9 +294,9 @@ def open_player(
 ) -> tuple[NotePlayer, str]:
     """An external MIDI player, or a silent player when no MIDI output is available."""
     try:
-        import rtmidi
+        import supriya_midi
 
-        port = rtmidi.MidiOut()
+        port = supriya_midi.MidiOut()
         index = find_port(port.get_ports(), port_name)
         if index is not None:
             port.open_port(index)

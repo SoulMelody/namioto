@@ -48,14 +48,16 @@ freeze_cli() {
 }
 
 build_app() {
-    # a frozen app needs the compiled extension inside the package, so the project is installed as
-    # a wheel rather than in the editable layout, which keeps it under build/
+    # a frozen app collects what is installed, so the project is installed as a wheel rather than in
+    # the editable layout, which would leave PyInstaller following a path hook into the checkout; the
+    # reinstall is what picks up source edits, since the version itself does not change
     uv sync --extra cpu --no-editable --reinstall-package namioto
     uv run --no-editable --with pyinstaller pyinstaller "${pyinstaller_common[@]}" \
         --name namioto \
         --onedir \
         --windowed \
         --collect-data qtawesome \
+        --collect-data _sounddevice_data \
         namioto/ui/app.py
     copy_licenses dist/namioto
 }

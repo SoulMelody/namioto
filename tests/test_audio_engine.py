@@ -1,19 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The native audio layer: the vendored Signalsmith Stretch reached through the build.
+"""The audio backend: the phase vocoder, the transport over it and the output around both.
 
-No audio device is opened here: `Stretcher` is pure DSP and `Engine::pull` is driven frame by frame,
-so the whole realtime path is judged deterministically. `tests/conftest.py` forbids a display and an
-audio device in the whole suite.
+No audio device is opened here: `Stretcher` is pure DSP and `Engine.pull` is driven frame by frame,
+so the whole realtime path is judged deterministically. The device-backed tests ask `Output` for the
+null backend, which paces a plain thread at realtime instead of a sound card. `tests/conftest.py`
+forbids a display and an audio device in the whole suite.
 """
 
 from __future__ import annotations
 
+import sys
 import time
+import types
 
 import numpy as np
 import pytest
 
-from namioto import _audio
+from namioto.audio import Engine, Output, Stretcher
 
 SAMPLE_RATE = 48000
 TONE = 440.0
@@ -34,25 +37,31 @@ def _rms(samples: np.ndarray) -> float:
     return float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
 
 
-def test_versions_are_reported():
-    assert _audio.stretch_version()
-    assert _audio.miniaudio_version()
-
-
 @pytest.mark.parametrize("speed", [1.0, 2.0, 0.5])
 def test_stretcher_speed_scales_the_length_and_leaves_the_pitch(speed: float):
     source = _tone(TONE, 2.0)
 
-    stretcher = _audio.Stretcher(SAMPLE_RATE)
+    stretcher = Stretcher(SAMPLE_RATE)
     output = stretcher.process(source, speed)
 
     assert abs(len(output) - len(source) / speed) <= 2
     assert abs(_dominant_frequency(output[EDGE:-EDGE]) - TONE) < 5.0
 
 
+@pytest.mark.parametrize("speed", [0.1, 2.0])
+def test_stretcher_never_tears_a_gap_at_the_ends_of_the_slider(speed: float):
+    """The synthesis hop is fixed, so even the slowest rate the slider offers keeps its amplitude."""
+    source = _tone(TONE, 2.0)
+
+    output = Stretcher(SAMPLE_RATE).process(source, speed)
+
+    assert abs(_dominant_frequency(output[EDGE:-EDGE]) - TONE) < 5.0
+    assert _rms(output[EDGE:-EDGE]) == pytest.approx(_rms(source[EDGE:-EDGE]), rel=0.1)
+
+
 @pytest.mark.parametrize("speed", [1.0, 2.0, 0.5])
 def test_engine_speed_scales_the_position_and_leaves_the_pitch(speed: float):
-    engine = _audio.Engine(SAMPLE_RATE)
+    engine = Engine(SAMPLE_RATE)
     engine.load(_tone(TONE, 4.0))
     engine.speed = speed
     engine.play(0.0)
@@ -64,7 +73,7 @@ def test_engine_speed_scales_the_position_and_leaves_the_pitch(speed: float):
 
 
 def test_engine_seek_lands_on_the_new_source_position():
-    engine = _audio.Engine(SAMPLE_RATE)
+    engine = Engine(SAMPLE_RATE)
     engine.load(np.concatenate([_tone(440.0, 1.0), _tone(880.0, 1.0)]))
     engine.play(0.0)
     engine.pull(SAMPLE_RATE // 4)
@@ -77,7 +86,7 @@ def test_engine_seek_lands_on_the_new_source_position():
 
 
 def test_engine_pause_is_silent_and_resumes():
-    engine = _audio.Engine(SAMPLE_RATE)
+    engine = Engine(SAMPLE_RATE)
     engine.load(_tone(TONE, 2.0))
     engine.play(0.0)
     assert np.any(engine.pull(SAMPLE_RATE // 4) != 0)
@@ -90,10 +99,10 @@ def test_engine_pause_is_silent_and_resumes():
 
 
 def test_engine_gain_scales_the_output():
-    loud = _audio.Engine(SAMPLE_RATE)
+    loud = Engine(SAMPLE_RATE)
     loud.load(_tone(TONE, 2.0))
     loud.play(0.0)
-    quiet = _audio.Engine(SAMPLE_RATE)
+    quiet = Engine(SAMPLE_RATE)
     quiet.load(_tone(TONE, 2.0))
     quiet.gain = 0.25
     quiet.play(0.0)
@@ -105,7 +114,7 @@ def test_engine_gain_scales_the_output():
 
 
 def test_engine_stops_at_the_end():
-    engine = _audio.Engine(SAMPLE_RATE)
+    engine = Engine(SAMPLE_RATE)
     engine.load(_tone(TONE, 0.1))
     engine.play(0.0)
 
@@ -117,7 +126,7 @@ def test_engine_stops_at_the_end():
 
 
 def test_engine_a_speed_change_keeps_the_source_position():
-    engine = _audio.Engine(SAMPLE_RATE)
+    engine = Engine(SAMPLE_RATE)
     engine.load(np.zeros(SAMPLE_RATE * 4, dtype=np.float32))
     engine.play(0.0)
 
@@ -128,44 +137,9 @@ def test_engine_a_speed_change_keeps_the_source_position():
     assert engine.position == pytest.approx(0.75)  # the rate changed where it stood, no reset
 
 
-def test_engine_mixes_a_submitted_buffer():
-    engine = _audio.Engine(SAMPLE_RATE)
-    engine.load(np.zeros(SAMPLE_RATE * 2, dtype=np.float32))
-    engine.submit_buffer(np.full(SAMPLE_RATE // 10, 0.5, dtype=np.float32), 0.5, 0.5, id=1)
-    engine.play(0.0)
-
-    output = engine.pull(SAMPLE_RATE)  # one second of output
-
-    assert np.allclose(output[: int(0.49 * SAMPLE_RATE)], 0.0, atol=1e-4)
-    assert np.allclose(output[int(0.51 * SAMPLE_RATE) : int(0.59 * SAMPLE_RATE)], 0.25, atol=1e-2)
-    assert np.allclose(output[int(0.61 * SAMPLE_RATE) :], 0.0, atol=1e-4)
-
-
-def test_engine_clear_buffers_drops_a_submitted_buffer():
-    engine = _audio.Engine(SAMPLE_RATE)
-    engine.load(np.zeros(SAMPLE_RATE * 2, dtype=np.float32))
-    engine.submit_buffer(np.ones(SAMPLE_RATE // 2, dtype=np.float32), 0.0, 1.0, id=1)
-    engine.clear_buffers()
-    engine.play(0.0)
-
-    assert np.allclose(engine.pull(SAMPLE_RATE // 2), 0.0, atol=1e-4)
-
-
-def test_engine_replaces_a_buffer_with_the_same_id():
-    engine = _audio.Engine(SAMPLE_RATE)
-    engine.load(np.zeros(SAMPLE_RATE * 2, dtype=np.float32))
-    engine.submit_buffer(np.ones(4800, dtype=np.float32), 0.0, 1.0, id=7)
-    engine.submit_buffer(np.full(4800, 0.25, dtype=np.float32), 0.0, 1.0, id=7)
-    engine.play(0.0)
-
-    output = engine.pull(4800)
-
-    assert np.allclose(output[EDGE:-EDGE], 0.25, atol=1e-3)
-
-
 def test_engine_a_higher_speed_reaches_a_marker_sooner():
     def arrival(speed: float) -> float:
-        engine = _audio.Engine(SAMPLE_RATE)
+        engine = Engine(SAMPLE_RATE)
         source = np.zeros(SAMPLE_RATE, dtype=np.float32)
         source[SAMPLE_RATE // 2 :] = 1.0  # a step at half a second
         engine.load(source)
@@ -178,9 +152,23 @@ def test_engine_a_higher_speed_reaches_a_marker_sooner():
     assert arrival(2.0) < arrival(1.0) < arrival(0.5)
 
 
-def _output(samples: np.ndarray, block_frames: int = 1024) -> _audio.Output:
-    """An `Output` on miniaudio's null backend: real time, but no audio device."""
-    output = _audio.Output(SAMPLE_RATE, block_frames)
+def test_engine_dragging_the_speed_never_sends_the_playhead_back():
+    engine = Engine(SAMPLE_RATE)
+    engine.load(_tone(TONE, 8.0))
+    engine.play(0.0)
+
+    seen = [engine.position]
+    for speed in (0.5, 1.0, 2.0, 0.25, 1.0) * 20:  # what dragging the slider settles through
+        engine.speed = speed
+        engine.pull(1024)
+        seen.append(engine.position)
+
+    assert seen == sorted(seen)
+
+
+def _output(samples: np.ndarray, block_frames: int = 1024) -> Output:
+    """An `Output` on its null backend: real time, but no audio device."""
+    output = Output(SAMPLE_RATE, block_frames)
     assert output.open(null_backend=True), output.error()
     output.load(samples)
     return output
@@ -247,3 +235,89 @@ def test_output_speed_changes_keep_the_playhead_advancing():
         assert output.position > dragged
     finally:
         output.close()
+
+
+def test_output_reports_its_length_before_any_device_is_opened():
+    output = Output(SAMPLE_RATE, 1024)
+    output.load(np.zeros(SAMPLE_RATE * 2, dtype=np.float32))
+
+    assert output.loaded
+    assert output.duration == pytest.approx(2.0)
+
+    output.seek(9.0)  # past the end
+    assert output.position == pytest.approx(2.0)
+    output.seek(-1.0)
+    assert output.position == 0.0
+
+    output.unload()
+    assert not output.loaded and output.duration == 0.0
+
+
+def _fake_sounddevice(monkeypatch, *, device_rate: int = 44100, accepts: bool = False, fail: bool = False) -> list:
+    """A stand-in for sounddevice, so the device paths are judged without a sound card."""
+    module = types.ModuleType("sounddevice")
+    opened: list = []
+
+    class OutputStream:
+        def __init__(self, **kwargs) -> None:
+            if fail:
+                raise RuntimeError("the device refused the stream")
+            opened.append(kwargs)
+            self.active = False
+
+        def start(self) -> None:
+            self.active = True
+
+        def stop(self) -> None:
+            self.active = False
+
+        def close(self) -> None:
+            pass
+
+    def check_output_settings(**_kwargs) -> None:
+        if not accepts:
+            raise RuntimeError("the device does not take that rate")
+
+    module.OutputStream = OutputStream
+    module.check_output_settings = check_output_settings
+    module.query_devices = lambda **kwargs: {"default_samplerate": device_rate}
+    monkeypatch.setitem(sys.modules, "sounddevice", module)
+    return opened
+
+
+def test_a_device_that_refuses_the_engine_rate_moves_the_song_to_its_own(monkeypatch):
+    opened = _fake_sounddevice(monkeypatch, device_rate=44100, accepts=False)
+    output = Output(SAMPLE_RATE, 1024)
+    output.load(_tone(TONE, 1.0))
+
+    assert output.open(False)
+
+    assert opened[0]["samplerate"] == 44100  # the device's rate, not the engine's
+    assert output.stream_rate == 44100
+    assert output.duration == pytest.approx(1.0)  # resampling keeps the song's length in seconds
+    output.close()
+
+
+def test_a_device_that_takes_the_engine_rate_keeps_it(monkeypatch):
+    opened = _fake_sounddevice(monkeypatch, accepts=True)
+    output = Output(SAMPLE_RATE, 1024)
+    output.load(_tone(TONE, 1.0))
+
+    assert output.open(False)
+
+    assert opened[0]["samplerate"] == SAMPLE_RATE
+    assert output.stream_rate == SAMPLE_RATE
+    output.close()
+
+
+def test_without_a_device_the_transport_stays_silent_and_says_why(monkeypatch):
+    _fake_sounddevice(monkeypatch, fail=True)
+    output = Output(SAMPLE_RATE, 1024)
+    output.load(_tone(TONE, 1.0))
+
+    assert not output.open(False)
+
+    assert not output.is_open
+    assert output.error()
+    assert output.duration == pytest.approx(1.0)  # the song stays loaded, it just cannot be heard
+    output.close()

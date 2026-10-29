@@ -3,8 +3,8 @@
 
 `QT_QPA_PLATFORM=offscreen` is assigned before Qt is imported - an assignment, never `setdefault`,
 because a desktop session already exports `wayland;xcb`. One `QApplication` is built for the whole
-run (session-wide, autouse): building a second one takes the first one's widgets down. `rtmidi` is
-swapped for a fake port and `XDG_CONFIG_HOME`/`XDG_DATA_HOME` point at a temp directory, so no test
+run (session-wide, autouse): building a second one takes the first one's widgets down. `supriya_midi`
+is swapped for a fake port and `XDG_CONFIG_HOME`/`XDG_DATA_HOME` point at a temp directory, so no test
 opens a real synth or touches the developer's own settings. No test may need a display or an audio
 device.
 """
@@ -86,8 +86,9 @@ def no_blocking_dialogs():
 class FakeMidiOut:
     """The MIDI backend, with one synth in its port list and nowhere to send to.
 
-    It is a class because `rtmidi.MidiOut` is called as one, once per player: each gets its own. The
-    port is named like the synth a desktop usually runs, since that is the name the player looks for.
+    It is a class because `supriya_midi.MidiOut` is called as one, once per player: each gets its own.
+    The port is named like the synth a desktop usually runs, since that is the name the player looks
+    for.
     """
 
     opened: int | None = None
@@ -115,13 +116,13 @@ def quiet_midi():
 
     Every window builds a player, and the external synth is the backend it prefers, so without this
     the suite would open whatever port the machine has - TiMidity, on a desktop that runs it - and
-    play its notes through the user's own sound system. The whole `rtmidi` module is swapped for a
-    fake one, which keeps the backend the same on every machine, whether or not MIDI is installed.
+    play its notes through the user's own sound system. The whole `supriya_midi` module is swapped for
+    a fake one, which keeps the backend the same on every machine, whether or not MIDI is installed.
     """
-    fake_midi = types.ModuleType("rtmidi")
+    fake_midi = types.ModuleType("supriya_midi")
     fake_midi.MidiOut = FakeMidiOut
     patcher = pytest.MonkeyPatch()
-    patcher.setitem(sys.modules, "rtmidi", fake_midi)
+    patcher.setitem(sys.modules, "supriya_midi", fake_midi)
     yield
     patcher.undo()
 

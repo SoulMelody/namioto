@@ -114,14 +114,14 @@ Third-party code and assets
 - Consequence: an alignment produced with a converted aligner is non-commercial, like TempoCNN's and
   GAME's models.
 
-### Native audio stack (vendored)
-- miniaudio (https://github.com/mackron/miniaudio) — public domain (Unlicense) or MIT-0, at the
-  user's choice; cross-platform audio output (WASAPI/CoreAudio/ALSA/PulseAudio). Vendored as
-  `vendor/miniaudio.h`.
-- Signalsmith Stretch (https://github.com/Signalsmith-Audio/signalsmith-stretch) — MIT; realtime
-  time-stretching of the song. Vendored as `vendor/signalsmith-stretch/signalsmith-stretch.h`.
-- Signalsmith Linear (https://github.com/Signalsmith-Audio/linear) — MIT; the FFT and vector
-  helpers Signalsmith Stretch is built on. Vendored as `vendor/signalsmith-linear/`.
+### Audio output (reached at runtime)
+- sounddevice (https://github.com/spatialaudio/python-sounddevice) — MIT; the output stream the song
+  is played through. Its Linux wheel leaves PortAudio to the system, so a desktop needs
+  `libportaudio2` (Debian) or `portaudio` (Arch); the Windows and macOS wheels carry their own copy.
+- PortAudio (http://www.portaudio.com) — MIT; the device layer under sounddevice, and the only part of
+  playback that is not pure Python.
+- RtMidi (https://github.com/thestk/rtmidi) — MIT; the MIDI port layer, reached through
+  `supriya_midi`.
 
 ### Dependencies (all AGPL-compatible)
 | Component | License |
@@ -134,11 +134,8 @@ Third-party code and assets
 | numpy, scipy, scikit-learn, joblib, pooch, soundfile | BSD-3-Clause |
 | qtawesome, qtpy | MIT |
 | mido | MIT |
-| miniaudio (vendored) | Unlicense OR MIT-0 |
-| Signalsmith Stretch, Signalsmith Linear (vendored) | MIT |
-| pybind11 (build) | BSD-3-Clause |
-| meson-python (build) | MIT |
-| meson, ninja (build) | Apache-2.0 / Apache-2.0 |
+| sounddevice, PortAudio | MIT |
+| supriya-midi, RtMidi | MIT |
 | torch, torchaudio, onnx, onnxscript (development only) | BSD-3-Clause / Apache-2.0 |
 | transformers (development only) | Apache-2.0 |
 | packaging | Apache-2.0 OR BSD-2-Clause |

@@ -13,9 +13,10 @@ dependencies = [
     "mido>=1.3.3",
     "platformdirs>=4.14.0",
     "pyside6-essentials>=6.12.0",
-    "python-rtmidi>=1.5.8",
     "qtawesome>=1.4.2",
     "scipy>=1.18.1",
+    "sounddevice>=0.5.6",
+    "supriya-midi>=26.10b4",
 ]
 
 # the runtime the analysis jobs open a model with. `cpu` and `webgpu` share the plain `onnxruntime`
@@ -35,21 +36,19 @@ namioto-cli = "namioto.cli:main"
 # the analysis jobs need one of the onnxruntime builds and the tests exercise them, but no default
 # group may carry one: `uv sync` always includes it, so `--extra cuda`/`webgpu` would install a second
 # build over it. Development picks its build with `--extra cpu` (or `--extra cuda`/`--extra webgpu`)
-# the build tools are here because build isolation is disabled for namioto (see tool.uv)
-dev = ["pytest>=8", "meson-python>=0.16", "pybind11>=2.12", "meson>=1.2.3"]
+dev = ["pytest>=8"]
 # torch/torchaudio/transformers/onnx are only for scripts/export_align_model.py; the program runs
 # the converted ONNX graph through onnxruntime and never imports them
 export = ["torch", "torchaudio", "transformers", "onnx"]
 
 [build-system]
-requires = ["meson-python>=0.16", "pybind11>=2.12"]
-build-backend = "mesonpy"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["namioto"]
 
 [tool.uv]
-# meson-python rebuilds the extension on import, and meson bakes its own path into build.ninja: under
-# build isolation that path points into a temporary build environment that is deleted by then, so the
-# build tools have to come from this venv instead
-no-build-isolation-package = ["namioto"]
 # installing two of the onnxruntime builds would overwrite each other's `onnxruntime` module; uv is
 # told they conflict so it refuses the pair instead of producing a broken environment (pip cannot)
 conflicts = [[{ extra = "cpu" }, { extra = "cuda" }], [{ extra = "cuda" }, { extra = "webgpu" }]]

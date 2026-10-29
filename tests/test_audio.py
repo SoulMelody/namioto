@@ -147,7 +147,7 @@ def test_the_external_synth_is_preferred_when_one_is_listening() -> None:
 
 @pytest.mark.parametrize("unavailable", ["no_ports", "backend_error", "open_error"])
 def test_without_midi_output_playback_and_preview_stay_silent(monkeypatch, unavailable) -> None:
-    fake_midi = types.ModuleType("rtmidi")
+    fake_midi = types.ModuleType("supriya_midi")
 
     class NoPorts:
         def get_ports(self) -> list[str]:
@@ -159,7 +159,7 @@ def test_without_midi_output_playback_and_preview_stay_silent(monkeypatch, unava
             raise RuntimeError("Port unavailable")
 
     fake_midi.MidiOut = NoPorts
-    monkeypatch.setitem(sys.modules, "rtmidi", fake_midi)
+    monkeypatch.setitem(sys.modules, "supriya_midi", fake_midi)
 
     player, name = open_player()
     assert isinstance(player, SilentPlayer)
