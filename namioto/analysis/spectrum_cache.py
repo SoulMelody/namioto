@@ -6,6 +6,12 @@ bump that version whenever analysis or decoding changes invalidate old results.
 Files live under the app's derived-data directory and may be deleted at any time.
 Reads never unpickle; corrupt or inaccessible entries are cache misses. Writes
 are atomic and best-effort, since persistence must not prevent opening audio.
+
+A result is either a whole `NoteSpectrum` (`load`/`save`) or a bare table that
+belongs beside one, such as the overtone estimate (`load_table`/`save_table`).
+The two share the directory but never a key: a derived table carries the stage
+that produced it in its options, so it invalidates with its own parameters and
+not with the spectrum's.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from zipfile import BadZipFile
 
 import numpy as np
 
+from namioto.analysis.choices import BACKENDS
 from namioto.analysis.spectrum import NOTE_COUNT
 from namioto.utils import data_dir, write_bytes
 
@@ -59,7 +66,7 @@ def load(key: str) -> dict | None:
             or not np.isfinite(table).all()
             or (table < 0).any()
             or set(metadata) != {"frame_ms", "sample_rate", "fft_points", "hop", "a4", "sigma", "backend"}
-            or metadata["backend"] not in ("wavetone", "notedigger")
+            or metadata["backend"] not in BACKENDS
         ):
             return None
         for name in ("frame_ms", "sample_rate", "hop", "a4"):
@@ -79,6 +86,37 @@ def save(key: str, spectrum: NoteSpectrum) -> None:
     try:
         buffer = io.BytesIO()
         np.savez(buffer, table=spectrum.table, metadata=json.dumps(metadata, allow_nan=False))
+        write_bytes(cache_path(key), buffer.getvalue())
+    except OSError:
+        pass
+
+
+def _valid_table(table: np.ndarray) -> bool:
+    return (
+        table.dtype == np.float32
+        and table.ndim == 2
+        and table.shape[0] > 0
+        and table.shape[1] == NOTE_COUNT
+        and bool(np.isfinite(table).all())
+        and not bool((table < 0).any())
+    )
+
+
+def load_table(key: str) -> np.ndarray | None:
+    """A derived table stored beside a spectrum, or a miss when it is not there or not usable."""
+    try:
+        with np.load(cache_path(key), allow_pickle=False) as archive:
+            table = archive["table"]
+    except (OSError, ValueError, TypeError, KeyError, EOFError, BadZipFile):
+        return None
+    return table if _valid_table(table) else None
+
+
+def save_table(key: str, table: np.ndarray) -> None:
+    """Store one derived table under its own key; best-effort, like the spectrum itself."""
+    try:
+        buffer = io.BytesIO()
+        np.savez(buffer, table=np.ascontiguousarray(table, dtype=np.float32))
         write_bytes(cache_path(key), buffer.getvalue())
     except OSError:
         pass

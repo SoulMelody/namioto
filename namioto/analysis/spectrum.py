@@ -2,12 +2,16 @@
 """Qt-free note-domain spectra on 84 bands (C1-B7), normalised for the editor.
 
 WaveTone-style multirate correlation is the default; the original noteDigger
-STFT remains available through backend="notedigger" or stft_notes().
+STFT remains available through backend="notedigger" or stft_notes(), and
+backend="cqt" fuses that STFT with a constant-Q transform for the low bands.
 
 The optional STFT algorithm and parameters are ported from noteDigger (GPL-3.0, see NOTICE):
 - `dataProcess/fft_real.js` — real FFT with a symmetric Hann window
 - `dataProcess/analyser.js` — `FreqTable`, the linear-to-note weight matrix, `normalize`, `autoFill`
 - `core/app_analyser.js` — the STFT driver: frame geometry and channel selection
+
+The CQT path is this project's own: librosa supplies the transform, and only the way the two
+tables are fused follows noteDigger's `core/app_analyser.js::this.cqt`.
 
 The note table is what the editor draws as the spectrum and what note extraction runs on; frame
 values are `sqrt(energy / sigma)` where `sigma` is the standard deviation of all energies of the
@@ -21,6 +25,7 @@ import json
 import math
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +34,7 @@ import numpy as np
 from scipy import fft as sp_fft
 from scipy import sparse
 
-from namioto.analysis.choices import CHANNEL_MODES
+from namioto.analysis.choices import BACKENDS, CHANNEL_MODES
 
 NOTE_COUNT = 84
 MIDI_OFFSET = 24
@@ -37,6 +42,11 @@ A4_INDEX = 45
 SEMI_RANGE = 0.667
 LEAK_RANGE = 1.0
 OVERSAMPLE = 32
+# the constant-Q path: three bins per semitone, and a filter 2.8 times the analysis window's own
+# length, which is what it takes to keep a semitone's main lobe apart from its neighbours
+CQT_BINS_PER_OCTAVE = 36
+CQT_BINS_PER_NOTE = CQT_BINS_PER_OCTAVE // 12
+CQT_FILTER_SCALE = 2.8
 
 
 def freq_table(a4: float = 440.0) -> np.ndarray:
@@ -230,6 +240,94 @@ def stft_notes(
     )
 
 
+def cqt_notes(
+    audio: np.ndarray | list[np.ndarray],
+    sample_rate: int,
+    *,
+    t_num: float = 40.0,
+    fft_points: int = 8192,
+    a4: float = 440.0,
+    filter_scale: float = CQT_FILTER_SCALE,
+    progress=None,
+    timings: dict | None = None,
+) -> NoteSpectrum:
+    """The STFT table fused with a constant-Q transform, noteDigger's `backend="cqt"`.
+
+    A short FFT window cannot separate C2 from C#2 - the two are 4 Hz apart - while a long one
+    smears every attack. The constant-Q transform gives up uniform bins for uniform *semitone*
+    resolution and pays for it with time resolution instead, so the two are fused rather than
+    chosen between: where the CQT is stronger it is trusted (root mean square, which keeps a
+    partial crisp), and where the STFT is stronger the geometric mean pulls the CQT's speckle down.
+
+    The frame grid, the band order and the normalisation are the STFT's, so the two tables line up
+    sample for sample. The CQT is the expensive half; it is cached with the rest of the spectrum.
+    """
+    channels = as_channels(audio)
+    length = min(len(channel) for channel in channels)
+    hop = round(sample_rate / t_num)
+    if hop <= 0:
+        raise ValueError("Frame rate exceeds the sample rate")
+    frames = 1 + (length - hop // 2) // hop
+    if frames <= 0:
+        raise ValueError(f"Audio too short: {length / sample_rate:.2f} s at {sample_rate} Hz is less than one frame")
+
+    stft = stft_notes(
+        channels,
+        sample_rate,
+        t_num=t_num,
+        fft_points=fft_points,
+        a4=a4,
+        progress=progress,
+        timings=timings,
+    )
+
+    start_time = time.perf_counter()
+    transform = np.zeros((frames, NOTE_COUNT), dtype=np.float64)
+    for index, channel in enumerate(channels):
+        # half a hop of leading silence puts librosa's frame centres on the STFT's
+        padded = np.pad(np.asarray(channel[:length], dtype=np.float32), (hop // 2, 0))
+        with warnings.catch_warnings():
+            # the low bands need an analysis window longer than a short file, which librosa pads for
+            warnings.filterwarnings("ignore", message="n_fft=.* is too large", category=UserWarning)
+            magnitude = np.abs(
+                librosa.cqt(
+                    padded,
+                    sr=sample_rate,
+                    hop_length=hop,
+                    fmin=float(freq_table(a4)[0]),
+                    n_bins=NOTE_COUNT * CQT_BINS_PER_NOTE,
+                    bins_per_octave=CQT_BINS_PER_OCTAVE,
+                    filter_scale=filter_scale,
+                )
+            )
+        usable = min(frames, magnitude.shape[1])
+        if usable:
+            transform[:usable] += magnitude[:, :usable].reshape(NOTE_COUNT, CQT_BINS_PER_NOTE, usable).sum(axis=1).T
+        if progress is not None:
+            progress(index + 1, len(channels))
+    transform /= len(channels)
+    if timings is not None:
+        timings["cqt"] = time.perf_counter() - start_time
+
+    sigma = float((transform**2).std())
+    scaled = transform / math.sqrt(sigma) if sigma > 0 else np.zeros_like(transform)
+    fused = np.where(
+        stft.table < scaled,
+        np.hypot(stft.table, scaled) / math.sqrt(2.0),
+        np.sqrt(stft.table * scaled),
+    )
+    return NoteSpectrum(
+        table=fused.astype(np.float32),
+        frame_ms=1000 / t_num,
+        sample_rate=sample_rate,
+        fft_points=fft_points,
+        hop=hop,
+        a4=a4,
+        sigma=stft.sigma,
+        backend="cqt",
+    )
+
+
 def wave_notes(
     audio: np.ndarray | list[np.ndarray],
     sample_rate: int,
@@ -308,13 +406,16 @@ def analyse(
     """Decode and analyse audio, reusing content-addressed results unless cache=False."""
     from namioto.analysis import spectrum_cache
 
-    if backend not in ("wavetone", "notedigger"):
+    if backend not in BACKENDS:
         raise ValueError(f"Unknown spectrum backend: {backend!r}")
     if channels not in CHANNEL_MODES:
         raise ValueError(f"Unknown channel mode {channels!r}, expected one of {CHANNEL_MODES}")
     options = {"backend": backend, "channels": channels, "t_num": float(t_num), "a4": float(a4)}
-    if backend == "notedigger":
+    if backend in ("notedigger", "cqt"):
         options["fft_points"] = fft_points
+    if backend == "cqt":
+        options["bins_per_octave"] = CQT_BINS_PER_OCTAVE
+        options["filter_scale"] = CQT_FILTER_SCALE
     start = time.perf_counter()
     key = spectrum_cache.cache_key(path, options) if cache else None
     cached = spectrum_cache.load(key) if key is not None else None
@@ -330,6 +431,16 @@ def analyse(
         timings["decode"] = time.perf_counter() - start
     if backend == "wavetone":
         result = wave_notes(selected, sample_rate, t_num=t_num, a4=a4, progress=progress, timings=timings)
+    elif backend == "cqt":
+        result = cqt_notes(
+            selected,
+            sample_rate,
+            t_num=t_num,
+            fft_points=fft_points,
+            a4=a4,
+            progress=progress,
+            timings=timings,
+        )
     else:
         result = stft_notes(
             selected,
@@ -380,13 +491,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--channels", choices=CHANNEL_MODES, default="mono", help="which channels to analyse")
     parser.add_argument("--t-num", type=float, default=40.0, help="analysis frames per second (default: 40)")
     parser.add_argument(
-        "--backend", choices=("wavetone", "notedigger"), default="wavetone", help="spectrum backend (default: wavetone)"
+        "--backend", choices=BACKENDS, default="wavetone", help="spectrum backend (default: wavetone)"
     )
     parser.add_argument(
         "--fft-points", type=int, default=8192, help="noteDigger FFT size (default: 8192; ignored by wavetone)"
     )
     parser.add_argument("--a4", type=float, default=440.0, help="frequency of A4 (default: 440)")
     parser.add_argument("--threshold", type=float, help="also report auto-filled notes above this value")
+    parser.add_argument("--beats", action="store_true", help="also track the tempo, the beats and the downbeats")
     parser.add_argument("--bench", action="store_true", help="print per-stage timings")
     parser.add_argument("--no-cache", action="store_true", help="analyse without reading or writing the spectrum cache")
     parser.add_argument("--json", action="store_true", help="print the summary as JSON")
@@ -407,6 +519,21 @@ def main(argv: list[str] | None = None) -> int:
     total = time.perf_counter() - total_start
 
     summary = spectrum.summary()
+    tracked = None
+    if args.beats:
+        from namioto.analysis import beats as beat_tracking
+
+        try:
+            tracked = beat_tracking.track(spectrum)
+        except ValueError as error:
+            print(f"no beat grid: {error}", file=sys.stderr)
+        else:
+            summary["beats"] = {
+                "bpm": tracked.bpm,
+                "count": len(tracked.beats),
+                "meter": tracked.meter,
+                "downbeats": len(tracked.downbeats),
+            }
     if args.json:
         json.dump(summary, sys.stdout, indent=2)
         print()
@@ -416,6 +543,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{summary['duration']:.1f} s, sigma {summary['sigma']:.4g}"
         )
         print("peak bands: " + ", ".join(f"{band['note']} {band['energy']:.3f}" for band in summary["peak_bands"]))
+        if tracked is not None:
+            print(
+                f"{len(tracked.beats)} beats at {tracked.bpm:.2f} BPM in {tracked.meter}/4, "
+                f"{len(tracked.downbeats)} downbeats"
+            )
 
     if args.threshold is not None:
         spans = auto_fill(spectrum.table, args.threshold)

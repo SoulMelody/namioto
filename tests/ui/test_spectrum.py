@@ -76,6 +76,28 @@ def test_spectrum_image_is_cached_until_the_parameters_change() -> None:
     assert spectrum.image(300.0, 1.0) is not first
 
 
+def test_a_playhead_move_does_not_bake_the_spectrum_again(own_window) -> None:
+    """The canvas is the expensive half, so the cursor moving must not repaint it."""
+    own_window.show()
+    view = own_window.view
+    view.set_spectrum(make_spectrum(frames=4000))
+    view.center_on(0.0, 40.5)
+    QApplication.processEvents()
+    renderer = view.spectrum
+    baked = renderer._image
+    assert baked is not None
+
+    for step in range(40):
+        view.set_playhead(view.to_seconds(step * 0.25))
+        QApplication.processEvents()
+    assert renderer._image is baked  # a moved cursor is drawn over the canvas, not into it
+
+    view.gain = view.gain * 2  # a display parameter really does bake again
+    view.refresh()
+    QApplication.processEvents()
+    assert renderer._image is not baked
+
+
 @pytest.mark.parametrize(("gain", "contrast"), [(240.0, 1.0), (300.0, 0.2), (10.0, 4.0)])
 def test_spectrum_frame_range_matches_full_image(gain, contrast) -> None:
     table = np.random.default_rng(0).uniform(-0.1, 1.0, (20, NOTE_COUNT)).astype(np.float32)

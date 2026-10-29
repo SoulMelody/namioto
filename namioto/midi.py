@@ -9,7 +9,8 @@ becomes one entry, and one MTrk holding several channels is read as several. Nam
 chunk, not on a channel, so none is read or written - they belong to the project file.
 
 Notes are stored in seconds, as everywhere else in the project, so the tempo map of a file is walked
-on the way in and written as the one tempo the grid has on the way out.
+on the way in, kept as the grid's map, and written back out as the same set of tempo changes. A
+file with one tempo is a map with one point, so nothing about the single-tempo case changes.
 
 `settings.midi.wavetone` (on by default) drops the leading bar WaveTone's own export writes in front
 of every note and adds it back on the way out; a file whose notes start before that bar did not come
@@ -28,6 +29,7 @@ import mido
 
 from namioto import project
 from namioto.channels import CHANNEL_COUNT, Channel
+from namioto.tempo_map import TempoMap, TempoPoint
 
 SUFFIXES = (".mid", ".midi")
 PPQ = 480  # the beat grid, the standard division every DAW reads
@@ -47,7 +49,8 @@ class Imported:
     channels: tuple[Channel, ...]
     notes: tuple[project.Note, ...]
     bpm: float
-    tempo_changes: int = 0  # tempo events past the first, which the single grid cannot follow
+    tempo_changes: int = 0  # tempo events past the first
+    tempo_map: TempoMap = TempoMap()  # the file's whole tempo map, in the grid's beats
     dropped: int = 0  # note events that never made a note: no pair, or no length
     left_out: tuple[int, ...] = ()  # channels past the limit
 
@@ -142,78 +145,95 @@ def _read(mid: mido.MidiFile, *, wavetone: bool, limit: int) -> Imported:
         notes=notes,
         bpm=_bpm(tempos),
         tempo_changes=len(tempos) - 1,
+        tempo_map=_read_tempo_map(tempos, ppq, lead_in),
         dropped=dropped,
         left_out=left_out,
     )
 
 
-def write(path: str | Path, channels, notes, bpm: float, *, wavetone: bool = False) -> Path:
+def write(path: str | Path, channels, notes, tempo: TempoMap | float, *, wavetone: bool = False) -> Path:
     """Write channels and notes, both in seconds, out as a MIDI file, on the project's own tempo.
 
-    One MTrk per channel, the first of them carrying the conductor's tempo and time signature, so
-    the notes start on track 0; a channel's name is not written, since a name belongs to this
-    project and not to a MIDI channel. A note is written nearest the tick its time names, so one
-    drawn on the roll's grid lands exactly on the tick that grid stands for and one taken from the
-    audio keeps the time it has.
+    `tempo` is the beat grid's map, or a single BPM for a score that keeps one. One MTrk per channel,
+    the first of them carrying the conductor's tempo changes and time signature, so the notes start
+    on track 0; a channel's name is not written, since a name belongs to this project and not to a
+    MIDI channel. A note is written nearest the tick its time names, so one drawn on the roll's grid
+    lands exactly on the tick that grid stands for and one taken from the audio keeps the time it
+    has.
     """
-    return _save(path, _build(channels, notes, bpm, wavetone=wavetone))
+    return _save(path, _build(channels, notes, tempo, wavetone=wavetone))
 
 
-def to_bytes(channels, notes, bpm: float, *, wavetone: bool = False) -> bytes:
+def to_bytes(channels, notes, tempo: TempoMap | float, *, wavetone: bool = False) -> bytes:
     """Export MIDI without requiring an intermediate file."""
     stream = io.BytesIO()
-    _build(channels, notes, bpm, wavetone=wavetone).save(file=stream)
+    _build(channels, notes, tempo, wavetone=wavetone).save(file=stream)
     return stream.getvalue()
 
 
-def _build(channels, notes, bpm: float, *, wavetone: bool) -> mido.MidiFile:
+def _build(channels, notes, tempo: TempoMap | float, *, wavetone: bool) -> mido.MidiFile:
     ppq = PPQ
-    grid = max(1.0, float(bpm))
-    seconds_per_beat = 60.0 / grid
+    tempo_map = tempo if isinstance(tempo, TempoMap) else TempoMap.single(float(tempo))
     lead_in = LEAD_IN_BEATS * ppq if wavetone else 0
 
     mid = mido.MidiFile(type=1, ticks_per_beat=ppq, charset="utf-8")
-    head = [
-        mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(grid), time=0),
-        mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0),
-    ]
+    changes = [(round(point.beat * ppq), mido.bpm2tempo(point.bpm)) for point in tempo_map.points]
 
     for entry in channels:
-        events: list[tuple[int, int, int]] = []
+        notes_here: list[tuple[int, int, int]] = []  # (tick, 1 for on, pitch)
         for note in notes:
             if note.channel != entry.channel:
                 continue
-            start = _tick(note.start, seconds_per_beat, ppq)
-            end = _tick(note.start + note.duration, seconds_per_beat, ppq)
-            events.append((start, 1, note.pitch))
-            events.append((max(end, start + 1), 0, note.pitch))
-        events.sort()  # a note ending where the next one starts lets go of the pitch first
-        written = mido.MidiTrack()
+            start = _tick(note.start, tempo_map, ppq)
+            end = _tick(note.start + note.duration, tempo_map, ppq)
+            notes_here.append((start, 1, note.pitch))
+            notes_here.append((max(end, start + 1), 0, note.pitch))
+        notes_here.sort()  # a note ending where the next one starts lets go of the pitch first
+
+        # one stream per track, absolute ticks, sorted: the conductor's changes and the notes of
+        # this channel share track 0, so they have to be interleaved rather than laid one after the other
+        stream: list[tuple[int, int, mido.Message | mido.MetaMessage]] = []
         if not mid.tracks:
-            written.extend(head)  # the conductor opens track 0, in front of the first channel
-        written.append(mido.Message("program_change", channel=entry.channel, program=entry.program, time=0))
-        written.append(mido.Message("control_change", channel=entry.channel, control=7, value=entry.volume, time=0))
-        previous = 0
-        for tick, kind, pitch in events:
-            tick += lead_in
-            written.append(
+            stream.extend((tick, 0, mido.MetaMessage("set_tempo", tempo=tempo)) for tick, tempo in changes)
+            stream.append((0, 0, mido.MetaMessage("time_signature", numerator=4, denominator=4)))
+        stream.append((0, 1, mido.Message("program_change", channel=entry.channel, program=entry.program)))
+        stream.append((0, 1, mido.Message("control_change", channel=entry.channel, control=7, value=entry.volume)))
+        stream.extend(
+            (
+                tick + lead_in,
+                2,
                 mido.Message(
                     "note_on",
                     channel=entry.channel,
                     note=pitch,
                     velocity=VELOCITY if kind else 0,
-                    time=tick - previous,
-                )
+                ),
             )
+            for tick, kind, pitch in notes_here
+        )
+        stream.sort(key=lambda item: (item[0], item[1]))
+
+        written = mido.MidiTrack()
+        previous = 0
+        for tick, _order, message in stream:
+            message.time = tick - previous
+            written.append(message)
             previous = tick
         mid.tracks.append(written)
     if not mid.tracks:
-        mid.tracks.append(mido.MidiTrack(head))  # a file with no channel still needs the tempo
+        conductor = mido.MidiTrack()
+        previous = 0
+        for tick, tempo in changes:
+            conductor.append(mido.MetaMessage("set_tempo", tempo=tempo, time=tick - previous))
+            previous = tick
+        conductor.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
+        mid.tracks.append(conductor)  # a file with no channel still needs the tempo
     return mid
 
 
-def _tick(seconds: float, seconds_per_beat: float, ppq: int) -> int:
-    return int(round(seconds / seconds_per_beat * ppq))
+def _tick(seconds: float, tempo: TempoMap, ppq: int) -> int:
+    """The tick a time names: the beat the map gives it, on the file's own division."""
+    return int(round(tempo.beats_at(seconds) * ppq))
 
 
 def _load(path: str | Path) -> mido.MidiFile:
@@ -250,6 +270,15 @@ def _seconds(tempos: list[tuple[int, int]], tick: int, ppq: int) -> float:
 
 def _bpm(tempos: list[tuple[int, int]]) -> float:
     return round(mido.tempo2bpm(tempos[0][1]), 1)
+
+
+def _read_tempo_map(tempos: list[tuple[int, int]], ppq: int, lead_in: int) -> TempoMap:
+    """The file's tempo events as the grid's map, with the lead-in bar taken off the beats."""
+    points = []
+    for tick, microseconds in tempos:
+        beat = max(0.0, (tick - lead_in) / ppq)
+        points.append(TempoPoint(beat, mido.tempo2bpm(microseconds)))
+    return TempoMap(tuple(points))
 
 
 def _before(values: dict[int, int], tick: int, default: int) -> int:

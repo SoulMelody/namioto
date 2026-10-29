@@ -153,3 +153,18 @@ def test_cache_does_not_load_pickled_metadata(audio):
     timings = {}
     spectrum.analyse(audio, timings=timings)
     assert "decode" in timings
+
+
+@pytest.fixture
+def wide_audio(tmp_path, monkeypatch):
+    monkeypatch.setattr(spectrum_cache, "data_dir", lambda *parts: tmp_path.joinpath(*parts))
+    path = tmp_path / "wide.wav"
+    sf.write(path, np.sin(2 * np.pi * 220 * np.arange(22050) / 44100), 44100, subtype="FLOAT")
+    return path
+
+
+def test_the_cqt_backend_is_cached_apart_from_the_stft(wide_audio):
+    # the constant-Q path needs a rate whose Nyquist clears its highest band, hence its own fixture
+    spectrum.analyse(wide_audio, backend="notedigger")
+    spectrum.analyse(wide_audio, backend="cqt")
+    assert len(list(cache_file(wide_audio).parent.glob("*.npz"))) == 2

@@ -27,6 +27,7 @@ GLYPHS = {
     "beat": "mdi.metronome",
     "page": "mdi.book-open-page-variant",
     "overtone": "mdi.sine-wave",
+    "harmonic": "mdi.waves",
     "snap": "mdi.music-note-eighth",
     "quantize": "mdi.grid",
     "check": "mdi.check",

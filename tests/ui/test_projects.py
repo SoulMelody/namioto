@@ -9,6 +9,7 @@ from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from namioto import project
+from namioto.tempo_map import TempoMap, TempoPoint
 from namioto.ui.app import MainWindow
 
 from .helpers import fake_loaders
@@ -334,3 +335,28 @@ def test_a_project_is_picked_up_from_the_command_line(qt_app, tmp_path) -> None:
     finally:
         window.project_dirty = False
         window.close()
+
+
+def test_a_new_project_needs_no_audio(own_window, tmp_path) -> None:
+    own_window.view.set_notes([(60, 0.0, 1.0), (64, 2.0, 1.0)])
+    own_window.view.set_tempo(
+        TempoMap((TempoPoint(0.0, 120.0), TempoPoint(4.0, 60.0))), keep_notes=False
+    )
+    own_window.project_dirty = False
+
+    assert own_window.new_project() is True
+
+    assert own_window.project_path is None
+    assert own_window.audio_path is None
+    assert own_window.view.notes() == []
+    assert own_window.view.tempo.is_single
+    assert own_window.view.spectrum is None
+    assert own_window._document_name() == "Untitled"
+
+    # notes can be drawn and the project saved with no recording behind it at all
+    own_window.view.add_note(60, 0.0, 1.0)
+    path = tmp_path / "empty.nto"
+    assert own_window.save_project(path) is True
+    saved = project.load(path)
+    assert [note.pitch for note in saved.notes] == [60]
+    assert saved.audio == ""

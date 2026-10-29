@@ -440,7 +440,7 @@ class WindowBridge:
         return {
             "pitch": item.pitch,
             "start": round(view.to_seconds(item.start), 6),
-            "duration": round(view.to_seconds(item.duration), 6),
+            "duration": round(view.length_to_seconds(item.duration, item.start), 6),
             "channel": item.channel,
         }
 
@@ -475,7 +475,7 @@ class WindowBridge:
                 (
                     pitch,
                     view.to_beats(start),
-                    view.to_beats(duration if duration is not None else 0.0),
+                    view.to_beats(start + (duration if duration is not None else 0.0)) - view.to_beats(start),
                     channel if channel is not None else view.active_channel,
                 )
             )
@@ -496,7 +496,9 @@ class WindowBridge:
                     continue
                 if abs(view.to_seconds(item.start) - start) > MATCH_SECONDS:
                     continue
-                if duration is not None and abs(view.to_seconds(item.duration) - duration) > MATCH_SECONDS:
+                if duration is not None and (
+                    abs(view.length_to_seconds(item.duration, item.start) - duration) > MATCH_SECONDS
+                ):
                     continue
                 remaining.remove(item)
                 removed += 1
@@ -516,7 +518,14 @@ class WindowBridge:
         arriving = []
         for entry in entries:
             pitch, start, duration, channel = self._note_spec(entry)
-            arriving.append((pitch, view.to_beats(start), view.to_beats(duration or 0.0), channel or 0))
+            arriving.append(
+                (
+                    pitch,
+                    view.to_beats(start),
+                    view.to_beats(start + (duration or 0.0)) - view.to_beats(start),
+                    channel or 0,
+                )
+            )
         channels = params.get("channels")
         if channels is None:
             view.set_notes(arriving)

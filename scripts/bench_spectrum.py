@@ -46,13 +46,13 @@ def synthetic(seconds: float, stereo: bool) -> np.ndarray:
     return np.stack([mono, np.roll(mono, 997)], axis=1)
 
 
-def run_case(path: str, mode: str, t_num: float, fft_points: int) -> dict:
+def run_case(path: str, mode: str, t_num: float, fft_points: int, backend: str = "wavetone") -> dict:
     from namioto.analysis.spectrum import analyse
 
     timings: dict = {}
     before = rss_mb()
     start = time.perf_counter()
-    spectrum = analyse(path, channels=mode, t_num=t_num, fft_points=fft_points, timings=timings)
+    spectrum = analyse(path, channels=mode, backend=backend, t_num=t_num, fft_points=fft_points, timings=timings)
     total = time.perf_counter() - start
     return {
         "frames": spectrum.frames,
@@ -65,15 +65,16 @@ def run_case(path: str, mode: str, t_num: float, fft_points: int) -> dict:
     }
 
 
-def report(cases: list[tuple[str, str, float, int]], runner) -> None:
-    header = f"{'case':44} {'frames':>7} {'total':>7} {'compute':>8} {'realtime':>9} {'rss':>7} {'table':>6}"
+def report(cases: list[tuple[str, str, float, int, str]], runner) -> None:
+    header = f"{'case':52} {'frames':>7} {'total':>7} {'compute':>8} {'realtime':>9} {'rss':>7} {'table':>6}"
     print(header)
     print("-" * len(header))
-    for path, mode, t_num, fft_points in cases:
-        result = runner(path, mode, t_num, fft_points)
+    for path, mode, t_num, fft_points, backend in cases:
+        result = runner(path, mode, t_num, fft_points, backend)
         stages = " ".join(f"{name}={value:.3f}" for name, value in result["stages"].items())
+        label = f"{Path(path).name} {mode} {backend} t_num={t_num:g} fft={fft_points}"
         print(
-            f"{f'{Path(path).name} {mode} t_num={t_num:g} fft={fft_points}':44} {result['frames']:7d} "
+            f"{label:52} {result['frames']:7d} "
             f"{result['total']:7.3f} {result['compute']:8.3f} {result['duration'] / result['compute']:8.0f}x "
             f"{result['rss']:6.0f}M {result['table_mb']:5.1f}M   {stages}"
         )
@@ -81,7 +82,9 @@ def report(cases: list[tuple[str, str, float, int]], runner) -> None:
 
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] != "--child":
-        cases = [(sys.argv[1], "mono", 40.0, 8192), (sys.argv[1], "both", 40.0, 8192)]
+        cases = [
+            (sys.argv[1], "mono", 40.0, 8192, backend) for backend in ("wavetone", "notedigger", "cqt")
+        ]
         report(cases, run_case)
         return 0
 
@@ -90,13 +93,15 @@ def main() -> int:
         for seconds, stereo in ((30.0, False), (180.0, False), (180.0, True), (600.0, False)):
             path = Path(directory) / f"synthetic_{int(seconds)}s{'_stereo' if stereo else ''}.wav"
             soundfile.write(str(path), synthetic(seconds, stereo), SAMPLE_RATE, subtype="PCM_16")
-            cases.append((str(path), "both" if stereo else "mono", 40.0, 8192))
-        cases.append((cases[-1][0], "mono", 20.0, 8192))
-        cases.append((cases[-1][0], "mono", 40.0, 16384))
+            cases.append((str(path), "both" if stereo else "mono", 40.0, 8192, "wavetone"))
+        cases.append((cases[-1][0], "mono", 20.0, 8192, "wavetone"))
+        cases.append((cases[-1][0], "mono", 40.0, 16384, "wavetone"))
+        # the constant-Q path is the expensive one, so it is measured on the shortest file
+        cases.append((cases[0][0], "mono", 40.0, 8192, "cqt"))
 
-        def in_subprocess(path: str, mode: str, t_num: float, fft_points: int) -> dict:
+        def in_subprocess(path: str, mode: str, t_num: float, fft_points: int, backend: str) -> dict:
             process = subprocess.run(
-                [sys.executable, __file__, "--child", path, mode, str(t_num), str(fft_points)],
+                [sys.executable, __file__, "--child", path, mode, str(t_num), str(fft_points), backend],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -110,6 +115,7 @@ def main() -> int:
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--child":
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        print(json.dumps(run_case(sys.argv[2], sys.argv[3], float(sys.argv[4]), int(sys.argv[5]))))
+        backend = sys.argv[6] if len(sys.argv) > 6 else "wavetone"
+        print(json.dumps(run_case(sys.argv[2], sys.argv[3], float(sys.argv[4]), int(sys.argv[5]), backend)))
     else:
         raise SystemExit(main())

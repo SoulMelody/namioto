@@ -443,6 +443,7 @@ class TransportBar(_Group):
     export_midi_requested = Signal()
     auto_page_toggled = Signal(bool)
     overtone_toggled = Signal(bool)
+    harmonic_toggled = Signal(bool)
     division_changed = Signal(str)
 
     def __init__(self, parent=None):
@@ -515,8 +516,17 @@ class TransportBar(_Group):
             tr("Overtone highlight: paint f, 2f, 3f and 4f of the row under the mouse, the way WaveTone marks them"),
             checkable=True,
         )
+        self.harmonic = icon_button(
+            "harmonic",
+            tr(
+                "Overtone removal: take the partials a note puts above itself out of the spectrum, so an "
+                "octave above it stops looking like a note of its own"
+            ),
+            checkable=True,
+        )
         self.auto_page.toggled.connect(self.auto_page_toggled)
         self.overtone.toggled.connect(self.overtone_toggled)
+        self.harmonic.toggled.connect(self.harmonic_toggled)
         self.channels = icon_button(
             "channels", tr("Channels: colours, mute and instruments, one card per channel"), checkable=True
         )
@@ -545,6 +555,7 @@ class TransportBar(_Group):
         playback.add(separator())
         playback.add(self.auto_page)
         playback.add(self.overtone)
+        playback.add(self.harmonic)
         playback.add(separator())
         playback.add(self.channels)
         playback.add(self.note_lyrics)

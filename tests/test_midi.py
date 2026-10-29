@@ -10,6 +10,7 @@ import pytest
 
 from namioto import midi, project
 from namioto.channels import Channel
+from namioto.tempo_map import TempoMap, TempoPoint
 
 
 def file_with(tracks, *, ppq: int = 480, tempo: int = 500000) -> mido.MidiFile:
@@ -164,6 +165,39 @@ def test_the_tempo_map_is_walked_and_the_first_tempo_is_the_grid(tmp_path) -> No
     # the first beat is 0.5 s at 120, the second a whole second at 60
     assert imported.notes[0].start == pytest.approx(0.5)
     assert imported.notes[0].duration == pytest.approx(1.0)
+    # and the change is kept as a point on the grid, on beat 1
+    assert imported.tempo_map.points == (TempoPoint(0.0, 120.0), TempoPoint(1.0, 60.0))
+
+
+def test_a_tempo_map_is_written_as_several_tempo_events_and_read_back(tmp_path) -> None:
+    tempo = TempoMap((TempoPoint(0.0, 120.0), TempoPoint(4.0, 60.0)))
+    path = tmp_path / "speeds.mid"
+    # a note in each stretch: 0-2 s is beats 0-4, 2-6 s is beats 4-8
+    notes = (project.Note(0.0, 1.0, 60, 0), project.Note(2.5, 1.0, 64, 0))
+    midi.write(path, (Channel(channel=0),), notes, tempo)
+
+    written = mido.MidiFile(path)
+    changes = [
+        message
+        for track in written.tracks
+        for message in track
+        if message.type == "set_tempo"
+    ]
+    assert [round(mido.tempo2bpm(message.tempo)) for message in changes] == [120, 60]
+
+    imported = midi.read(path)
+    assert imported.tempo_map == tempo
+    assert [note.start for note in imported.notes] == pytest.approx([0.0, 2.5])
+    assert [note.duration for note in imported.notes] == pytest.approx([1.0, 1.0])
+
+
+def test_one_bpm_is_still_written_as_one_tempo_event(tmp_path) -> None:
+    path = tmp_path / "one.mid"
+    midi.write(path, (Channel(channel=0),), (project.Note(1.0, 0.5, 60, 0),), 120.0)
+    written = mido.MidiFile(path)
+    changes = [message for track in written.tracks for message in track if message.type == "set_tempo"]
+    assert len(changes) == 1
+    assert midi.read(path).tempo_map.is_single
 
 
 def test_a_note_that_never_ends_is_dropped(tmp_path) -> None:

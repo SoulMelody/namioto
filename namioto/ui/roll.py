@@ -30,6 +30,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 
+import numpy as np
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QTransform, QUndoCommand, QUndoStack
 from PySide6.QtWidgets import (
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
+    QInputDialog,
     QMenu,
 )
 
@@ -48,6 +50,7 @@ from namioto.interaction import Interaction, Tool
 from namioto.karaoke.sounds import SoundLine
 from namioto.lyric_colors import DEFAULT_COLORS
 from namioto.lyricmap.raw import from_spans
+from namioto.tempo_map import TempoMap
 from namioto.ui import theme
 from namioto.ui.blocks import CLICK_SLOP_PX, Press, block_part
 from namioto.ui.spectrogram import IMAGE_BLOCK_FRAMES, SpectrumImage
@@ -98,17 +101,18 @@ def time_step(pixels_per_second: float, minimum: float) -> float:
 
 @dataclass(frozen=True)
 class _RollState:
-    """A document snapshot as one undo step: channels, notes and what was selected.
+    """A document snapshot as one undo step: channels, notes, the beat grid and what was selected.
 
-    Note times are seconds, not the beats the roll draws in: a tempo change rescales every beat
-    coordinate, so a snapshot in beats would restore a note at the beat it used to sit on rather
-    than the time it still sounds at.
+    Note times are beats, and the tempo map they are read against travels in the same snapshot: a
+    tempo change rescales every beat coordinate, so a snapshot that held the map without the notes
+    would restore them at the beats they used to sit on rather than the time they still sound at.
     """
 
     channels: tuple[Channel, ...]
     notes: tuple[tuple[int, float, float, int, int], ...]
     selected: frozenset[int]
     active_channel: int
+    tempo: TempoMap = TempoMap()
     lyrics: tuple = ()
     lyric_raw: tuple = ()
     lyric_operations: tuple = ()
@@ -117,7 +121,7 @@ class _RollState:
 
 
 def _state_data(state: _RollState) -> tuple:
-    return (state.channels, state.notes, state.lyric_raw, state.lyric_text, state.lyric_evidence)
+    return (state.channels, state.notes, state.tempo, state.lyric_raw, state.lyric_text, state.lyric_evidence)
 
 
 class _RollEdit(QUndoCommand):
@@ -370,7 +374,7 @@ class PianoRollView(QGraphicsView):
         self.hover_pitch: int | None = None
         self._preview_pitch: int | None = None
         self.playhead: float | None = None
-        self._bpm = 120.0
+        self._tempo = TempoMap()
         self.gain = 240.0
         self.contrast = 1.0
         self.spectrum: SpectrumImage | None = None
@@ -419,29 +423,68 @@ class PianoRollView(QGraphicsView):
 
     @property
     def bpm(self) -> float:
-        return self._bpm
+        return self._tempo.bpm
 
     @bpm.setter
     def bpm(self, value: float) -> None:
-        """Tempo of the beat grid. Notes hold their place in the audio, so a new tempo only
-        re-divides the grid they sit on: their beat coordinates and the horizontal zoom are
-        rescaled together, which leaves the audio and the notes where they are on screen."""
+        """Tempo of the beat grid, as a scale over every change the grid already has.
+
+        Notes hold their place in the audio, so a new tempo only re-divides the grid they sit on:
+        their beat coordinates and the horizontal zoom are rescaled together, which leaves the audio
+        and the notes where they are on screen. A map with changes keeps the shape of them.
+        """
         tempo = max(1.0, float(value))
-        scale = tempo / self._bpm  # seconds = beats * 60 / bpm, so the beats scale with the tempo
-        if scale != 1.0:
-            self._zoom_x /= scale
+        ratio = tempo / self._tempo.bpm  # seconds = beats * 60 / bpm, so the beats scale with the tempo
+        if ratio != 1.0:
+            self._zoom_x /= ratio
             for note in self.notes():
-                note.set_range(note.start * scale, note.pitch)
-                note.set_duration(note.duration * scale)
-        self._bpm = tempo
+                note.set_range(note.start * ratio, note.pitch)
+                note.set_duration(note.duration * ratio)
+        self._tempo = self._tempo.rescaled(tempo)
         self._update_scene()
         self.refresh()
+
+    @property
+    def tempo(self) -> TempoMap:
+        return self._tempo
+
+    @tempo.setter
+    def tempo(self, value: TempoMap) -> None:
+        self.set_tempo(value)
+
+    def set_tempo(self, tempo: TempoMap, *, keep_notes: bool = True) -> None:
+        """Adopt `tempo` as the beat grid's map.
+
+        With `keep_notes`, every note is moved to the beat its seconds name, so a tempo the analysis
+        suggests regrids the song without moving a single note against the audio. Opening a project
+        passes `keep_notes=False`, because its notes are about to be replaced and are already stored
+        in seconds.
+        """
+        if tempo == self._tempo:
+            return
+        if keep_notes:
+            for note in self.notes():
+                start = self._tempo.seconds_at(note.start)
+                end = self._tempo.seconds_at(note.end)
+                note.set_range(tempo.beats_at(start), note.pitch)
+                note.set_duration(max(MIN_DURATION, tempo.beats_at(end) - tempo.beats_at(start)))
+        self._tempo = tempo
+        self._update_scene()
+        self.refresh()
+
+    def set_tempo_map(self, tempo: TempoMap, text: str) -> None:
+        """Change the beat grid's map as one undo step, leaving every note where it sounds."""
+        if tempo == self._tempo:
+            return
+        with self._edit(text):
+            self.set_tempo(tempo)
+        self.notes_changed.emit()  # the beats moved, so the lyric mapping may have to follow
 
     def content_beats(self) -> float:
         """Scrollable length: the default canvas, the spectrum or the notes, whichever is longest."""
         end = float(LENGTH_BEATS)
         if self.spectrum is not None:
-            end = max(end, self.spectrum.spectrum.frames * self.frame_width())
+            end = max(end, self._tempo.beats_at(self.spectrum.spectrum.duration))
         for note in self.notes():
             end = max(end, note.end)
         return end + CONTENT_MARGIN
@@ -767,11 +810,11 @@ class PianoRollView(QGraphicsView):
         return _RollState(
             channels=tuple(self.channels),
             notes=tuple(
-                (note.pitch, self.to_seconds(note.start), self.to_seconds(note.duration), note.channel, note.id)
-                for note in self.notes()
+                (note.pitch, note.start, note.duration, note.channel, note.id) for note in self.notes()
             ),
             selected=frozenset(index for index, item in enumerate(self._items) if item.isSelected()),
             active_channel=self.active_channel,
+            tempo=self._tempo,
             lyrics=self._lines,
             lyric_raw=self._lyric_raw,
             lyric_operations=self._lyric_operations,
@@ -872,10 +915,9 @@ class PianoRollView(QGraphicsView):
             self._lyric_operations = state.lyric_operations
             self._lyric_mapped = ()
             self._sync_lyric_highlight()
-            self.set_notes(
-                (pitch, self.to_beats(start), self.to_beats(duration), channel, identifier)
-                for pitch, start, duration, channel, identifier in state.notes
-            )
+            # the map goes back first, so the notes below land on the grid they were kept against
+            self.set_tempo(state.tempo, keep_notes=False)
+            self.set_notes(state.notes)
             self.set_channels(state.channels)
             for index in state.selected:
                 if index < len(self._items):
@@ -1158,10 +1200,21 @@ class PianoRollView(QGraphicsView):
                 self.view_changed.emit()
         return moved
 
-    def set_spectrum(self, spectrum: NoteSpectrum | None) -> None:
-        self.spectrum = SpectrumImage(spectrum) if spectrum is not None else None
+    def set_spectrum(
+        self,
+        spectrum: NoteSpectrum | None,
+        harmonic: np.ndarray | None = None,
+        strength: float = 0.0,
+    ) -> None:
+        self.spectrum = SpectrumImage(spectrum, harmonic, strength) if spectrum is not None else None
         self._update_scene()
         self.refresh()
+
+    def set_harmonic(self, harmonic: np.ndarray | None, strength: float) -> None:
+        """Take `strength` of the overtone estimate out of the drawn spectrum."""
+        if self.spectrum is not None:
+            self.spectrum.set_harmonic(harmonic, strength)
+            self.refresh()
 
     def refresh(self) -> None:
         self.viewport().update()
@@ -1190,9 +1243,11 @@ class PianoRollView(QGraphicsView):
         self._sync_channel_visuals()
         self.refresh()
 
-    def frame_width(self) -> float:
-        """Scene width of one spectrum frame, in beats."""
-        return self.spectrum.spectrum.frame_ms / 1000.0 * self.bpm / 60.0
+    def frame_width(self, beat: float = 0.0) -> float:
+        """Scene width of one spectrum frame at `beat`, in beats: a tempo change widens it."""
+        if self.spectrum is None:
+            return 0.0
+        return self.spectrum.spectrum.frame_ms / 1000.0 / self._tempo.seconds_per_beat(beat)
 
     def highlight_pitches(self) -> list[int]:
         """The rows to tint behind the notes: the row under the mouse, and - with the overtone
@@ -1259,7 +1314,7 @@ class PianoRollView(QGraphicsView):
 
     def follow_playhead(self, seconds: float) -> None:
         """Leave the page alone until the playhead reaches its right edge, then turn it."""
-        x = seconds * self.bpm / 60.0
+        x = self.to_beats(seconds)
         page = self.mapToScene(self.viewport().rect()).boundingRect()
         if page.left() <= x <= page.right() - page.width() * PAGE_TURN_MARGIN:
             return
@@ -1267,16 +1322,33 @@ class PianoRollView(QGraphicsView):
 
     @property
     def seconds_per_beat(self) -> float:
-        """What one scene unit is worth in time: the one conversion every caller has to get right."""
-        return 60.0 / self.bpm
+        """What one scene unit is worth in time at the start of the song.
+
+        A tempo map makes this vary along the song; `to_seconds` and `to_beats` are the conversions
+        to use, and this is only the scale a uniform control or a block width is measured with.
+        """
+        return self._tempo.seconds_per_beat(0.0)
 
     def to_seconds(self, beats: float) -> float:
         """A scene-unit length or position in seconds, the unit the files and the players speak."""
-        return beats * self.seconds_per_beat
+        return self._tempo.seconds_at(beats)
 
     def to_beats(self, seconds: float) -> float:
         """A time in seconds as scene units, the unit the notes are drawn and kept in."""
-        return seconds / self.seconds_per_beat
+        return self._tempo.beats_at(seconds)
+
+    def length_to_seconds(self, beats: float, at: float = 0.0) -> float:
+        """A beat length measured from beat `at`, in seconds.
+
+        A length is not a position: a tempo change inside it means the same number of beats takes
+        a different time depending on where it starts, so the callers that hold a duration say where
+        it begins.
+        """
+        return self._tempo.seconds_at(at + beats) - self._tempo.seconds_at(at)
+
+    def length_to_beats(self, seconds: float, at: float = 0.0) -> float:
+        """A length in seconds measured from beat `at`, in beats."""
+        return self._tempo.beats_at(self._tempo.seconds_at(at) + seconds) - at
 
     @property
     def offset(self) -> float:
@@ -1286,7 +1358,7 @@ class PianoRollView(QGraphicsView):
     @property
     def offset_beats(self) -> float:
         """Where the grid's own zero sits, in scene units: `set_offset`'s seconds as beats."""
-        return self._grid_offset * self.bpm / 60.0
+        return self._tempo.beats_at(self._grid_offset)
 
     def set_offset(self, seconds: float) -> None:
         """Slide the drawn grid and its snapping by `seconds`: `+` to the right, `-` to the left.
@@ -1300,10 +1372,10 @@ class PianoRollView(QGraphicsView):
 
     def seconds_at_viewport_x(self, x: float) -> float:
         """The timeline position under a viewport x, for the widgets that share the roll's columns."""
-        return max(0.0, self.mapToScene(QPoint(int(x), 0)).x()) * 60.0 / self.bpm
+        return max(0.0, self._tempo.seconds_at(self.mapToScene(QPoint(int(x), 0)).x()))
 
     def pixels_per_second(self) -> float:
-        return self._zoom_x * self.bpm / 60.0
+        return self._zoom_x / self._tempo.seconds_per_beat(0.0)
 
     def seconds_lines(self, rect: QRectF, minimum: float) -> list[tuple[float, float, bool]]:
         """(x, seconds, major) of the time grid across `rect`, on the 1-2-5 step that keeps the
@@ -1314,11 +1386,14 @@ class PianoRollView(QGraphicsView):
         """
         index = TIME_STEPS.index(time_step(self.pixels_per_second(), minimum))
         step, major = TIME_STEPS[index], TIME_STEPS[min(index + 1, len(TIME_STEPS) - 1)]
-        beats_per_second = self.bpm / 60.0
-        value = math.floor(rect.left() / (step * beats_per_second)) * step
+        # the axis is walked in seconds and each line placed by the map, so a change of tempo
+        # spaces the clock's own lines the way it spaces the music
+        start = self._tempo.seconds_at(rect.left())
+        end = self._tempo.seconds_at(rect.right())
+        value = math.floor(start / step) * step
         lines = []
-        while value * beats_per_second <= rect.right():
-            lines.append((value * beats_per_second, value, _is_multiple(value, major)))
+        while value <= end:
+            lines.append((self._tempo.beats_at(value), value, _is_multiple(value, major)))
             value += step
         return lines
 
@@ -1420,7 +1495,7 @@ class PianoRollView(QGraphicsView):
         """The playback position, over the notes so that they never hide it."""
         if self.playhead is None:
             return
-        x = self.playhead * self.bpm / 60.0
+        x = self.to_beats(self.playhead)
         if not rect.left() <= x <= rect.right():
             return
         painter.save()
@@ -1429,27 +1504,60 @@ class PianoRollView(QGraphicsView):
         painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
         painter.restore()
 
+    def _spectrum_segments(self) -> list[tuple[float, float]]:
+        """(start, end) in seconds of every stretch of constant tempo the spectrum covers.
+
+        The scene's x axis is beats and the spectrum's own is seconds, so a song whose tempo changes
+        needs one draw per stretch: inside a stretch the two are proportional, and a stretch is
+        where one scale can be used for the whole of it.
+        """
+        duration = self.spectrum.spectrum.duration
+        segments = []
+        for start_beat, end_beat, _bpm in self._tempo.segments():
+            start = self._tempo.seconds_at(start_beat)
+            end = duration if end_beat is None else min(duration, self._tempo.seconds_at(end_beat))
+            if start < duration and end > start:
+                segments.append((start, end))
+        return segments
+
     def _draw_spectrum(self, painter: QPainter, rect: QRectF) -> None:
-        width = self.frame_width()
-        first = max(0, int(math.floor(rect.left() / width)))
-        last = min(self.spectrum.spectrum.frames, int(math.ceil(rect.right() / width)) + 1)
-        if last <= first:
+        spectrum = self.spectrum.spectrum
+        frame_seconds = spectrum.frame_ms / 1000.0
+        if frame_seconds <= 0.0 or spectrum.duration <= 0.0:
             return
         visible = self.mapToScene(self.viewport().rect()).boundingRect()
-        image_first = max(0, int(math.floor(visible.left() / width))) // IMAGE_BLOCK_FRAMES * IMAGE_BLOCK_FRAMES
+        first_seconds = self._tempo.seconds_at(max(0.0, visible.left()))
+        last_seconds = min(spectrum.duration, self._tempo.seconds_at(visible.right()))
+        image_first = max(0, int(math.floor(first_seconds / frame_seconds))) // IMAGE_BLOCK_FRAMES * IMAGE_BLOCK_FRAMES
         image_last = min(
-            self.spectrum.spectrum.frames,
-            math.ceil((int(math.ceil(visible.right() / width)) + 1) / IMAGE_BLOCK_FRAMES) * IMAGE_BLOCK_FRAMES,
+            spectrum.frames,
+            math.ceil((int(math.ceil(last_seconds / frame_seconds)) + 1) / IMAGE_BLOCK_FRAMES) * IMAGE_BLOCK_FRAMES,
         )
+        if image_last <= image_first:
+            return
         image = self.spectrum.image(self.gain, self.contrast, image_first, image_last)
-        target = QRectF(first * width, SPECTRUM_TOP, (last - first) * width, float(image.height()))
-        source = QRectF(first - image_first, 0.0, last - first, float(image.height()))
+        frame_beats = self.frame_width()
         painter.setRenderHint(
-            QPainter.RenderHint.SmoothPixmapTransform, width * self._zoom_x < 1.0 or self._zoom_y < 1.0
+            QPainter.RenderHint.SmoothPixmapTransform, frame_beats * self._zoom_x < 1.0 or self._zoom_y < 1.0
         )
         if self.edit_mode:
             painter.setOpacity(EDIT_DIM)  # blends with the black underneath, so only the cells fade
-        painter.drawImage(target, image, source)
+        for start_seconds, end_seconds in self._spectrum_segments():
+            segment_first = int(math.floor(start_seconds / frame_seconds))
+            segment_last = min(spectrum.frames, int(math.ceil(end_seconds / frame_seconds)))
+            first = max(segment_first, image_first)
+            last = min(segment_last, image_last)
+            if last <= first:
+                continue
+            # the edges are frame boundaries, not segment boundaries: the image's frames must land
+            # on whole beats or the draw interpolates across a frame and the colours smear
+            left = self._tempo.beats_at(first * frame_seconds)
+            right = self._tempo.beats_at(last * frame_seconds)
+            if right < rect.left() or left > rect.right():
+                continue
+            target = QRectF(left, SPECTRUM_TOP, right - left, float(image.height()))
+            source = QRectF(first - image_first, 0.0, last - first, float(image.height()))
+            painter.drawImage(target, image, source)
         painter.setOpacity(1.0)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
@@ -1885,6 +1993,8 @@ class TimelineRuler(ViewportStrip):
         self._moved = False
         self.setFixedHeight(RULER_HEIGHT)
         self.setCursor(Qt.CursorShape.SizeHorCursor)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._open_menu)
         view.view_changed.connect(self.update)
 
     def paintEvent(self, event) -> None:
@@ -1931,6 +2041,40 @@ class TimelineRuler(ViewportStrip):
         right_edge = viewport.width() + int(left_offset)
         painter.drawLine(int(left_offset), RULER_TIME_ROW - 1, right_edge, RULER_TIME_ROW - 1)
         painter.drawLine(int(left_offset), self.height() - 1, right_edge, self.height() - 1)
+
+    def bar_at(self, x: float) -> float:
+        """The bar line nearest viewport `x`, as a beat on the drawn grid."""
+        scene_x = self.view.mapToScene(QPoint(int(x - self.origin().x()), 0)).x()
+        offset = self.view.offset_beats
+        index = round((scene_x - offset) / BAR_BEATS)
+        return max(0.0, index * BAR_BEATS + offset)
+
+    def _open_menu(self, position) -> None:
+        """The ruler's own menu: where the beat grid's tempo changes."""
+        beat = self.bar_at(position.x())
+        tempo = self.view.tempo
+        menu = QMenu(self)
+        change = menu.addAction(tr("Set the tempo from this bar…"))
+        remove = menu.addAction(tr("Remove the tempo change here"))
+        remove.setEnabled(any(point.beat > 0.0 and abs(point.beat - beat) < 1e-6 for point in tempo.points))
+        chosen = menu.exec(self.mapToGlobal(position))
+        if chosen is change:
+            self._ask_tempo(beat)
+        elif chosen is remove:
+            self.view.set_tempo_map(tempo.without(beat), tr("Remove tempo change"))
+
+    def _ask_tempo(self, beat: float) -> None:
+        bpm, accepted = QInputDialog.getDouble(
+            self,
+            tr("Tempo change"),
+            tr("Tempo from this bar (BPM)"),
+            self.view.tempo.bpm_at(beat),
+            20.0,
+            300.0,
+            1,
+        )
+        if accepted:
+            self.view.set_tempo_map(self.view.tempo.with_change(beat, bpm), tr("Set tempo change"))
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

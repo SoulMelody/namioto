@@ -6,7 +6,7 @@ itself, never about a song. A document's values belong to `namioto.project`, and
 state to `namioto.state`, so nothing here has to say whether it is remembered or for one file.
 
 `namioto.ui.settings_dialog` builds its pages from this table without repeating anything, and the
-`Section`s that get a page are named in that window; `editor` has no page, so its two switches are
+`Section`s that get a page are named in that window; `editor` has no page, so its switches are
 kept and never typed in. A value read from the file is checked by `namioto.params.coerce`, which
 brings a bad one back in line.
 """
@@ -177,6 +177,14 @@ SECTIONS: tuple[Section, ...] = (
                 False,
                 "Overtone highlight",
                 "Paint the overtones of the row under the mouse - f, 2f, 3f and 4f - as well",
+            ),
+            Field(
+                "harmonic_removal",
+                "bool",
+                False,
+                "Overtone removal",
+                "Take the partials a note puts above itself out of the spectrum, so an octave above it "
+                "stops looking like a note of its own",
             ),
         ),
     ),

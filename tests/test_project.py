@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from namioto import project
+from namioto.tempo_map import TempoMap, TempoPoint
 
 
 def make(**values) -> project.Project:
@@ -378,3 +379,35 @@ def test_a_malformed_operation_is_left_out() -> None:
         },
     }
     assert project.from_dict(data).lyrics.operations == (Match(SoundRef(0, 0), (1,), confirmed=True),)
+
+
+def test_a_single_tempo_project_writes_no_map(tmp_path) -> None:
+    path = tmp_path / "song.nto"
+    project.save(make(), path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "tempo_map" not in data
+    assert data["tempo"]["bpm"] == project.FIELD_SPECS[("tempo", "bpm")].default
+
+
+def test_a_tempo_map_round_trips_and_names_its_first_point_in_the_tempo_section(tmp_path) -> None:
+    tempo = TempoMap((TempoPoint(0.0, 96.0), TempoPoint(16.0, 120.0)))
+    path = tmp_path / "song.nto"
+    project.save(make(tempo_map=tempo), path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["tempo_map"] == [[0.0, 96.0], [16.0, 120.0]]
+    assert data["tempo"]["bpm"] == 96.0
+
+    opened = project.load(path)
+    assert opened.tempo_map == tempo
+    assert opened.settings.tempo.bpm == 96.0
+
+
+def test_a_version_one_file_is_read_as_one_tempo_point() -> None:
+    data = project.to_dict(make())
+    data["version"] = 1
+    data["tempo"] = {"bpm": 84.0}
+    data.pop("tempo_map", None)
+
+    opened = project.from_dict(data)
+    assert opened.tempo_map.is_single
+    assert opened.tempo_map.bpm == 84.0

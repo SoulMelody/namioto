@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
 from namioto import i18n, ipc, midi, params, project, qtplugins
 from namioto import settings as store
 from namioto import state as window_state
-from namioto.analysis import bpm
+from namioto.analysis import bpm, harmonic
 from namioto.analysis.spectrum import CHANNEL_MODES, NoteSpectrum
 from namioto.channels import Channel, free_channel
 from namioto.channels import audible as audible_channels
@@ -76,6 +76,7 @@ from namioto.lyricmap.channels import split as split_channels
 from namioto.lyricmap.editing import detach, note_runs, operation_at
 from namioto.lyricmap.notes import TimedNote, resolve
 from namioto.playback import note_frequency
+from namioto.tempo_map import TempoMap
 from namioto.ui import theme
 from namioto.ui.align_dialog import AlignDialog
 from namioto.ui.audio import open_player
@@ -93,7 +94,7 @@ from namioto.ui.palette_dialog import PaletteDialog
 from namioto.ui.roll import SNAP_CHOICES, PianoKeyboard, PianoRollView, TimelineRuler
 from namioto.ui.settings_dialog import SettingsDialog, SettingsStore
 from namioto.ui.song import SongPlayer, load_song
-from namioto.ui.spectrogram import SpectrumLoader
+from namioto.ui.spectrogram import HarmonicLoader, SpectrumLoader
 from namioto.ui.strips import SoundStrip
 from namioto.ui.text import note_name
 from namioto.ui.transcription_dialog import TranscriptionDialog
@@ -212,6 +213,23 @@ class SongLoader(LoadingThread):
         self.loaded.emit(*load_song(self.path))
 
 
+class SpectrumTempoLoader(LoadingThread):
+    """Tracks the beat of the spectrum already on screen, off the GUI thread."""
+
+    loaded = Signal(object)
+
+    def __init__(self, spectrum, window_seconds: float = 8.0, hop_seconds: float = 1.0, parent=None):
+        super().__init__("", parent)
+        self.spectrum = spectrum
+        self.window_seconds = window_seconds
+        self.hop_seconds = hop_seconds
+
+    def load(self) -> None:
+        self.loaded.emit(
+            bpm.from_spectrum(self.spectrum, window_seconds=self.window_seconds, hop_seconds=self.hop_seconds)
+        )
+
+
 class MainWindow(QMainWindow):
     transport_changed = Signal(bool)  # whether the transport is running, on every change
 
@@ -265,6 +283,9 @@ class MainWindow(QMainWindow):
         self.song_loader: SongLoader | None = None
         # the audio a result belongs to: a loader the window replaced may still report its own
         self._audio_generation = 0
+        # the overtone estimate of the spectrum on screen, and the parameters it was fitted with
+        self._harmonic = None
+        self._harmonic_fit: tuple[int, float] | None = None
         self._workers: set[QThread] = set()
         self.ipc: IpcServer | None = None
         self._bridge: WindowBridge | None = None
@@ -341,6 +362,7 @@ class MainWindow(QMainWindow):
         self.transport.division.setChecked(document.editor.division == "beats")
         self.transport.auto_page.setChecked(self.settings.editor.auto_page)
         self.transport.overtone.setChecked(self.settings.editor.overtone_highlight)
+        self.transport.harmonic.setChecked(self.settings.editor.harmonic_removal)
         self.view.snap = self.edit.snap.currentData()
         self.transport.bpm.setValue(document.tempo.bpm)
         self.transport.grid_offset.setValue(document.editor.grid_offset_ms)
@@ -409,6 +431,7 @@ class MainWindow(QMainWindow):
         self.play_shortcut = QShortcut(QKeySequence("Space"), self)
         self.play_shortcut.activated.connect(self._toggle_play)
         for keys, slot in (
+            ("Ctrl+N", self.new_project),
             ("Ctrl+O", self._on_open),
             ("Ctrl+S", self._on_save),
             ("Ctrl+Shift+S", self._on_save_as),
@@ -664,6 +687,14 @@ class MainWindow(QMainWindow):
                 self.transport.overtone_toggled,
                 self._on_overtone,
             ),
+            _Binding(
+                "editor",
+                "harmonic_removal",
+                self.transport.harmonic.isChecked,
+                self.transport.harmonic.setChecked,
+                self.transport.harmonic_toggled,
+                self._on_harmonic_toggle,
+            ),
         )
 
     def _snap_value(self) -> float:
@@ -803,7 +834,12 @@ class MainWindow(QMainWindow):
         """The notes of every channel that sounds, and each sounding channel's instrument, volume."""
         audible = set(audible_channels(self.view.channels))
         notes = tuple(
-            (note.pitch, self.view.to_seconds(note.start), self.view.to_seconds(note.duration), note.channel)
+            (
+                note.pitch,
+                self.view.to_seconds(note.start),
+                self.view.length_to_seconds(note.duration, note.start),
+                note.channel,
+            )
             for note in self.view.notes()
             if note.channel in audible
         )
@@ -1012,6 +1048,38 @@ class MainWindow(QMainWindow):
             target = target.with_name(target.name + midi.SUFFIXES[0])
         return self.export_midi(target)
 
+    def new_project(self) -> bool:
+        """Start an empty project: no audio, no notes, the default values.
+
+        Audio is not what makes a project: a MIDI file can be imported into it, notes can be drawn
+        on the default grid, and the spectrum simply stays empty until a recording is opened on top.
+        """
+        if not self._confirm_discard():
+            return False
+        self._loading = True
+        try:
+            self.project_settings = project.default_settings()
+            self.project_path = None
+            self.project_dirty = False
+            self.autosave_timer.stop()
+            self._stored_lyrics = None
+            self._lyric_alignment = None
+            self._lyric_migration_error = ""
+            self._lyric_key = ""
+            self._restore_lyrics()
+            self._clear_audio()
+            self.view.set_tempo(TempoMap.single(self.project_settings.tempo.bpm), keep_notes=False)
+            self.view.set_channels((Channel(channel=0),))
+            self.view.clear_notes()
+            self._apply_project_settings()
+            self.view.undo_stack.clear()
+        finally:
+            self._loading = False
+        self._remap_lyrics()
+        self._update_status()
+        self.statusBar().showMessage(i18n.tr("New project"))
+        return True
+
     def load_project(self, path: str | Path) -> bool:
         """Open a project: its values come over the running ones, and its notes replace the roll."""
         try:
@@ -1030,10 +1098,18 @@ class MainWindow(QMainWindow):
             self._lyric_migration_error = ""
             self._lyric_key = ""
             self._restore_lyrics()
+            # the map comes before the notes: their beats are read out of it
+            self.view.set_tempo(opened.tempo_map, keep_notes=False)
             missing = self._open_audio(project.resolve_audio(self.project_path, opened.audio))
             self.view.set_channels(opened.channels)
             loaded = (
-                (note.pitch, self.view.to_beats(note.start), self.view.to_beats(note.duration), note.channel, note.id)
+                (
+                    note.pitch,
+                    self.view.to_beats(note.start),
+                    self.view.to_beats(note.start + note.duration) - self.view.to_beats(note.start),
+                    note.channel,
+                    note.id,
+                )
                 for note in opened.notes
             )
             self.view.set_notes(loaded, opened.next_id)
@@ -1067,7 +1143,7 @@ class MainWindow(QMainWindow):
             sorted(
                 project.Note(
                     self.view.to_seconds(note.start),
-                    self.view.to_seconds(note.duration),
+                    self.view.length_to_seconds(note.duration, note.start),
                     note.pitch,
                     note.channel,
                     note.id,
@@ -1096,6 +1172,7 @@ class MainWindow(QMainWindow):
             notes=notes,
             next_id=self.view.document.next_id,
             lyrics=lyrics_times,
+            tempo_map=self.view.tempo,
         )
         try:
             project.save(payload, target)
@@ -1145,7 +1222,9 @@ class MainWindow(QMainWindow):
         message = [i18n.tr("{verb} {notes} notes from {origin}", verb=verb, notes=len(imported.notes), origin=origin)]
         if imported.tempo_changes:
             message.append(
-                i18n.tr("{notes} tempo changes; the grid takes the first tempo", notes=imported.tempo_changes)
+                i18n.tr("{notes} tempo changes", notes=imported.tempo_changes)
+                if mode == "replace"
+                else i18n.tr("{notes} tempo changes; the grid keeps its own", notes=imported.tempo_changes)
             )
         if imported.dropped:
             message.append(i18n.tr("{notes} note events left out", notes=imported.dropped))
@@ -1162,11 +1241,18 @@ class MainWindow(QMainWindow):
             if mode == "merge":
                 self._merge_midi(imported, mapping)
             else:
-                self.transport.bpm.setValue(imported.bpm)  # scene units are beats, and the file sets them
+                # the file's own tempo map becomes the grid's, before the notes are placed on it
+                self.view.set_tempo(imported.tempo_map, keep_notes=False)
+                self.transport.bpm.setValue(imported.tempo_map.bpm)
                 self.view.replace(
                     imported.channels,
                     [
-                        (note.pitch, self.view.to_beats(note.start), self.view.to_beats(note.duration), note.channel)
+                        (
+                            note.pitch,
+                            self.view.to_beats(note.start),
+                            self.view.to_beats(note.start + note.duration) - self.view.to_beats(note.start),
+                            note.channel,
+                        )
                         for note in imported.notes
                     ],
                     "Import MIDI",
@@ -1204,7 +1290,12 @@ class MainWindow(QMainWindow):
             landing[wanted.channel] = place
         kept = [(note.pitch, note.start, note.duration, note.channel, note.id) for note in self.view.notes()]
         arriving = [
-            (note.pitch, self.view.to_beats(note.start), self.view.to_beats(note.duration), landing[note.channel])
+            (
+                note.pitch,
+                self.view.to_beats(note.start),
+                self.view.to_beats(note.start + note.duration) - self.view.to_beats(note.start),
+                landing[note.channel],
+            )
             for note in imported.notes
         ]
         self.view.replace(channels.values(), kept + arriving, "Merge MIDI")
@@ -1213,7 +1304,7 @@ class MainWindow(QMainWindow):
         notes = tuple(
             project.Note(
                 self.view.to_seconds(note.start),
-                self.view.to_seconds(note.duration),
+                self.view.length_to_seconds(note.duration, note.start),
                 note.pitch,
                 note.channel,
             )
@@ -1222,7 +1313,7 @@ class MainWindow(QMainWindow):
         return {
             "channels": tuple(self.view.channels),
             "notes": notes,
-            "bpm": self.project_settings.tempo.bpm,
+            "tempo": self.view.tempo,
             "wavetone": self.settings.midi.wavetone,
         }
 
@@ -1891,6 +1982,8 @@ class MainWindow(QMainWindow):
         self._audio_generation += 1
         self.position_timer.stop()
         self.audio_path = None
+        self._harmonic = None
+        self._harmonic_fit = None
         self.view.set_spectrum(None)
         self.song.unload()
         self.player.stop()
@@ -1960,6 +2053,10 @@ class MainWindow(QMainWindow):
     def load_audio(self, path: str) -> None:
         if not self._loading and str(path) != self.audio_path:
             self._lyric_alignment = None
+            self._harmonic = None
+            self._harmonic_fit = None
+            # the old song's spectrum must not sit under the new one while it is analysed
+            self.view.set_spectrum(None)
             # another song brings its own tempo and offset; a re-analysis of the same one does not
             self.transport.bpm.setValue(project.FIELD_SPECS[("tempo", "bpm")].default)
             self.transport.grid_offset.setValue(project.FIELD_SPECS[("editor", "grid_offset_ms")].default)
@@ -2062,14 +2159,18 @@ class MainWindow(QMainWindow):
         self._tempo_manual = manual
         self.transport.suggestion.hide()
         self.transport.detect.setEnabled(False)
-        tempo = self.settings.tempo
-        tempo_loader = TempoLoader(
-            self.audio_path,
-            algorithm=tempo.estimator,
-            window_seconds=tempo.window_seconds,
-            window_hop_seconds=tempo.window_hop_seconds,
-            parent=self,
-        )
+        if self.view.spectrum is not None:
+            # the spectrum is already on screen, so its onset envelope costs nothing to reuse
+            tempo_loader = SpectrumTempoLoader(self.view.spectrum.spectrum, parent=self)
+        else:
+            tempo = self.settings.tempo
+            tempo_loader = TempoLoader(
+                self.audio_path,
+                algorithm=tempo.estimator,
+                window_seconds=tempo.window_seconds,
+                window_hop_seconds=tempo.window_hop_seconds,
+                parent=self,
+            )
         tempo_loader.loaded.connect(partial(self._on_tempo_loaded, generation))
         tempo_loader.failed.connect(partial(self._on_tempo_failed, generation))
         self._start_loader("tempo_loader", tempo_loader)
@@ -2228,10 +2329,55 @@ class MainWindow(QMainWindow):
         """The offset only slides the drawn grid; the playhead and the notes keep their timestamps."""
         self.view.set_offset(self.transport.grid_offset.value() / 1000.0)
 
+    def _harmonic_strength(self) -> float:
+        """How much of the overtone estimate the drawing takes out: none while the switch is off."""
+        return harmonic.STRENGTH if self.settings.editor.harmonic_removal else 0.0
+
+    def _on_harmonic_toggle(self, *_args) -> None:
+        self._on_spectrum_parameters()
+
     def _on_spectrum_parameters(self, *_args) -> None:
         self.view.gain = self.mix.gain.value()
         self.view.contrast = self.mix.contrast.value()
+        self.view.set_harmonic(
+            self._harmonic.table if self._harmonic is not None else None,
+            self._harmonic_strength(),
+        )
         self.view.refresh()
+        self._ensure_harmonic()
+
+    def _ensure_harmonic(self) -> None:
+        """Fit the overtone estimate when the spectrum is up and one is wanted, once per fit."""
+        strength = self._harmonic_strength()
+        if strength <= 0.0 or self.view.spectrum is None or self.audio_path is None:
+            self.view.set_harmonic(None, 0.0)
+            return
+        fit = (harmonic.HARMONICS, harmonic.DECAY)
+        if self._harmonic is not None and self._harmonic_fit == fit:
+            self.view.set_harmonic(self._harmonic.table, strength)
+            return
+        loader = HarmonicLoader(
+            self.audio_path,
+            self.view.spectrum.spectrum,
+            harmonics=fit[0],
+            decay=fit[1],
+            parent=self,
+        )
+        loader.loaded.connect(partial(self._on_harmonic_loaded, self._audio_generation, fit))
+        loader.failed.connect(partial(self._on_harmonic_failed, self._audio_generation))
+        self._start_loader("harmonic_loader", loader)
+
+    def _on_harmonic_loaded(self, generation: int, fit: tuple[int, float], result) -> None:
+        if generation != self._audio_generation:
+            return
+        self._harmonic = result
+        self._harmonic_fit = fit
+        self.view.set_harmonic(result.table, self._harmonic_strength())
+
+    def _on_harmonic_failed(self, generation: int, message: str) -> None:
+        if generation != self._audio_generation:
+            return
+        self.statusBar().showMessage(i18n.tr("Overtone removal failed: {error}", error=message))
 
     def _on_analysis_progress(self, generation: int, done: int, total: int) -> None:
         if generation != self._audio_generation:
@@ -2242,6 +2388,7 @@ class MainWindow(QMainWindow):
         if generation != self._audio_generation:
             return
         self.view.set_spectrum(spectrum)
+        self._ensure_harmonic()
         self.statusBar().showMessage(
             i18n.tr(
                 "{frames} frames x {bands} bands, {ms} ms/frame, {seconds} s",

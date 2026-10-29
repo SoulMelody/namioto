@@ -35,10 +35,11 @@ from namioto.channels import CHANNEL_COUNT, Channel, valid_color
 from namioto.karaoke.operations import MAPPING_VERSION, Drop, Match, Merge, Operation, SoundRef
 from namioto.lyric_colors import DEFAULT_COLORS
 from namioto.params import Field, Section
+from namioto.tempo_map import TempoMap
 from namioto.utils import write_json
 
 FORMAT = "namioto"
-VERSION = 1
+VERSION = 2
 SUFFIX = ".nto"
 NOTE_DECIMALS = 4
 LYRIC_MODES = ("edit", "read")
@@ -362,6 +363,20 @@ class Project:
     notes: tuple[Note, ...] = ()
     next_id: int = 1
     lyrics: Lyrics | None = None
+    # the beat grid's tempo over the song; `settings.tempo.bpm` mirrors its first point
+    tempo_map: TempoMap = field(default_factory=TempoMap)
+
+    def __post_init__(self) -> None:
+        """Keep the one-tempo field and the map's first point saying the same thing.
+
+        A caller that names only a tempo gets a single-point map from it, and one that hands over a
+        map has the tempo field follow the map's first point: two ways of saying the same value
+        cannot drift apart into a file that says one tempo and draws another.
+        """
+        if self.tempo_map == TempoMap() and self.settings.tempo.bpm != self.tempo_map.bpm:
+            object.__setattr__(self, "tempo_map", TempoMap.single(self.settings.tempo.bpm))
+        else:
+            self.settings.tempo.bpm = self.tempo_map.bpm
 
 
 def looks_like_project(path: str | Path) -> bool:
@@ -388,10 +403,14 @@ def store_audio(project_path: str | Path, audio: str | Path | None) -> str:
 
 
 def to_dict(project: Project) -> dict:
+    settings = to_settings_dict(project.settings)
+    # the tempo section is a single value, so it names the first point; the map carries the rest
+    settings["tempo"]["bpm"] = project.tempo_map.bpm
     return {
         "format": FORMAT,
         "version": VERSION,
-        **to_settings_dict(project.settings),
+        **settings,
+        **({} if project.tempo_map.is_single else {"tempo_map": project.tempo_map.to_pairs()}),
         "audio": project.audio,
         "channels": [_channel_dict(channel) for channel in project.channels],
         "notes": [
@@ -669,6 +688,9 @@ def from_dict(data: Any) -> Project:
         for channel in channels:
             if channel.color:
                 setattr(settings.lyric_colors, f"channel_{channel.channel}", channel.color)
+    pairs = data.get("tempo_map")
+    tempo_map = TempoMap.from_pairs(pairs) if pairs else TempoMap.single(settings.tempo.bpm)
+    settings.tempo.bpm = tempo_map.bpm
     return Project(
         settings=settings,
         audio=_audio(data.get("audio")),
@@ -676,6 +698,7 @@ def from_dict(data: Any) -> Project:
         notes=notes,
         next_id=_next_id(data.get("note_id"), notes),
         lyrics=_lyrics(data.get("lyrics")),
+        tempo_map=tempo_map,
     )
 
 

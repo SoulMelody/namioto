@@ -11,6 +11,7 @@ COMMANDS = {
     "wavetone": "namioto.analysis.wavetone",
     "tempocnn": "namioto.analysis.tempo",
     "spectrum": "namioto.analysis.spectrum",
+    "harmonic": "namioto.analysis.harmonic",
     "game": "namioto.analysis.game",
     "align": "namioto.analysis.align",
 }

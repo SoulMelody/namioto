@@ -20,6 +20,7 @@ SOURCES = {
     "wavetone": "WaveTone onset-flux DFT",
     "librosa": "Librosa beat tracking and least-squares fit",
     "tempocnn": "TempoCNN model",
+    "spectrum": "Note-spectrum onset and beat tracking",
 }
 DEFAULT = ALGORITHMS[0]
 
@@ -38,6 +39,23 @@ class BpmEstimate:
     @property
     def source(self) -> str:
         return SOURCES[self.algorithm]
+
+
+def from_spectrum(
+    spectrum,
+    *,
+    window_seconds: float = 8.0,
+    hop_seconds: float = 1.0,
+) -> BpmEstimate:
+    """Tempo from a note spectrum already on screen, so no second pass over the audio is needed."""
+    result = beats.track(spectrum, window_seconds=window_seconds, hop_seconds=hop_seconds)
+    return BpmEstimate(
+        result.bpm,
+        "spectrum",
+        windows=len(result.local),
+        agreement=result.agreement,
+        residual=result.residual,
+    )
 
 
 def estimate(

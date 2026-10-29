@@ -10,6 +10,7 @@ import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QImage
 
+from namioto.analysis import harmonic
 from namioto.analysis.spectrum import NoteSpectrum, analyse
 from namioto.ui.loading import LoadingThread
 
@@ -41,25 +42,40 @@ def color_table() -> np.ndarray:
 class SpectrumImage:
     """A `NoteSpectrum` frame range as an image, cached per range and display parameter set.
 
-    Row 0 is the highest note band, so it can be drawn straight down onto the pitch axis.
+    Row 0 is the highest note band, so it can be drawn straight down onto the pitch axis. An
+    overtone estimate may be handed over beside the spectrum; `strength` is how much of it the
+    drawing takes out, and a strength of 0 draws the spectrum as it came.
     """
 
-    def __init__(self, spectrum: NoteSpectrum):
+    def __init__(self, spectrum: NoteSpectrum, harmonic: np.ndarray | None = None, strength: float = 0.0):
         self.spectrum = spectrum
-        self._parameters: tuple[float, float, int, int] | None = None
+        self.harmonic = harmonic
+        self.strength = strength
+        self._parameters: tuple[float, float, int, int, float] | None = None
         self._pixels: np.ndarray | None = None
         self._image: QImage | None = None
 
+    def set_harmonic(self, harmonic: np.ndarray | None, strength: float) -> None:
+        """Swap the overtone estimate or the amount taken out; the next draw bakes a new image."""
+        if harmonic is self.harmonic and strength == self.strength:
+            return
+        self.harmonic = harmonic
+        self.strength = strength
+        self._parameters = None
+
     def image(self, gain: float, contrast: float, first: int = 0, last: int | None = None) -> QImage:
         last = self.spectrum.frames if last is None else last
-        parameters = (round(gain, 3), round(contrast, 3), first, last)
+        parameters = (round(gain, 3), round(contrast, 3), first, last, round(self.strength, 3))
         if parameters != self._parameters or self._image is None:
             self._render(gain, contrast, first, last)
             self._parameters = parameters
         return self._image
 
     def _render(self, gain: float, contrast: float, first: int, last: int) -> None:
-        amplitude = np.power(np.maximum(self.spectrum.table[first:last], 0.0), contrast) * gain
+        table = self.spectrum.table[first:last]
+        if self.harmonic is not None and self.strength > 0.0:
+            table = harmonic.subtract(table, self.harmonic[first:last], self.strength)
+        amplitude = np.power(np.maximum(table, 0.0), contrast) * gain
         index = np.clip(np.rint(amplitude * (LUT_SIZE - 1) / 255.0), 0, LUT_SIZE - 1).astype(np.uint32)
         rows = np.ascontiguousarray(color_table()[index].T[::-1])
         height, width = rows.shape
@@ -96,6 +112,41 @@ class SpectrumLoader(LoadingThread):
                 t_num=self.t_num,
                 fft_points=self.fft_points,
                 a4=self.a4,
+                progress=lambda done, total: self.progress.emit(done, total),
+            )
+        )
+
+
+class HarmonicLoader(LoadingThread):
+    """Estimates a spectrum's overtone energy off the GUI thread.
+
+    The spectrum is already in hand when this starts, so the editor draws the song first and takes
+    the overtone estimate when it arrives; a failure leaves the plain spectrum on screen.
+    """
+
+    loaded = Signal(object)
+    progress = Signal(int, int)
+
+    def __init__(
+        self,
+        path: str | Path,
+        spectrum: NoteSpectrum,
+        harmonics: int = harmonic.HARMONICS,
+        decay: float = harmonic.DECAY,
+        parent=None,
+    ):
+        super().__init__(path, parent)
+        self.spectrum = spectrum
+        self.harmonics = harmonics
+        self.decay = decay
+
+    def load(self) -> None:
+        self.loaded.emit(
+            harmonic.analyse(
+                self.path,
+                self.spectrum,
+                harmonics=self.harmonics,
+                decay=self.decay,
                 progress=lambda done, total: self.progress.emit(done, total),
             )
         )

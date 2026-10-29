@@ -36,6 +36,12 @@ Third-party code and assets
 - Used for: the functional reference for spectrum analysis, the timing model (seconds internally,
   bar axis on top) and, where noted in individual files, reused code
 - Files that carry reused code keep an attribution header naming noteDigger as the origin
+- Reused so far: `dataProcess/fft_real.js`, `dataProcess/analyser.js` and
+  `core/app_analyser.js` (the STFT path in `namioto/analysis/spectrum.py`),
+  `core/app_analyser.js::_reduceHarmonic` with `dataProcess/NNLS.js` (the overtone estimate in
+  `namioto/analysis/harmonic.py`), `core/app_analyser.js::this.cqt` (how the constant-Q and STFT
+  tables are fused in `namioto/analysis/spectrum.py`), and `dataProcess/bpmEst.js` (the onset
+  envelope, the windowed tempo curve and the downbeat search in `namioto/analysis/beats.py`)
 
 ### Essentia (Music Technology Group, Universitat Pompeu Fabra)
 - License: GNU AGPL version 3

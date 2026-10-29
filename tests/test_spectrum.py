@@ -16,6 +16,7 @@ from namioto.analysis.spectrum import (
     analyse,
     auto_fill,
     build_weights,
+    cqt_notes,
     freq_table,
     load_channels,
     note_label,
@@ -310,3 +311,33 @@ def test_note_spectrum_helpers():
     assert spectrum.frame_at(99.0) == 20
     assert spectrum.frame_at(-1.0) == 0
     assert spectrum.time_at(4) == pytest.approx(0.2)
+
+
+def test_cqt_keeps_the_stft_grid_and_band_order():
+    audio = tone(220.0) + 0.5 * tone(440.0)
+    stft = stft_notes(audio, SAMPLE_RATE, t_num=40.0)
+    fused = cqt_notes(audio, SAMPLE_RATE, t_num=40.0)
+
+    assert fused.backend == "cqt"
+    assert fused.table.shape == stft.table.shape
+    assert (fused.frame_ms, fused.hop, fused.sample_rate) == (stft.frame_ms, stft.hop, stft.sample_rate)
+    assert np.isfinite(fused.table).all()
+    assert (fused.table >= 0).all()
+    # the note that was played is still the loudest band, in the same place
+    assert int(np.argmax(fused.table.mean(axis=0))) == int(np.argmax(stft.table.mean(axis=0)))
+
+
+def test_cqt_is_a_fusion_rather_than_the_stft_over_again():
+    audio = tone(220.0) + 0.5 * tone(440.0)
+    stft = stft_notes(audio, SAMPLE_RATE, t_num=40.0)
+    fused = cqt_notes(audio, SAMPLE_RATE, t_num=40.0)
+
+    assert not np.allclose(fused.table, stft.table)
+    # both fusion branches stay non-negative and finite
+    assert (fused.table >= 0).all()
+    assert np.isfinite(fused.table).all()
+
+
+def test_analyse_rejects_an_unknown_backend():
+    with pytest.raises(ValueError):
+        analyse("song.wav", backend="nope")

@@ -11,3 +11,6 @@ from __future__ import annotations
 
 ALGORITHMS = ("wavetone", "librosa", "tempocnn")
 CHANNEL_MODES = ("mono", "left", "right", "sum", "side", "both")
+# how the note table is built: WaveTone's correlation, noteDigger's STFT, or that STFT fused with
+# a constant-Q transform, which reads the low bands at a resolution the FFT window cannot reach
+BACKENDS = ("wavetone", "notedigger", "cqt")
