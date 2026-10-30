@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import types
 
 import pytest
@@ -25,6 +26,30 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["LANG"] = "C"
 os.environ.pop("LC_ALL", None)
 os.environ.pop("LC_MESSAGES", None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def qt_app():
+    """The one application for the run: playback and mapping are timer-driven, and a timer only
+    ticks with an application behind it. The UI tests reuse it rather than build a second one."""
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def pump(qt_app):
+    """Let the event loop run for a wall-clock span, so what a timer drives advances."""
+
+    def run(seconds: float) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.001)
+
+    return run
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Sequence
+from functools import partial
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 PREVIEW_SECONDS = 0.6
+SCHEDULER_TICK_MS = 5  # how late a note may start; the old thread slept in slices of the same size
 NOTE_ON, NOTE_OFF, VELOCITY = 0x90, 0x80, 100
 PROGRAM_CHANGE = 0xC0  # program change per channel: which instrument the synth should use
 DEFAULT_PROGRAM = 0  # a grand piano
@@ -129,7 +130,12 @@ class SilentPlayer(NotePlayer):
 
 
 class MidiPortOut(NotePlayer):
-    """An external MIDI synth such as TiMidity: the notes are scheduled onto its port."""
+    """An external MIDI synth such as TiMidity: the notes are scheduled onto its port.
+
+    Everything here runs on the GUI thread. A synth's port is not a thread-safe object, and a timer
+    of its own keeps the whole player - the transport, the sounding bookkeeping, the port itself -
+    to one thread, which is also the only thread a widget may be touched from.
+    """
 
     def __init__(self, port, parent=None, velocity: int = VELOCITY, program: int = DEFAULT_PROGRAM):
         self.port = port  # before the base class, whose gain setter sends a control change
@@ -141,10 +147,13 @@ class MidiPortOut(NotePlayer):
         self._speed = 1.0
         self._start = 0.0
         self._started: float | None = None
-        self._stopping = False
+        self._events: list[tuple[float, int, int, int]] = []  # (offset, status, pitch, channel), in order
+        self._cursor = 0  # the first event still to be sent
         self._sounding: dict[tuple[int, int], int] = {}  # (channel, pitch) -> note-ons still owed an off
-        self._previews: dict[int, threading.Timer] = {}
-        self._thread: threading.Thread | None = None
+        self._previews: dict[int, QTimer] = {}
+        self._tick = QTimer(self)
+        self._tick.setInterval(SCHEDULER_TICK_MS)
+        self._tick.timeout.connect(self._advance)
 
     @property
     def gain(self) -> float:
@@ -196,9 +205,9 @@ class MidiPortOut(NotePlayer):
             return
         self._start = max(0.0, min(seconds, self.duration))
         self._started = time.monotonic()
-        self._stopping = False
-        self._thread = threading.Thread(target=self._schedule, daemon=True)
-        self._thread.start()
+        self._events = self._timeline()
+        self._cursor = 0
+        self._tick.start()
 
     def pause(self) -> None:
         position = self.position
@@ -213,12 +222,12 @@ class MidiPortOut(NotePlayer):
             self._start = max(0.0, seconds)
 
     def stop(self) -> None:
-        self._stopping = True
-        if self._thread is not None:
-            self._thread.join(timeout=0.5)
-            self._thread = None
-        for timer in self._previews.values():
-            timer.cancel()
+        self._tick.stop()
+        self._events = []
+        self._cursor = 0
+        for timer in tuple(self._previews.values()):
+            timer.stop()
+            timer.deleteLater()
         self._previews.clear()
         for (channel, pitch), count in tuple(self._sounding.items()):  # a synth keeps sounding until it is told to stop
             for _ in range(count):
@@ -233,22 +242,32 @@ class MidiPortOut(NotePlayer):
         """Audition one note; clicking it again restarts it, which needs the old note released first."""
         pending = self._previews.pop(pitch, None)
         if pending is not None:
-            pending.cancel()
+            pending.stop()
+            pending.deleteLater()
             self._send(NOTE_OFF, pitch, 0)  # a synth still holding the note only layers a second one
         self._send(NOTE_ON, pitch, self.velocity)
 
-        def release() -> None:
-            if self._previews.get(pitch) is timer:  # a newer click owns the note by now
-                self._previews.pop(pitch, None)
-                self._send(NOTE_OFF, pitch, 0)
-
-        timer = threading.Timer(seconds, release)
-        timer.daemon = True
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(max(0, round(seconds * 1000)))
+        timer.timeout.connect(partial(self._release_preview, pitch, timer))
         self._previews[pitch] = timer
         timer.start()
 
-    def _schedule(self) -> None:
-        started = self._started
+    def _release_preview(self, pitch: int, timer: QTimer) -> None:
+        if self._previews.get(pitch) is not timer:  # a newer click owns the note by now
+            timer.deleteLater()
+            return
+        self._previews.pop(pitch, None)
+        timer.deleteLater()
+        self._send(NOTE_OFF, pitch, 0)
+
+    def _timeline(self) -> list[tuple[float, int, int, int]]:
+        """Every note event of the program as an offset into the run that is starting, in order.
+
+        At one tick the previous note's off goes before the next note's on; rounding to the
+        microsecond makes a start+duration that lost a bit against the next start count as one tick.
+        """
         events: list[tuple[float, int, int, int]] = []
         for pitch, start, duration, channel in self._notes:
             if start + duration <= self._start:
@@ -256,24 +275,23 @@ class MidiPortOut(NotePlayer):
             begin = max(start, self._start)
             events.append(((begin - self._start) / self._speed, NOTE_ON, pitch, channel))
             events.append(((start + duration - self._start) / self._speed, NOTE_OFF, pitch, channel))
-        # at one tick the previous note's off goes before the next note's on; rounding to the
-        # microsecond makes a start+duration that lost a bit against the next start count as one tick
-        for offset, kind, pitch, channel in sorted(events, key=lambda event: (round(event[0], 6), event[1])):
-            if not self._wait_until(started + offset):
-                return
+        return sorted(events, key=lambda event: (round(event[0], 6), event[1]))
+
+    def _advance(self) -> None:
+        """Send what the run has reached; the tick is only a clock, so a late one catches up here."""
+        if self._started is None:
+            self._tick.stop()
+            return
+        elapsed = time.monotonic() - self._started
+        while self._cursor < len(self._events) and self._events[self._cursor][0] <= elapsed:
+            _offset, kind, pitch, channel = self._events[self._cursor]
+            self._cursor += 1
             self._send(kind, pitch, self.velocity if kind == NOTE_ON else 0, channel)
-        if self._wait_until(started + (self.duration - self._start) / self._speed):
+        if elapsed >= (self.duration - self._start) / self._speed:
+            self._tick.stop()
             self._started = None
             self._start = self.duration
             self.finished.emit()
-
-    def _wait_until(self, deadline: float) -> bool:
-        while not self._stopping:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return True
-            time.sleep(min(remaining, 0.005))
-        return False
 
     def _send(self, status: int, pitch: int, velocity: int, channel: int = 0) -> None:
         self.port.send_message([status | channel, pitch, velocity])

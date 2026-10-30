@@ -2001,7 +2001,12 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             event.ignore()
             return
+        # every timer this window owns must be disarmed here: a closed window is destroyed by the
+        # cyclic collector sooner or later, and a collector run that lands inside Qt's timer dispatch
+        # would free a timer that dispatch is still walking
         self.autosave_timer.stop()
+        self.position_timer.stop()
+        self.speed_timer.stop()
         self._lyric_map_revision += 1
         self._lyric_map_pending = None
         if self._lyric_map_thread is not None:

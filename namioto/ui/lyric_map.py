@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
 from namioto.karaoke.operations import Match, Merge, Operation
 from namioto.lyricmap import constraints, faithful
@@ -20,6 +20,7 @@ from namioto.lyricmap.problems import MappingError
 from namioto.lyricmap.raw import Raw
 from namioto.lyricmap.solver import MappingState, solve
 from namioto.lyricmap.spans import sound_spans
+from namioto.ui.loading import BackgroundThread
 
 Span = tuple[float | None, float | None]
 
@@ -324,9 +325,8 @@ def _tables(lines, operations, stream) -> tuple:
     )
 
 
-class LyricMapper(QThread):
+class LyricMapper(BackgroundThread):
     mapped = Signal(object)
-    failed = Signal(str)
 
     def __init__(self, revision, request, parent=None):
         super().__init__(parent)
@@ -334,10 +334,7 @@ class LyricMapper(QThread):
         self.request = request
         self.previous = None
 
-    def run(self) -> None:
-        try:
-            request = dict(self.request, previous=self.previous) if self.request.get("mode") == "read" else self.request
-            result = map_lyrics(**request)
-            self.mapped.emit((self.revision, result))
-        except Exception as error:  # noqa: BLE001 - the worker reports whatever the mapping raised
-            self.failed.emit(f"{type(error).__name__}: {error}")
+    def job(self) -> None:
+        request = dict(self.request, previous=self.previous) if self.request.get("mode") == "read" else self.request
+        result = map_lyrics(**request)
+        self.mapped.emit((self.revision, result))

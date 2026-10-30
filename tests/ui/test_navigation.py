@@ -261,7 +261,7 @@ class FakePort:
         self.times.append(time.monotonic())
 
 
-def test_the_port_player_schedules_notes_and_silences_them_on_stop() -> None:
+def test_the_port_player_schedules_notes_and_silences_them_on_stop(pump) -> None:
     port = FakePort()
     player = MidiPortOut(port)
     player.set_program([(69, 0.0, 1.0), (76, 0.5, 1.0)], 1.0)
@@ -271,7 +271,7 @@ def test_the_port_player_schedules_notes_and_silences_them_on_stop() -> None:
 
     player.play()
     assert player.is_playing
-    time.sleep(0.15)
+    pump(0.15)
     assert [0x90, 69, 100] in port.messages  # the first note is on
     assert [0x80, 69, 0] not in port.messages  # and not yet off
 
@@ -299,10 +299,10 @@ def test_the_port_player_reports_when_the_notes_are_done() -> None:
     assert player.position == pytest.approx(player.duration)
 
 
-def test_a_preview_plays_the_note_and_releases_it() -> None:
+def test_a_preview_plays_the_note_and_releases_it(pump) -> None:
     port = FakePort()
     player = MidiPortOut(port)
     player.preview(72, seconds=0.05)
     assert [0x90, 72, 100] in port.messages
-    time.sleep(0.15)
+    pump(0.15)
     assert [0x80, 72, 0] in port.messages

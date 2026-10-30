@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import sys
-import time
 import types
 
 import pytest
@@ -35,13 +34,13 @@ def note_messages(port) -> list[list[int]]:
     return [message for message in port.messages if (message[0] & 0xF0) in (NOTE_ON, NOTE_OFF)]
 
 
-def test_clicking_the_same_note_again_restarts_it() -> None:
+def test_clicking_the_same_note_again_restarts_it(pump) -> None:
     port = FakePort()
     player = MidiPortOut(port)
 
     player.preview(60, 0.15)
     player.preview(60, 0.15)  # the second click releases the note and starts it over
-    time.sleep(0.3)
+    pump(0.3)
 
     assert note_messages(port) == [
         [NOTE_ON, 60, VELOCITY],
@@ -87,13 +86,13 @@ def test_each_channel_gets_its_program_and_volume() -> None:
     assert [message[2] for message in volumes][-2:] == [127, round(0.5 * 127)]
 
 
-def test_the_notes_are_played_on_their_own_channel() -> None:
+def test_the_notes_are_played_on_their_own_channel(pump) -> None:
     port = FakePort()
     player = MidiPortOut(port)
     player.set_program([(60, 0.0, 0.2, 3), (67, 0.0, 0.2, 0)], 1.0, ((0, 0, 100), (3, 0, 100)))
     port.messages.clear()
     player.play()
-    time.sleep(0.3)
+    pump(0.3)
     player.stop()
 
     assert note_messages(port) == [
@@ -104,14 +103,14 @@ def test_the_notes_are_played_on_their_own_channel() -> None:
     ]
 
 
-def test_two_note_ons_for_one_pitch_are_both_released_on_stop() -> None:
+def test_two_note_ons_for_one_pitch_are_both_released_on_stop(pump) -> None:
     port = FakePort()
     player = MidiPortOut(port)
 
     player.set_program([(69, 0.0, 1.0, 0), (69, 0.0, 1.0, 0)], 1.0, ((0, 0, 100),))
     port.messages.clear()
     player.play()
-    time.sleep(0.1)  # both note-ons of the one pitch are sounding
+    pump(0.1)  # both note-ons of the one pitch are sounding
     player.pause()
 
     assert note_messages(port) == [
@@ -122,14 +121,14 @@ def test_two_note_ons_for_one_pitch_are_both_released_on_stop() -> None:
     ]
 
 
-def test_a_note_ending_where_the_next_begins_is_released_first() -> None:
+def test_a_note_ending_where_the_next_begins_is_released_first(pump) -> None:
     port = FakePort()
     player = MidiPortOut(port)
 
     player.set_program([(69, 0.1, 0.2, 0), (69, 0.3, 0.2, 0)], 1.0, ((0, 0, 100),))
     port.messages.clear()
     player.play()
-    time.sleep(0.35)  # 0.1 + 0.2 lands a bit past 0.3, where the next note starts
+    pump(0.35)  # 0.1 + 0.2 lands a bit past 0.3, where the next note starts
     player.stop()
 
     assert note_messages(port)[:3] == [
