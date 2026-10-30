@@ -20,6 +20,7 @@ import math
 from typing import Any
 
 from namioto import __version__, ipc, midi, project
+from namioto import lyrics as words
 from namioto.channels import CHANNEL_COUNT, Channel, free_channel
 from namioto.channels import set_field as channel_set_field
 from namioto.ipc import IpcError
@@ -277,7 +278,6 @@ class WindowBridge:
             window.view.notes_changed,
             window.view.channels_changed,
             window.transport.bpm.valueChanged,
-            window.view.lyrics_changed,
         ):
             signal.connect(self._changed)
             self._connections.append((signal, self._changed))
@@ -731,20 +731,20 @@ class WindowBridge:
         return self.get_state({})
 
     def get_lyrics(self, _params: dict) -> dict:
+        """The words the notes of the active channel sing, one per note."""
         window = self.window
-        return {
-            "text": window.lyrics_text,
-            "lines": len(window.view.lyric_lines),
-        }
+        notes = [item.note for item in window.view.notes() if item.note.channel == window.view.active_channel]
+        return {"text": words.join(notes), "lines": sum(1 for note in notes if note.lyric)}
 
     def set_lyrics(self, params: dict) -> dict:
         text = params.get("text")
         if not isinstance(text, str):
             raise IpcError("bad_params", "text must be a string")
         window = self.window
-        if not window._on_lyrics_saved(text):
+        notes = [item.note for item in window.view.notes() if item.note.channel == window.view.active_channel]
+        if not window._adopt_lyrics(notes, text):
             raise IpcError("failed", window.statusBar().currentMessage())
-        return {"lines": len(window.view.lyric_lines)}
+        return {"lines": sum(1 for note in notes if note.lyric)}
 
     def undo(self, _params: dict) -> dict:
         self.window.view.undo()

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """The lyrics window: the open project's lyric text, edited in one box.
 
-The box holds the ruby-annotated text the project sings, still in the `.krc` syntax the project keeps
-it in; nothing is read from or written to a file here. `Save` hands the text back through `saved`, and
-whether it is readable, and what adopting it does to the mapping, is the caller's to decide - so a text
-the project refuses is refused outside this window. A close that would drop unsaved edits asks first.
+The box holds the words the notes of one channel sing, one word per note, separated by whitespace;
+nothing is read from or written to a file here. `Save` hands the text back through `saved`, and what
+adopting it does to the notes is the caller's to decide. A close that would drop unsaved edits asks
+first.
 """
 
 from __future__ import annotations

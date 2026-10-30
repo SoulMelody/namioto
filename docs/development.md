@@ -100,8 +100,7 @@ The checkpoints are Meta's MMS forced aligner and
 | --- | --- |
 | `namioto/ui/` | Qt editor, dialogs, spectrum rendering and remote-control server |
 | `namioto/analysis/` | Spectrum, tempo, transcription, alignment, model downloads and devices |
-| `namioto/karaoke/` | The project's `.krc` lyric text: parsing, natural sounds, canonical rebuild, mapping operations |
-| `namioto/lyricmap/` | Lyrics-to-notes mapping and export validation |
+| `namioto/lyrics.py` | The word a note sings, and how a text becomes one word per note |
 | `namioto/document.py`, `project.py`, `midi.py` | Notes, project persistence and MIDI interchange |
 | `namioto/settings.py`, `state.py` | Preferences and remembered UI/new-project values |
 | `namioto/cli.py`, `ipc.py` | Headless tasks and remote-control client/protocol |

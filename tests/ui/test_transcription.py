@@ -9,7 +9,6 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QToolButton
 from namioto import midi, project
 from namioto.analysis import devices, transcription
 from namioto.channels import Channel
-from namioto.karaoke.operations import Match, SoundRef
 from namioto.ui.transcription_dialog import TranscriptionDialog
 
 from .helpers import parameter_writer
@@ -310,35 +309,6 @@ def test_the_window_is_pinned_to_its_content(own_window) -> None:
     assert dialog.minimumSize() == dialog.maximumSize() == dialog.size()
 
 
-@pytest.mark.parametrize("operation", ["merge", "transcribe"])
-def test_bulk_edits_preserve_note_ids_and_allocator_through_undo(own_window, operation) -> None:
-    view = own_window.view
-    view.set_channels((Channel(channel=0), Channel(channel=1)))
-    view.set_notes([(60, 0.0, 1.0, 0, 100), (62, 1.0, 1.0, 1, 200)], next_id=500)
-    view.set_active_channel(0)
-    confirmed = Match(SoundRef(0, 0), (200,), confirmed=True)
-    view.lyric_operations = (confirmed,)
-    view.undo_stack.clear()
-
-    if operation == "merge":
-        imported = midi.Imported(channels=(Channel(channel=0),), notes=(project.Note(2.0, 0.5, 64, 0),), bpm=120.0)
-        own_window._merge_midi(imported, [0])
-    else:
-        own_window._adopt_transcription([(2.0, 2.5, 64.0)])
-
-    expected = [200, 500] if operation == "transcribe" else [100, 200, 500]
-    assert [note.id for note in view.notes()] == expected
-    assert view.lyric_operations == (confirmed,)
-    assert view.document.next_id == 501
-    assert view.undo_stack.count() == 1
-    view.undo()
-    assert [note.id for note in view.notes()] == [100, 200]
-    assert view.lyric_operations == (confirmed,)
-    assert view.document.next_id == 501
-    view.redo()
-    assert [note.id for note in view.notes()] == expected
-    view.undo()
-    assert view.add_note(67, 6.0, 1.0).id == 501
 
 
 def test_transcription_creates_channel_zero_when_missing(own_window) -> None:

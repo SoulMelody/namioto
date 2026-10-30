@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Piano-roll widgets on one shared time axis: the notes and the grid, the view that edits them, and
-the ruler and keyboard round it. The lyrics strip lives in `namioto.ui.strips`.
+the ruler and keyboard round it.
 
-`PianoRollView` is the editor: it owns the document, the channels, the sounds and their times, and
+`PianoRollView` is the editor: it owns the document, the channels, the notes and their lyrics, and
 the undo stack of whole-document snapshots, and it is where a gesture is begun and committed. The
 ruler and the keyboard are the strips that stay here; all three share `viewport.ViewportStrip`, and
 read the view's scroll position rather than keeping one of their own.
@@ -47,9 +47,6 @@ from namioto.channels import CHANNEL_COUNT, Channel, free_channel
 from namioto.document import MIN_DURATION, PITCH_COUNT, PITCH_MAX, PITCH_MIN, Document, Note
 from namioto.i18n import tr
 from namioto.interaction import Interaction, Tool
-from namioto.karaoke.sounds import SoundLine
-from namioto.lyric_colors import DEFAULT_COLORS
-from namioto.lyricmap.raw import from_spans
 from namioto.tempo_map import TempoMap
 from namioto.ui import theme
 from namioto.ui.blocks import CLICK_SLOP_PX, Press, block_part
@@ -109,19 +106,14 @@ class _RollState:
     """
 
     channels: tuple[Channel, ...]
-    notes: tuple[tuple[int, float, float, int, int], ...]
+    notes: tuple[tuple[int, float, float, int, int, str], ...]
     selected: frozenset[int]
     active_channel: int
     tempo: TempoMap = TempoMap()
-    lyrics: tuple = ()
-    lyric_raw: tuple = ()
-    lyric_operations: tuple = ()
-    lyric_text: str = ""
-    lyric_evidence: tuple = ("", (), (), ())
 
 
 def _state_data(state: _RollState) -> tuple:
-    return (state.channels, state.notes, state.tempo, state.lyric_raw, state.lyric_text, state.lyric_evidence)
+    return (state.channels, state.notes, state.tempo)
 
 
 class _RollEdit(QUndoCommand):
@@ -160,7 +152,6 @@ class NoteItem(QGraphicsRectItem):
         self.note = note
         self.filtered = False
         self.lyric_text = ""
-        self.lyric_runs: tuple[tuple[str, bool], ...] = ()
         self.fill, self.edge_light, self.edge_dark = theme.note_shades(QColor(theme.NOTE_PALETTE[0]))
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -239,27 +230,15 @@ class NoteItem(QGraphicsRectItem):
             font.setBold(True)
             painter.setFont(font)
             metrics = painter.fontMetrics()
-            x = 3
-            right = rect.width() / px - 3
-            runs = self.lyric_runs or ((self.lyric_text, False),)
-            for text, zero in runs:
-                room = max(0, int(right - x))
-                if not room:
-                    break
-                visible = metrics.elidedText(text, Qt.TextElideMode.ElideRight, room)
-                painter.setPen(
-                    QColor(theme.LYRIC_ZERO)
-                    if zero
-                    else colors.note_selected_edge
-                    if selected
-                    else QColor(theme.LYRIC_TEXT)
-                )
+            room = max(0, int(rect.width() / px - 6))
+            if room:
+                visible = metrics.elidedText(self.lyric_text, Qt.TextElideMode.ElideRight, room)
+                painter.setPen(colors.note_selected_edge if selected else QColor(theme.LYRIC_TEXT))
                 painter.drawText(
-                    QRectF(x, rect.top() / py, room, rect.height() / py), int(Qt.AlignmentFlag.AlignVCenter), visible
+                    QRectF(3, rect.top() / py, room, rect.height() / py),
+                    int(Qt.AlignmentFlag.AlignVCenter),
+                    visible,
                 )
-                x += metrics.horizontalAdvance(visible)
-                if visible != text:
-                    break
         painter.restore()
 
 
@@ -335,9 +314,8 @@ class Gesture:
 class PianoRollView(QGraphicsView):
     """The roll: the note grid, the interaction with it and the drawn extras (spectrum, cursor).
 
-    It also lights the lyric NOTE the playhead sits in and the sounds that map to it, at the
-    playhead's position whether or not the transport runs, reading the NOTE blocks the mapping draws
-    (`lyric_times`) and the note ids each sound was placed on (`mapped`).
+    A note carries the word it sings, and the roll draws that word on the note itself: there is no
+    second lyric drawing to keep in step with the notes.
     """
 
     view_changed = Signal()
@@ -351,9 +329,6 @@ class PianoRollView(QGraphicsView):
     hover_changed = Signal(object)
     note_preview = Signal(int)
     seek_requested = Signal(float)
-    lyrics_changed = Signal()
-    lyric_text_changed = Signal(str)
-    lyric_highlight_changed = Signal()
 
     GRAB_PX = 7
     MIN_ZOOM_X, MAX_ZOOM_X = 3.0, 900.0
@@ -383,7 +358,6 @@ class PianoRollView(QGraphicsView):
         self._grid_offset = 0.0  # seconds the drawn grid slides by; the notes and the playhead keep their time
         self._gesture: Gesture | None = None  # the pointer gesture in flight, from press to release
         self.document = Document(channels=[Channel(channel=0, color=theme.NOTE_PALETTE[0])])
-        self.lyric_colors = DEFAULT_COLORS
         self._items: list[NoteItem] = []
         self._clipboard: tuple[tuple[int, float, float, int], ...] = ()
         self.active_channel = 0
@@ -392,20 +366,6 @@ class PianoRollView(QGraphicsView):
         self._gesture_before: _RollState | None = None
         self._gesture_text = ""
         self._history_depth = 0
-        self._lines: tuple[SoundLine, ...] = ()
-        self._lyric_times: tuple[tuple[tuple[float | None, float | None], ...], ...] = ()
-        self._lyric_red: tuple[tuple[bool, ...], ...] = ()
-        self._lyric_zero: tuple[tuple[bool, ...], ...] = ()
-        self._lyric_group: tuple[tuple[int, ...], ...] = ()
-        self._lyric_raw: tuple[tuple[tuple[float | None, float | None], ...], ...] = ()
-        self._lyric_mapped: tuple[tuple[tuple[int, ...], ...], ...] = ()
-        self._lyric_operations: tuple = ()
-        self.lyric_evidence: tuple = ("", (), (), ())
-        self._lyric_editable = True
-        self.lyric_text = ""
-        self.lyric_mapping_pending = False
-        self._highlight_note: int | None = None
-        self._highlight_sounds: tuple[tuple[int, int], ...] = ()
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.viewport().setMouseTracking(True)  # the row under the mouse is highlighted
@@ -478,7 +438,7 @@ class PianoRollView(QGraphicsView):
             return
         with self._edit(text):
             self.set_tempo(tempo)
-        self.notes_changed.emit()  # the beats moved, so the lyric mapping may have to follow
+        self.notes_changed.emit()  # the beats moved, so the notes' times may have to follow
 
     def content_beats(self) -> float:
         """Scrollable length: the default canvas, the spectrum or the notes, whichever is longest."""
@@ -505,15 +465,23 @@ class PianoRollView(QGraphicsView):
     def set_notes(self, notes, next_id: int | None = None) -> None:
         """Replace every note in one go: a project or an extraction arrives all at once.
 
-        A note may carry a fourth element, the channel it plays on, and a fifth, the stable id it was
-        saved under; `next_id` is the id the project file says is free next. Without it, the current
-        allocator is kept, including when undo restores older notes.
+        A note may carry a fourth element, the channel it plays on, a fifth, the stable id it was
+        saved under, and a sixth, the word sung on it; `next_id` is the id the project file says is
+        free next. Without it, the current allocator is kept, including when undo restores older
+        notes.
         """
         with self._edit("Replace notes"):
             self._drop_items()
             self.document.replace_notes(
                 (
-                    Note(item[0], item[1], item[2], item[3] if len(item) > 3 else 0, item[4] if len(item) > 4 else 0)
+                    Note(
+                        item[0],
+                        item[1],
+                        item[2],
+                        item[3] if len(item) > 3 else 0,
+                        item[4] if len(item) > 4 else 0,
+                        item[5] if len(item) > 5 else "",
+                    )
                     for item in notes
                 ),
                 next_id,
@@ -537,218 +505,6 @@ class PianoRollView(QGraphicsView):
             self._update_scene()
             self.notes_changed.emit()
             self.view_changed.emit()
-
-    # --- lyrics -----------------------------------------------------------
-
-    @property
-    def lyric_lines(self) -> tuple[SoundLine, ...]:
-        return self._lines
-
-    @property
-    def lyric_times(self) -> tuple[tuple[tuple[float | None, float | None], ...], ...]:
-        return self._lyric_times
-
-    @property
-    def lyric_red(self) -> tuple[tuple[bool, ...], ...]:
-        """Whether the mapping doubts each sound, laid out as `lyric_times` is."""
-        return self._lyric_red
-
-    @property
-    def lyric_zero(self) -> tuple[tuple[bool, ...], ...]:
-        """Whether each sound covers no note, the sounds it draws grey."""
-        return self._lyric_zero
-
-    @property
-    def lyric_group(self) -> tuple[tuple[int, ...], ...]:
-        """The note each sound shares with its neighbours, -1 where it stands on its own."""
-        return self._lyric_group
-
-    @property
-    def lyric_mapped(self) -> tuple[tuple[tuple[int, ...], ...], ...]:
-        """The stable ids of the notes each sound maps to, empty where it covers none."""
-        return self._lyric_mapped
-
-    @property
-    def highlight_note(self) -> int | None:
-        """The lyric NOTE the playhead sits inside, or None between sounds."""
-        return self._highlight_note
-
-    @property
-    def highlight_sounds(self) -> tuple[tuple[int, int], ...]:
-        """The sounds the lyric NOTE maps from, the ones the strip lights with the NOTE."""
-        return self._highlight_sounds
-
-    @property
-    def lyric_raw(self) -> tuple[tuple[tuple[float | None, float | None], ...], ...]:
-        """The editable onsets and reference durations the project keeps."""
-        return self._lyric_raw
-
-    @property
-    def lyric_editable(self) -> bool:
-        """Whether the strip may edit the KRC mapping."""
-        return self._lyric_editable
-
-    @lyric_editable.setter
-    def lyric_editable(self, editable: bool) -> None:
-        self._lyric_editable = bool(editable)
-        self.lyrics_changed.emit()
-
-    @property
-    def lyric_operations(self) -> tuple:
-        """The mapping's operations, kept with the undo state so an edit is one step."""
-        return self._lyric_operations
-
-    @lyric_operations.setter
-    def lyric_operations(self, operations) -> None:
-        self._lyric_operations = tuple(operations or ())
-
-    @contextmanager
-    def lyric_edit(self, text: str):
-        """One user edit of the lyrics as one undo step, the way a note edit is recorded."""
-        with self._edit(text):
-            yield
-
-    def set_lyrics(self, lines, times) -> None:
-        """Take a whole aligned `.krc` over: every line's sounds and their times, as one step."""
-        with self._edit("Align lyrics"):
-            self.load_lyrics(lines, times)
-
-    def load_lyrics(
-        self,
-        lines,
-        times,
-        red=None,
-        raw=None,
-        zero=None,
-        group=None,
-        mapped=None,
-        editable=True,
-        operations=None,
-        filtered=None,
-    ) -> None:
-        """The lyrics a `.krc` or a project brings in, with no undo step of their own.
-
-        `times` are the spans the mapping draws, `raw` the `(onset, raw_length)` evidence whose
-        onsets the strip edits, `red` the sounds the mapping doubts, `zero` those that cover no note,
-        `group` the note each sound shares, `mapped` the stable ids of the notes each sound maps to
-        and `editable` whether the strip may move `raw` at all. Without `red`/`zero` every sound is
-        taken as sound, without `raw` evidence is captured from `times`, and without `mapped` no
-        note is taken as a lyric NOTE.
-        """
-        fields = (
-            "_lines",
-            "_lyric_editable",
-            "_lyric_operations",
-            "_lyric_times",
-            "_lyric_raw",
-            "_lyric_red",
-            "_lyric_zero",
-            "_lyric_group",
-            "_lyric_mapped",
-        )
-        previous = tuple(getattr(self, name) for name in fields)
-        self._lines = tuple(lines)
-        self._lyric_editable = bool(editable)
-        if operations is not None:
-            self._lyric_operations = tuple(operations)
-        self._lyric_times = tuple(tuple(span) for span in times)
-        self._lyric_raw = tuple(tuple(sound) for sound in (from_spans(times) if raw is None else raw))
-        self._lyric_red = (
-            tuple(tuple(bool(flag) for flag in row) for row in red)
-            if red is not None
-            else tuple(tuple(False for _span in row) for row in times)
-        )
-        self._lyric_zero = (
-            tuple(tuple(bool(flag) for flag in row) for row in zero)
-            if zero is not None
-            else tuple(tuple(False for _span in row) for row in times)
-        )
-        self._lyric_group = (
-            tuple(tuple(int(flag) for flag in row) for row in group)
-            if group is not None
-            else tuple(tuple(-1 for _span in row) for row in times)
-        )
-        self._lyric_mapped = (
-            tuple(tuple(tuple(int(note) for note in chunk) for chunk in row) for row in mapped)
-            if mapped is not None
-            else tuple(tuple(() for _span in row) for row in times)
-        )
-        filtering_changed = filtered is not None and self._set_filtered_notes(filtered)
-        if previous == tuple(getattr(self, name) for name in fields):
-            if filtering_changed:
-                self._sync_channel_visuals()
-            return
-        self._sync_channel_visuals()
-        self._sync_lyric_highlight()
-        self.lyrics_changed.emit()
-        self.view_changed.emit()
-
-    def _lyric_highlight_at(self, seconds: float | None) -> tuple[int | None, tuple[tuple[int, int], ...]]:
-        """The lyric NOTE the playhead sits in and every sound that maps to it, from the strip's own spans.
-
-        A sound's block is the NOTE span the mapping derives, so the block holding `seconds` names the
-        NOTE; every sound the mapping put on that NOTE lights with it, a `merge` run as a whole.
-        """
-        if seconds is None:
-            return None, ()
-        for row, spans in enumerate(self._lyric_times):
-            mapped = self._lyric_mapped[row] if row < len(self._lyric_mapped) else ()
-            for column, (start, end) in enumerate(spans):
-                if start is None or end is None or not start <= seconds < end:
-                    continue
-                note_ids = set(mapped[column]) if column < len(mapped) else set()
-                if not note_ids:
-                    return None, ()
-                shared = tuple(
-                    (line, index)
-                    for line, notes in enumerate(self._lyric_mapped)
-                    for index, ids in enumerate(notes)
-                    if note_ids & set(ids)
-                )
-                return min(note_ids), shared
-        return None, ()
-
-    def _sync_lyric_highlight(self) -> None:
-        """Light the lyric NOTE under the playhead and the sounds it maps from, playing or paused."""
-        note, sounds = self._lyric_highlight_at(self.playhead)
-        if note == self._highlight_note and sounds == self._highlight_sounds:
-            return
-        self._highlight_note = note
-        self._highlight_sounds = sounds
-        self.lyric_highlight_changed.emit()
-
-    def set_sound_onset(self, row: int, column: int, seconds: float, base=None) -> bool:
-        """Move one onset between its channel neighbours without changing reference durations.
-
-        `base` is the row at the start of the gesture, so dragging home restores its evidence.
-        Only confirmed operations containing the edited Sound lose their confirmation.
-        """
-        if not 0 <= row < len(self._lyric_raw) or not math.isfinite(seconds):
-            return False
-        sounds = list(self._lyric_raw[row] if base is None else base)
-        if not 0 <= column < len(sounds):
-            return False
-        channel = self.lyric_lines[row].sounds[column].channel
-        neighbours = [
-            ((line, at), onset)
-            for line, spans in enumerate(self._lyric_raw)
-            for at, (onset, _length) in enumerate(sounds if line == row else spans)
-            if onset is not None and self.lyric_lines[line].sounds[at].channel == channel
-        ]
-        low = next((onset for ref, onset in reversed(neighbours) if ref < (row, column)), 0.0)
-        high = next((onset for ref, onset in neighbours if ref > (row, column)), math.inf)
-        value = min(max(0.0, float(seconds), low), high)
-        sounds[column] = (value, sounds[column][1])
-        if tuple(sounds) == self._lyric_raw[row]:
-            return False
-        self._lyric_raw = self._lyric_raw[:row] + (tuple(sounds),) + self._lyric_raw[row + 1 :]
-        self._lyric_operations = tuple(
-            operation
-            for operation in self._lyric_operations
-            if not (operation.confirmed and any(ref.line == row and ref.index == column for ref in operation.sounds))
-        )
-        self.lyrics_changed.emit()
-        return True
 
     @property
     def gesture_active(self) -> bool:
@@ -810,16 +566,12 @@ class PianoRollView(QGraphicsView):
         return _RollState(
             channels=tuple(self.channels),
             notes=tuple(
-                (note.pitch, note.start, note.duration, note.channel, note.id) for note in self.notes()
+                (note.pitch, note.start, note.duration, note.channel, note.id, note.note.lyric)
+                for note in self.notes()
             ),
             selected=frozenset(index for index, item in enumerate(self._items) if item.isSelected()),
             active_channel=self.active_channel,
             tempo=self._tempo,
-            lyrics=self._lines,
-            lyric_raw=self._lyric_raw,
-            lyric_operations=self._lyric_operations,
-            lyric_evidence=self.lyric_evidence,
-            lyric_text=self.lyric_text,
         )
 
     def _push(self, before: _RollState, after: _RollState, text: str) -> bool:
@@ -873,13 +625,6 @@ class PianoRollView(QGraphicsView):
         self._gesture_text = ""
         gesture, self._gesture = self._gesture, None
         if gesture is None:
-            self.lyric_text = before.lyric_text
-            self.lyric_evidence = before.lyric_evidence
-            self.lyric_text_changed.emit(before.lyric_text)
-            self._lines = before.lyrics
-            self._lyric_raw = before.lyric_raw
-            self._lyric_operations = before.lyric_operations
-            self.lyrics_changed.emit()
             self.gesture_finished.emit()
             return
         created = gesture.created is not None and gesture.created in self._items
@@ -900,21 +645,12 @@ class PianoRollView(QGraphicsView):
     def _restore_state(self, state: _RollState) -> None:
         """Put a snapshot back in one rebuild, selecting the same notes by position again.
 
-        The lyrics go in first, so the remap the notes trigger reads the times restored. The notes
-        go in before the channels: a channel list only holds the numbers its notes play on, so a
-        channel that is about to lose its notes would come straight back if it were set while they
-        were still there.
+        The notes go in before the channels: a channel list only holds the numbers its notes play
+        on, so a channel that is about to lose its notes would come straight back if it were set
+        while they were still there.
         """
         self._history_depth += 1
         try:
-            self.lyric_text = state.lyric_text
-            self.lyric_evidence = state.lyric_evidence
-            self.lyric_text_changed.emit(state.lyric_text)
-            self._lines = state.lyrics
-            self._lyric_raw = state.lyric_raw
-            self._lyric_operations = state.lyric_operations
-            self._lyric_mapped = ()
-            self._sync_lyric_highlight()
             # the map goes back first, so the notes below land on the grid they were kept against
             self.set_tempo(state.tempo, keep_notes=False)
             self.set_notes(state.notes)
@@ -923,7 +659,6 @@ class PianoRollView(QGraphicsView):
                 if index < len(self._items):
                     self._items[index].setSelected(True)
             self.set_active_channel(state.active_channel)
-            self.lyrics_changed.emit()
         finally:
             self._history_depth -= 1
         self.refresh()
@@ -939,7 +674,7 @@ class PianoRollView(QGraphicsView):
         return next((channel for channel in self.channels if channel.channel == number), None)
 
     def lyric_color(self, number: int) -> QColor:
-        return QColor(self.lyric_colors[number % len(self.lyric_colors)])
+        return QColor(theme.NOTE_PALETTE[number % len(theme.NOTE_PALETTE)])
 
     def channel_color(self, number: int) -> QColor:
         channel = self._channel(number)
@@ -954,52 +689,18 @@ class PianoRollView(QGraphicsView):
 
     def _sync_channel_visuals(self) -> None:
         """Body colour, bevel, stacking and visibility all come from the channel list; the notes only
-        show while editing, the way WaveTone keeps its graph to the spectrum outside note edit mode."""
-        labels = {}
-        for row, line in enumerate(self._lines):
-            mapped = self._lyric_mapped[row] if row < len(self._lyric_mapped) else ()
-            zero = self._lyric_zero[row] if row < len(self._lyric_zero) else ()
-            first = next((ids[0] for ids in mapped if ids), None)
-            previous = None
-            for column, sound in enumerate(line.sounds):
-                ids = mapped[column] if column < len(mapped) else ()
-                dropped = column < len(zero) and zero[column]
-                if ids:
-                    previous = ids[-1]
-                elif dropped:
-                    identifier = previous if previous is not None else first
-                    ids = (identifier,) if identifier is not None else ()
-                for position, identifier in enumerate(ids):
-                    prefix = "↳ " if position else ""
-                    entries = labels.setdefault(identifier, [])
-                    if (
-                        entries
-                        and sound.rubied
-                        and entries[-1][0].rubied
-                        and entries[-1][0].base == sound.base
-                        and entries[-1][2:] == (dropped, prefix, row, column - 1)
-                    ):
-                        last = entries[-1]
-                        entries[-1] = (last[0], last[1] + sound.reading, dropped, prefix, row, column)
-                    else:
-                        entries.append((sound, sound.reading, dropped, prefix, row, column))
+        show while editing, the way WaveTone keeps its graph to the spectrum outside note edit mode.
+
+        A note shows the word it sings, read straight off the note: the lyrics have no drawing of
+        their own to keep in step with.
+        """
         for note in self.notes():
-            runs = []
-            for sound, reading, zero, prefix, _row, _column in labels.get(note.id, ()):
-                text = reading
-                if sound.rubied:
-                    left, right = ("(", ")") if sound.first else ("[", "]")
-                    text += f"{left}{sound.base}{right}"
-                runs.append(((" " if runs else "") + prefix + text, zero))
-            text = "".join(text for text, _zero in runs)
-            lyric_runs = tuple(runs) if self.note_lyrics_visible else ()
-            lyric_text = text if self.note_lyrics_visible else ""
-            if note.lyric_runs != lyric_runs or note.lyric_text != lyric_text:
-                note.lyric_runs = lyric_runs
-                note.lyric_text = lyric_text
+            text = note.note.lyric if self.note_lyrics_visible else ""
+            if note.lyric_text != text:
+                note.lyric_text = text
                 note.update()
             warning = (
-                tr("Overlapping note: excluded from lyric mapping. Move, shorten or remove the overlapping notes.")
+                tr("Overlapping note: move, shorten or remove it before aligning the lyrics.")
                 if note.filtered
                 else ""
             )
@@ -1279,7 +980,6 @@ class PianoRollView(QGraphicsView):
                     if not region.isEmpty():
                         viewport.update(region)
             self.playhead = seconds
-            self._sync_lyric_highlight()
 
     def pixels_per_beat(self) -> float:
         return self._zoom_x

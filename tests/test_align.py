@@ -61,10 +61,7 @@ def test_the_alignment_parameters_are_remembered_and_checked():
         "device": "gpu",
         "quantize": 4,
         "chunk": "off",
-        "use_constraints": True,
     }
-    align.save_parameters({"use_constraints": False})
-    assert align.load_parameters()["use_constraints"] is False
 
     align.save_parameters({"model": "nope", "device": 7, "quantize": "eight"})
     assert align.load_parameters() == align.default_parameters()  # every value goes through its check

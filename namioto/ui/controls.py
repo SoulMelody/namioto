@@ -494,7 +494,6 @@ class TransportBar(_Group):
         self.detect.setEnabled(False)
         self.suggestion = TempoSuggestion()
         self.settings_button = icon_button("gear", tr("Settings: the advanced options the bars have no control for"))
-        self.palette_button = icon_button("palette", tr("Project lyric colours"))
 
         self.grid_offset = GridOffsetBox()
         self.grid_offset.setRange(-500, 500)
@@ -544,7 +543,6 @@ class TransportBar(_Group):
         project.add(self.open)
         project.add(self.save)
         project.add(self.export)
-        project.add(self.palette_button)
         project.add(self.settings_button)
 
         playback = Cluster("playback")
@@ -559,8 +557,6 @@ class TransportBar(_Group):
         playback.add(separator())
         playback.add(self.channels)
         playback.add(self.note_lyrics)
-        self.lyric_scope = icon_button("lyric_scope", tr("Show only the current channel's lyric rows"), checkable=True)
-        playback.add(self.lyric_scope)
         playback.add(self.division)
 
         bpm = Cluster("bpm")

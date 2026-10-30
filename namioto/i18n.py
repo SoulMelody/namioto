@@ -35,7 +35,6 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Select all lines in channel": "选择此通道的全部歌词行",
         "Move linked notes too": "同步移动关联音符",
         "Move to channel": "移动到通道",
-        "Set lyric color": "设置歌词颜色",
         "Follow lyric channel": "跟随歌词所属通道",
         "Text": "正文",
         "Ruby (comma-separated parts)": "注音（以半角逗号分段）",
@@ -146,14 +145,11 @@ CATALOGS: dict[str, dict[str, str]] = {
         "WaveTone's MIDI export starts every note one bar late: reading that back turns it back, and "
         "writing MIDI adds it, so files and the two programs agree": "WaveTone 导出的 MIDI 会让每个音符晚一小节：读入时抵消它，写出时加上它，从而与文件和两个程序保持一致",
         "Choose colour": "选色",
-        "Project lyric colours": "项目歌词调色盘",
         "Colours are saved with the project.": "配色随项目保存。",
-        "Lyric colours": "歌词配色",
         "Restore default colours": "恢复默认配色",
         # lyrics settings
         "Lyrics": "歌词",
         "Model": "模型",
-        "Use KRC mapping constraints": "使用 KRC 映射约束",
         "Preserve explicit NOTE counts and shared-sound groups when mapping the aligned sounds": "映射对齐后的声音时，保留显式音符数量与共享音符的分组",
         # field choices
         "mono": "单声道",
@@ -262,7 +258,6 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Merge with previous chapter": "与上一章合并",
         "Merge with previous line": "与上一行合并",
         "Split here": "在此处分行",
-        "Lyrics (.krc, one line; following lyrics may map to different notes)": "单行歌词（支持 .krc 注音语法；后续歌词的音符对应可能改变）",
         "Enter exactly one lyric line.": "请输入一行歌词。",
         "Delete lyrics, not MIDI notes. Following lyrics may map to different notes.": "只删除歌词，不删除 MIDI 音符。后续歌词的音符对应可能改变。",
         "This boundary would change note mapping. Choose another boundary.": "此分界会改变音符对应，请选择其他位置。",

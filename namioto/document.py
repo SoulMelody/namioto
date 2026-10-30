@@ -35,7 +35,8 @@ class Note:
 
     Identity is the note itself, not its fields: two notes may sound and sit exactly alike, and a
     roll that looks one up by value would drop the wrong one. `id` is the stable number a saved
-    mapping names it by; a fresh note carries 0 until the document gives it one.
+    mapping names it by; a fresh note carries 0 until the document gives it one. `lyric` is the
+    word sung on this note, empty where none was given.
     """
 
     pitch: int
@@ -43,6 +44,7 @@ class Note:
     duration: float
     channel: int = 0
     id: int = 0
+    lyric: str = ""
 
     def __post_init__(self) -> None:
         self.pitch = min(PITCH_MAX, max(PITCH_MIN, int(self.pitch)))
@@ -50,6 +52,7 @@ class Note:
         self.duration = max(MIN_DURATION, float(self.duration))
         self.channel = min(CHANNEL_COUNT - 1, max(0, int(self.channel)))
         self.id = max(0, int(self.id))
+        self.lyric = str(self.lyric or "")
 
     @property
     def end(self) -> float:

@@ -49,8 +49,6 @@ def test_only_the_values_that_belong_to_the_document_are_written() -> None:
         "channels",
         "notes",
         "note_id",
-        "lyrics",
-        "lyric_colors",
         "analysis",
         "spectrum",
         "playback",
@@ -169,37 +167,12 @@ def test_notes_that_are_not_a_list_leave_an_empty_project() -> None:
     assert project.from_dict({"format": "namioto", "notes": "lots"}).notes == ()
 
 
-def test_the_lyric_times_survive_a_round_trip() -> None:
-    lyrics = project.Lyrics(
-        text="あん\n", key="abc", model="mms", mode="read", raw=(((0.0, 1.0), (None, None)),), flagged=(True,)
-    )
-    written = project.to_dict(make(lyrics=lyrics))
-    assert written["lyrics"] == {
-        "text": "あん\n",
-        "key": "abc",
-        "model": "mms",
-        "raw": [[[0.0, 1.0], [None, None]]],
-        "scores": [],
-        "flagged": [True],
-        "problems": [],
-    }
-    assert project.from_dict(written).lyrics == lyrics
 
 
-def test_a_lyrics_block_without_a_text_still_reads() -> None:
-    data = {"format": "namioto", "lyrics": {"key": "abc", "model": "mms", "raw": [[[0.0, 1.0]]]}}
-    assert project.from_dict(data).lyrics == project.Lyrics(key="abc", model="mms", raw=(((0.0, 1.0),),))
 
 
-def test_an_unknown_lyric_mode_without_legacy_operations_reads_krc() -> None:
-    data = {"format": "namioto", "lyrics": {"key": "a", "raw": [], "mode": "sideways"}}
-    assert project.from_dict(data).lyrics.mode == "read"
 
 
-def test_a_broken_lyric_block_is_dropped() -> None:
-    assert project.from_dict({"format": "namioto", "lyrics": "lots"}).lyrics is None
-    assert project.from_dict({"format": "namioto", "lyrics": {"key": "a"}}).lyrics is None
-    assert project.from_dict({"format": "namioto", "lyrics": {"key": "a", "raw": [[1.0]]}}).lyrics is None
 
 
 def test_the_audio_is_stored_beside_the_project_when_it_can_be(tmp_path) -> None:
@@ -331,54 +304,10 @@ def test_a_next_id_that_would_reuse_a_taken_one_is_pushed_past_it() -> None:
     assert project.from_dict(data).next_id == 6
 
 
-def test_the_mapping_survives_a_round_trip(tmp_path) -> None:
-    from namioto.karaoke.operations import Match, Merge, SoundRef
-
-    lyrics = project.Lyrics(
-        text="@3{胡椒[こ,しょう]}\n",
-        mode="edit",
-        key="abc",
-        raw=(((0.0, 0.9), (1.0, 0.4), (2.0, 0.0)),),
-        scores=((0.9, None, 0.8),),
-        flagged=(True,),
-        problems=(("a problem",),),
-        operations=(
-            Match(SoundRef(0, 0), (1,), confirmed=True),
-            Merge((SoundRef(0, 1), SoundRef(0, 2)), 2),
-        ),
-        version=2,
-    )
-    path = tmp_path / "song.nto"
-    project.save(make(lyrics=lyrics), path)
-    opened = project.load(path).lyrics
-    assert opened == lyrics
 
 
-def test_span_based_lyric_evidence_is_not_read_as_reference_durations() -> None:
-    data = {
-        "format": "namioto",
-        "lyrics": {"text": "あ\n", "key": "k", "lines": [[[0.0, 1.0]]]},
-    }
-    assert project.from_dict(data).lyrics is None
 
 
-def test_a_malformed_operation_is_left_out() -> None:
-    from namioto.karaoke.operations import Match, SoundRef
-
-    data = {
-        "format": "namioto",
-        "lyrics": {
-            "text": "あい\n",
-            "key": "k",
-            "raw": [[[0.0, 1.0], [1.0, 1.0]]],
-            "operations": [
-                {"kind": "match", "sound": [0, 0], "notes": [1], "confirmed": True},
-                {"kind": "match", "sound": [0, 1]},
-                "not an operation",
-            ],
-        },
-    }
-    assert project.from_dict(data).lyrics.operations == (Match(SoundRef(0, 0), (1,), confirmed=True),)
 
 
 def test_a_single_tempo_project_writes_no_map(tmp_path) -> None:

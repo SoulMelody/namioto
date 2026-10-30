@@ -21,7 +21,7 @@ def test_filtered_note_has_a_cosmetic_border_and_explanatory_tooltip(window, mon
     view.set_filtered_notes((note.id,))
     assert "Overlapping note" in note.toolTip()
     view._sync_channel_visuals()
-    assert "excluded from lyric mapping" in note.toolTip()
+    assert "before aligning the lyrics" in note.toolTip()
 
     pens = []
     original = QPainter.setPen

@@ -18,7 +18,6 @@ from PySide6.QtWidgets import QApplication
 from namioto import project
 from namioto.analysis.spectrum import NOTE_COUNT, NoteSpectrum
 from namioto.channels import Channel
-from namioto.project import text_key
 from namioto.ui.controls import Cluster
 from namioto.ui.roll import PianoRollView
 
@@ -100,33 +99,6 @@ def ruler_click(window, beats: float) -> None:
     ruler_mouse(window, QEvent.Type.MouseButtonRelease, x)
 
 
-def drag_sound(window, ref, x, y=15.0):
-    rect = window.sound_strip._blocks()[ref]
-    sound_mouse(window, QEvent.Type.MouseButtonPress, rect.center().x(), rect.center().y())
-    sound_mouse(window, QEvent.Type.MouseMove, x, y)
-    sound_mouse(window, QEvent.Type.MouseButtonRelease, x, y)
-    wait_for_lyric_mapping(window)
-
-
-def sound_mouse(window, kind, x: float, y: float = 10.0, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
-    """Send a mouse event to the lyrics strip, whose columns line up with the roll's."""
-    position = QPointF(x, y)
-    event = QMouseEvent(
-        kind,
-        position,
-        window.sound_strip.mapToGlobal(position),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        modifiers,
-    )
-    if kind == QEvent.Type.MouseButtonPress:
-        window.sound_strip.mousePressEvent(event)
-    elif kind == QEvent.Type.MouseMove:
-        window.sound_strip.mouseMoveEvent(event)
-    else:
-        window.sound_strip.mouseReleaseEvent(event)
-
-
 def draw_note(window, press: QPointF, release: QPointF | None = None) -> None:
     window.view.centerOn(QPointF((press.x() + (release or press).x()) / 2, press.y()))
     roll_mouse(window, QEvent.Type.MouseButtonPress, press)
@@ -197,14 +169,6 @@ def pixel_at(view: PianoRollView, image: QImage, scene_x: float, scene_y: float)
     return image.pixelColor(device_point(view, scene_x, scene_y))
 
 
-def wait_for_lyric_mapping(window) -> None:
-    deadline = time.monotonic() + 1.0
-    while window._lyric_map_thread is not None and time.monotonic() < deadline:
-        QApplication.processEvents()
-        time.sleep(0.001)
-    assert window._lyric_map_thread is None
-
-
 class _Signal:
     """A signal nothing is connected to: the loaders a file starts are faked in the tests below."""
 
@@ -248,42 +212,9 @@ def reset_channels(window) -> None:
     window.view.set_channels((Channel(channel=0),))
 
 
-def _mapped_pair(own_window, tmp_path, raw=((0.0, 1.0), (1.0, 1.0))) -> None:
-    """A one-to-one mapping of あ, い onto two notes, as the context-menu tests start from."""
+def _mapped_pair(own_window, tmp_path, _raw=((0.0, 1.0), (1.0, 1.0))) -> None:
+    """Two notes singing あ, い, as the gesture tests start from."""
     own_window.transport.bpm.setValue(60.0)
     own_window.view.set_channels((Channel(channel=0),))
-    own_window.view.set_notes(((60, 0.0, 1.0, 0), (62, 1.0, 1.0, 0)))
+    own_window.view.set_notes(((60, 0.0, 1.0, 0, 0, "あ"), (62, 1.0, 1.0, 0, 0, "い")))
     own_window.project_path = tmp_path / "song.nto"
-    own_window._stored_lyrics = project.Lyrics(text="あい", key=text_key("あい"), raw=(raw,))
-    own_window._restore_lyrics()
-    wait_for_lyric_mapping(own_window)
-
-
-class _ManualLyricMapper(QObject):
-    mapped = Signal(object)
-    failed = Signal(str)
-    finished = Signal()
-    instances: list = []
-
-    def __init__(self, revision, request, parent=None):
-        super().__init__(parent)
-        self.revision = revision
-        self.request = request
-
-    def start(self):
-        self.instances.append(self)
-
-    def complete(self):
-        from namioto.ui.lyric_map import map_lyrics
-
-        self.mapped.emit((self.revision, map_lyrics(**self.request)))
-        self.finished.emit()
-
-    def wait(self):
-        pass
-
-
-def _manual_mapping(monkeypatch):
-    _ManualLyricMapper.instances = []
-    monkeypatch.setattr("namioto.ui.app.LyricMapper", _ManualLyricMapper)
-    return _ManualLyricMapper.instances

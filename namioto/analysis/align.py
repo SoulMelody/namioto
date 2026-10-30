@@ -6,7 +6,7 @@ CTC model, and each token gets the span of frames it won. The model never recogn
 only says where the tokens it is given fall, and it arrives as a converted ONNX graph, so torch and
 torchaudio stay out of the program. Two models can be exported: `mms` (Meta's MMS forced-alignment
 checkpoint) and `yohane` (`NextFire/mms-300m-ForcedAligner-karaoke-ja-Latn`). Both read a romanised
-lyrics; `namioto.utils.kana_tokens` turns a `.krc` line's kana into those tokens.
+lyrics; `namioto.utils.kana_tokens` turns a note's lyric into those tokens.
 
 The alignment itself is a numpy port of torchaudio's `forced_align`/`merge_tokens` (BSD-2-Clause,
 see NOTICE). A line's tokens are flattened into their characters, each character is one CTC target,
@@ -104,13 +104,6 @@ QUANTIZE_LABELS = ("Off", "1/4", "1/8", "1/16", "1/32", "1/64", "1/128")
 PARAMETER_FILE = "align.json"
 PARAMETERS: tuple[Field, ...] = (
     Field("model", "choice", DEFAULT_MODEL, "Model", "Which forced-alignment model to use", choices=MODELS),
-    Field(
-        "use_constraints",
-        "bool",
-        True,
-        "Use KRC mapping constraints",
-        "Preserve explicit NOTE counts and shared-sound groups when mapping the aligned sounds",
-    ),
     Field(
         "device",
         "choice",
@@ -362,7 +355,7 @@ def emissions_key(audio: str | pathlib.Path, model: str, provider: str, chunk: s
     """What makes two model passes the same: the audio, the model, where it runs and how it was cut.
 
     The lyrics are not part of it, and neither are the tempo and the grid offset: the model never
-    sees them, so a changed `.krc` reuses the pass and only the search runs again.
+    sees them, so changed lyrics reuse the pass and only the search runs again.
     """
     identity = {
         "audio": list(file_stamp(audio)),

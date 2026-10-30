@@ -6,16 +6,14 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QDialog, QMessageBox
 
-from namioto import project
 from namioto.ui.lyrics_dialog import LyricsDialog
 
 
 def test_the_box_opens_on_the_lyrics_of_the_project(lyrics_window) -> None:
-    lyrics_window._stored_lyrics = project.Lyrics(text="歌[うた]", key=project.text_key("歌[うた]"))
-    lyrics_window._restore_lyrics()
-    dialog = LyricsDialog(lyrics_window.lyrics_text, parent=lyrics_window)
+    lyrics_window.view.set_notes(((60, 0.0, 1.0, 0, 0, "歌"),))
+    dialog = LyricsDialog("歌", parent=lyrics_window)
 
-    assert dialog.editor.toPlainText() == "歌[うた]"
+    assert dialog.editor.toPlainText() == "歌"
     assert dialog.parent() is lyrics_window
     dialog.close()
 
@@ -100,8 +98,7 @@ def test_cancelling_that_question_keeps_the_window_open(monkeypatch) -> None:
 
 
 def test_the_window_opens_it_on_the_lyrics_it_already_sings(lyrics_window, monkeypatch) -> None:
-    lyrics_window._stored_lyrics = project.Lyrics(text="あん", key=project.text_key("あん"))
-    lyrics_window._restore_lyrics()
+    lyrics_window.view.set_notes(((60, 0.0, 1.0, 0, 0, "あん"),))
     opened: list[LyricsDialog] = []
     monkeypatch.setattr(LyricsDialog, "exec", lambda self: opened.append(self) or QDialog.DialogCode.Rejected)
 

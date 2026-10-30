@@ -205,7 +205,6 @@ def test_every_bar_setting_has_one_binding(own_window) -> None:
         ("analysis", "fft_points"),
         ("analysis", "a4"),
     }
-    elsewhere.update(("lyric_colors", f"channel_{number}") for number in range(16))
     assert set(project.FIELD_SPECS) - bound == elsewhere
     # the two switches with no page are the program's, and are still on the bars
     assert {("editor", "auto_page"), ("editor", "overtone_highlight")} <= bound

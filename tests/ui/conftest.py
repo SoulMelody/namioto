@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
+import os
+
 import pytest
 from PySide6.QtWidgets import QApplication
 
@@ -38,8 +40,22 @@ def isolated_transcription(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
 
+@pytest.fixture(scope="module", autouse=True)
+def module_state(tmp_path_factory):
+    """A module-wide window is built before the per-test state fixture runs, so it needs its state
+    path decided here: otherwise it reads whatever test ran last."""
+    root = tmp_path_factory.mktemp("module-state")
+    previous = os.environ.get("NAMIOTO_STATE")
+    os.environ["NAMIOTO_STATE"] = str(root / "state.json")
+    yield
+    if previous is None:
+        os.environ.pop("NAMIOTO_STATE", None)
+    else:
+        os.environ["NAMIOTO_STATE"] = previous
+
+
 @pytest.fixture(scope="module")
-def window(qt_app):
+def window(qt_app, module_state):
     window = MainWindow()
     window.resize(1200, 720)
     window.show()
@@ -65,7 +81,6 @@ def own_window(tmp_path, monkeypatch):
 def lyrics_window(own_window, tmp_path):
     """A window with a project open, so the lyrics have a project to belong to."""
     own_window.project_path = tmp_path / "song.nto"
-    own_window._restore_lyrics()
     return own_window
 
 

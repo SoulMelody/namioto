@@ -6,7 +6,6 @@ from PySide6.QtWidgets import QDialog, QFileDialog
 from namioto import midi, project
 from namioto import settings as store
 from namioto.channels import Channel
-from namioto.project import text_key
 from namioto.ui.app import MainWindow
 from namioto.ui.midi_dialog import MidiImportDialog
 from namioto.ui.open_dialog import OpenAudioDialog
@@ -343,63 +342,8 @@ def test_the_command_line_analysis_values_start_the_dialog_and_stop_there(own_wi
     assert own_window.project_settings.analysis.channels == "left"
 
 
-def test_opening_new_audio_does_not_save_the_previous_document(own_window, monkeypatch, tmp_path) -> None:
-    audio = tmp_path / "song.flac"
-    audio.write_bytes(b"")
-    fake_loaders(monkeypatch)
-    own_window.view.set_channels((Channel(channel=5),))
-    own_window.view.add_note(60, 0.0, 1.0, 5).setSelected(True)
-    own_window.view.delete_selection()
-    own_window.view.undo()
-    assert own_window.view.undo_stack.count() > 0
-    own_window.lyrics_text = "あい"
-    own_window._stored_lyrics = project.Lyrics(text="あい", key=text_key("あい"))
-    assert own_window.save_project(tmp_path / "previous.nto") is True
-    monkeypatch.setattr(OpenAudioDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
-
-    assert own_window.open_audio(str(audio)) is True
-
-    saved = project.load(tmp_path / "song.nto")
-    assert saved.notes == ()
-    assert [channel.channel for channel in saved.channels] == [0]
-    assert saved.lyrics is None
-    assert own_window.view.notes() == []
-    assert own_window.lyrics_text == ""
-    assert own_window._stored_lyrics is None
-    assert own_window.view.undo_stack.count() == 0
 
 
-def test_cancelling_the_open_dialog_leaves_the_audio_alone(own_window, monkeypatch, tmp_path) -> None:
-    audio = tmp_path / "song.flac"
-    audio.write_bytes(b"")
-    captured = fake_loaders(monkeypatch)
-    own_window.view.set_channels((Channel(channel=5),))
-    own_window.view.add_note(60, 0.0, 1.0, 5).setSelected(True)
-    own_window.view.delete_selection()
-    own_window.view.undo()
-    own_window.lyrics_text = "あい"
-    stored = project.Lyrics(text="あい", key=text_key("あい"))
-    own_window._stored_lyrics = stored
-    own_window.audio_path = str(tmp_path / "previous.flac")
-    assert own_window.save_project(tmp_path / "previous.nto") is True
-    stored = own_window._stored_lyrics
-    settings = own_window.project_settings
-    notes = own_window.view.notes()
-    undo_count = own_window.view.undo_stack.count()
-    monkeypatch.setattr(OpenAudioDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
-
-    assert own_window.open_audio(str(audio)) is False
-
-    assert own_window.audio_path == str(tmp_path / "previous.flac")
-    assert own_window.project_path == tmp_path / "previous.nto"
-    assert own_window.project_settings is settings
-    assert own_window.view.notes() == notes
-    assert [channel.channel for channel in own_window.view.channels] == [5]
-    assert own_window.lyrics_text == "あい"
-    assert own_window._stored_lyrics is stored
-    assert own_window.view.undo_stack.count() == undo_count
-    assert not audio.with_suffix(".nto").exists()
-    assert not captured
 
 
 def test_the_command_line_takes_audio_and_projects_but_not_a_midi_alone(qt_app, monkeypatch, tmp_path) -> None:

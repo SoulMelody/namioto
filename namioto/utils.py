@@ -2,12 +2,12 @@
 """Small helpers shared across the Qt-free modules: the app's own directories, the identity of a
 file under a path, and `kana_tokens()`.
 
-`kana_tokens()` is the ruby `namioto-cli align` takes: it turns a `.krc` line's bracketed kana into
+`kana_tokens()` is the ruby `namioto-cli align` takes: it turns a lyric word's kana into
 one hepburn token per sound, the unit FA-Kara's models are trained on. It is deliberately small - a
-`.krc` file already carries the kana ruby of every kanji, so the kanji surface and the annotation
+lyric already carries the kana reading of every kanji, so the kanji surface and the reading
 punctuation only have to be dropped, with no kanji lookup and no dictionary. A run of Latin letters
 or digits is kept as one token; everything else is dropped, so the same call reads a bare kana
-string and a whole `.krc` line.
+string and a whole lyric word.
 """
 
 from __future__ import annotations
@@ -253,7 +253,7 @@ def _geminate(token: str, count: int) -> str:
 def kana_tokens(text: str) -> list[str]:
     """The ruby of `text` as one hepburn token per sound, Latin and digits kept as runs.
 
-    `text` is a kana string or a whole `.krc` line; the kanji and the annotation punctuation are
+    `text` is a kana string or a lyric word; the kanji and the reading punctuation are
     dropped, so `漢字[かんじ]` reads as `kanji`.
     """
     folded = _normalize(text)

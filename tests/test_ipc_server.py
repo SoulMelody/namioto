@@ -15,7 +15,9 @@ import time
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from namioto import ipc, midi
+from namioto import ipc
+from namioto.channels import Channel
+from namioto import midi
 from namioto import settings as store
 from namioto.ui.app import MainWindow
 
@@ -379,14 +381,13 @@ def test_view_mix_and_history_commands(qt_app, window, endpoint):
 
 
 def test_lyrics_get_and_set(qt_app, window, endpoint):
+    window.view.set_channels((Channel(channel=0),))
+    window.view.set_notes(((60, 0.0, 1.0, 0, 0, ""), (62, 1.0, 1.0, 0, 0, "")))
     assert call(qt_app, endpoint, "lyrics.get")["text"] == ""
-    result = call(qt_app, endpoint, "lyrics.set", {"text": "ら[la] り[li] る[lu]\n"})
-    assert result["lines"] == 1
-    assert call(qt_app, endpoint, "lyrics.get")["text"].startswith("ら")
-    window._adopt_alignment([[(0.0, 1.0), (1.0, 1.0), (2.0, 1.0)]], "mms")
-    assert call(qt_app, endpoint, "lyrics.set", {"text": "あい"}) == {"lines": 1}
-    assert window.lyrics_text == "あい"
-    assert "mode" not in call(qt_app, endpoint, "lyrics.get")
+    result = call(qt_app, endpoint, "lyrics.set", {"text": "ら り"})
+    assert result["lines"] == 2
+    assert call(qt_app, endpoint, "lyrics.get")["text"] == "ら り"
+    assert [note.note.lyric for note in window.view.notes()] == ["ら", "り"]
 
 
 @pytest.mark.parametrize("keep_events", [True, False])

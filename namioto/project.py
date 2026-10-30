@@ -13,14 +13,10 @@ preferences are in `namioto.settings`, and the window's state in `namioto.state`
 `reuse` is the exception - its last value says more about the user than about the song - so the
 window keeps every change the user makes to one in `namioto.state`, and the next document starts
 from it.
-
-`Lyrics` carries the authoritative lyric text and auxiliary alignment evidence keyed by that
-text. Legacy edit sessions are read for migration. The project remains the source of truth.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import warnings
@@ -32,8 +28,6 @@ from typing import Any, NamedTuple
 from namioto import params
 from namioto.analysis.choices import CHANNEL_MODES
 from namioto.channels import CHANNEL_COUNT, Channel, valid_color
-from namioto.karaoke.operations import MAPPING_VERSION, Drop, Match, Merge, Operation, SoundRef
-from namioto.lyric_colors import DEFAULT_COLORS
 from namioto.params import Field, Section
 from namioto.tempo_map import TempoMap
 from namioto.utils import write_json
@@ -42,18 +36,9 @@ FORMAT = "namioto"
 VERSION = 2
 SUFFIX = ".nto"
 NOTE_DECIMALS = 4
-LYRIC_MODES = ("edit", "read")
 DIVISIONS = ("beats", "seconds")
 
 PROJECT_SECTIONS: tuple[Section, ...] = (
-    Section(
-        "lyric_colors",
-        "Lyric colours",
-        tuple(
-            Field(f"channel_{number}", "text", color, f"Channel {number}")
-            for number, color in enumerate(DEFAULT_COLORS)
-        ),
-    ),
     Section(
         "analysis",
         "Analysis",
@@ -299,10 +284,6 @@ def settings_from_dict(data: Any) -> ProjectSettings:
     for section in PROJECT_SECTIONS:
         for name, value in params.coerce_values(section.fields, data.get(section.name)).items():
             setattr(getattr(settings, section.name), name, value)
-    for number, default in enumerate(DEFAULT_COLORS):
-        name = f"channel_{number}"
-        color = valid_color(getattr(settings.lyric_colors, name))
-        setattr(settings.lyric_colors, name, color or default)
     return settings
 
 
@@ -316,43 +297,15 @@ def to_settings_dict(settings: ProjectSettings) -> dict[str, dict]:
 
 class Note(NamedTuple):
     """A note as the file holds it: when it starts and how long it lasts in seconds, its pitch, the
-    MIDI channel it plays on, and the stable id a saved mapping names it by (0 for an old file)."""
+    MIDI channel it plays on, the word sung on it, and the stable id a saved mapping names it by
+    (0 for an old file)."""
 
     start: float
     duration: float
     pitch: int
     channel: int = 0
     id: int = 0
-
-
-class Lyrics(NamedTuple):
-    """The authoritative lyric text and auxiliary alignment evidence.
-
-    The text is the source of truth; the times stored beside it are derived from it.
-    `key` is the hash of the text the times were made from, so a changed text invalidates them;
-    `raw` holds one `(onset, raw_length)` in seconds per Sound, `None` where none was found; `scores`
-    holds the aligner's own score per sound beside it; `flagged` holds one bool per line, true where
-    the aligner itself doubted the times it made; `problems` holds the aligner's line-level
-    complaints. KRC channel wrappers name each Sound's MIDI channel.
-    `mode`, `operations`, `version` and `use_constraints` are retained only for legacy migration.
-    """
-
-    text: str = ""
-    key: str = ""
-    model: str = ""
-    mode: str = "read"
-    raw: tuple[tuple[tuple[float | None, float | None], ...], ...] = ()
-    flagged: tuple[bool, ...] = ()
-    scores: tuple[tuple[float | None, ...], ...] = ()
-    problems: tuple[tuple[str, ...], ...] = ()
-    operations: tuple = ()
-    version: int = MAPPING_VERSION
-    use_constraints: bool = False
-
-
-def text_key(text: str) -> str:
-    """A short key for the project's lyric text, so the times stored beside it can tell when it changed."""
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+    lyric: str = ""
 
 
 @dataclass(frozen=True)
@@ -362,7 +315,6 @@ class Project:
     channels: tuple[Channel, ...] = ()
     notes: tuple[Note, ...] = ()
     next_id: int = 1
-    lyrics: Lyrics | None = None
     # the beat grid's tempo over the song; `settings.tempo.bpm` mirrors its first point
     tempo_map: TempoMap = field(default_factory=TempoMap)
 
@@ -420,85 +372,12 @@ def to_dict(project: Project) -> dict:
                 "pitch": note.pitch,
                 "channel": note.channel,
                 **({"id": note.id} if note.id else {}),
+                **({"lyric": note.lyric} if note.lyric else {}),
             }
             for note in project.notes
         ],
         "note_id": project.next_id,
-        "lyrics": _lyrics_dict(project.lyrics),
     }
-
-
-def _lyrics_dict(lyrics: Lyrics | None) -> dict | None:
-    if lyrics is None:
-        return None
-    return {
-        "text": lyrics.text,
-        "key": lyrics.key,
-        "model": lyrics.model,
-        "raw": [[list(sound) for sound in line] for line in lyrics.raw],
-        "scores": [list(row) for row in lyrics.scores],
-        "flagged": list(lyrics.flagged),
-        "problems": [list(row) for row in lyrics.problems],
-        **(
-            {
-                "mode": "edit",
-                "operations": [_operation_dict(operation) for operation in lyrics.operations],
-                "version": lyrics.version,
-                "use_constraints": lyrics.use_constraints,
-            }
-            if lyrics.mode == "edit"
-            else {}
-        ),
-    }
-
-
-def _operation_dict(operation: Operation) -> dict:
-    if isinstance(operation, Match):
-        return {
-            "kind": "match",
-            "sound": [operation.sound.line, operation.sound.index],
-            "notes": list(operation.notes),
-            "confirmed": operation.confirmed,
-        }
-    if isinstance(operation, Merge):
-        return {
-            "kind": "merge",
-            "sounds": [[ref.line, ref.index] for ref in operation.sounds],
-            "note": operation.note,
-            "confirmed": operation.confirmed,
-        }
-    return {
-        "kind": "drop",
-        "sound": [operation.sound.line, operation.sound.index],
-        "confirmed": operation.confirmed,
-    }
-
-
-def _operation(value: Any) -> Operation | None:
-    """One stored operation, or None when it is malformed; a confirmed one is never padded over."""
-    if not isinstance(value, dict):
-        return None
-    confirmed = value.get("confirmed") is True
-    try:
-        if value.get("kind") == "match":
-            ref = value["sound"]
-            return Match(SoundRef(int(ref[0]), int(ref[1])), tuple(int(note) for note in value["notes"]), confirmed)
-        if value.get("kind") == "merge":
-            refs = tuple(SoundRef(int(ref[0]), int(ref[1])) for ref in value["sounds"])
-            return Merge(refs, int(value["note"]), confirmed)
-        if value.get("kind") == "drop":
-            ref = value["sound"]
-            return Drop(SoundRef(int(ref[0]), int(ref[1])), confirmed)
-    except (TypeError, ValueError, IndexError, KeyError):
-        return None
-    return None
-
-
-def _operations(value: Any) -> tuple:
-    if not isinstance(value, list):
-        return ()
-    found = [_operation(entry) for entry in value]
-    return tuple(operation for operation in found if operation is not None)
 
 
 def _channel_dict(channel: Channel) -> dict:
@@ -533,6 +412,7 @@ def _note(entry: Any) -> Note | None:
     identifier = entry.get("id", 0)
     if isinstance(identifier, bool) or not isinstance(identifier, int) or identifier < 0:
         identifier = 0
+    lyric = entry.get("lyric", "")
     # a channel past the sixteen is a broken note, not a broken file: it plays on the last channel
     return Note(
         max(0.0, float(start)),
@@ -540,6 +420,7 @@ def _note(entry: Any) -> Note | None:
         int(round(pitch)),
         min(max(channel, 0), CHANNEL_COUNT - 1),
         identifier,
+        lyric.strip()[: params.TEXT_LIMIT] if isinstance(lyric, str) else "",
     )
 
 
@@ -595,83 +476,6 @@ def _notes(value: Any) -> tuple[Note, ...]:
     return tuple(notes)
 
 
-def _lyrics(value: Any) -> Lyrics | None:
-    if not isinstance(value, dict):
-        return None
-    key, raw = value.get("key"), value.get("raw")
-    model, text, mode = value.get("model"), value.get("text"), value.get("mode")
-    flagged = value.get("flagged")
-    if not isinstance(key, str) or not isinstance(raw, list):
-        return None
-    rows: list[tuple[tuple[float | None, float | None], ...]] = []
-    for line in raw:
-        if not isinstance(line, list):
-            return None
-        row = []
-        for span in line:
-            if span is None:
-                row.append((None, None))
-                continue
-            if not isinstance(span, list) or len(span) != 2:
-                return None
-            if any(
-                value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))) for value in span
-            ):
-                return None
-            if any(value is not None and not math.isfinite(value) for value in span):
-                return None
-            row.append((None if span[0] is None else float(span[0]), None if span[1] is None else float(span[1])))
-        rows.append(tuple(row))
-    return Lyrics(
-        text=text if isinstance(text, str) else "",
-        key=key,
-        model=model if isinstance(model, str) else "",
-        mode=mode if mode in LYRIC_MODES else ("edit" if "operations" in value else "read"),
-        raw=tuple(rows),
-        flagged=tuple(bool(flag) for flag in flagged) if isinstance(flagged, list) else (),
-        scores=_scores(value.get("scores")),
-        problems=_problems(value.get("problems")),
-        operations=_operations(value.get("operations")),
-        version=_version(value.get("version")),
-        use_constraints=value.get("use_constraints") is True,
-    )
-
-
-def _scores(value: Any) -> tuple[tuple[float | None, ...], ...]:
-    if not isinstance(value, list):
-        return ()
-    rows: list[tuple[float | None, ...]] = []
-    for row in value:
-        if not isinstance(row, list):
-            return ()
-        found = []
-        for score in row:
-            bad = score is None or isinstance(score, bool) or not isinstance(score, (int, float))
-            if bad or not math.isfinite(score):
-                found.append(None)
-            else:
-                found.append(float(score))
-        rows.append(tuple(found))
-    return tuple(rows)
-
-
-def _problems(value: Any) -> tuple[tuple[str, ...], ...]:
-    if not isinstance(value, list):
-        return ()
-    rows: list[tuple[str, ...]] = []
-    for row in value:
-        if not isinstance(row, list):
-            return ()
-        rows.append(tuple(str(problem) for problem in row))
-    return tuple(rows)
-
-
-def _version(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return MAPPING_VERSION
-    return value
-
-
 def from_dict(data: Any) -> Project:
     """Read a project out of a parsed file, with every value checked the way the settings are."""
     if not isinstance(data, dict) or data.get("format") != FORMAT:
@@ -684,10 +488,6 @@ def from_dict(data: Any) -> Project:
         filled = (*channels, *(Channel(channel=number) for number in missing))
         channels = tuple(sorted(filled, key=lambda channel: channel.channel))
     settings = settings_from_dict(data)
-    if "lyric_colors" not in data:
-        for channel in channels:
-            if channel.color:
-                setattr(settings.lyric_colors, f"channel_{channel.channel}", channel.color)
     pairs = data.get("tempo_map")
     tempo_map = TempoMap.from_pairs(pairs) if pairs else TempoMap.single(settings.tempo.bpm)
     settings.tempo.bpm = tempo_map.bpm
@@ -697,7 +497,6 @@ def from_dict(data: Any) -> Project:
         channels=channels,
         notes=notes,
         next_id=_next_id(data.get("note_id"), notes),
-        lyrics=_lyrics(data.get("lyrics")),
         tempo_map=tempo_map,
     )
 
