@@ -8,14 +8,11 @@ QWidget.grab() still renders, so pixel checks work.
 
 from __future__ import annotations
 
-import time
-
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 
-from namioto import project
 from namioto.analysis.spectrum import NOTE_COUNT, NoteSpectrum
 from namioto.channels import Channel
 from namioto.ui.controls import Cluster

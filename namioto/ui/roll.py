@@ -566,8 +566,7 @@ class PianoRollView(QGraphicsView):
         return _RollState(
             channels=tuple(self.channels),
             notes=tuple(
-                (note.pitch, note.start, note.duration, note.channel, note.id, note.note.lyric)
-                for note in self.notes()
+                (note.pitch, note.start, note.duration, note.channel, note.id, note.note.lyric) for note in self.notes()
             ),
             selected=frozenset(index for index, item in enumerate(self._items) if item.isSelected()),
             active_channel=self.active_channel,
@@ -620,7 +619,6 @@ class PianoRollView(QGraphicsView):
         """
         if self._gesture_before is None:
             return
-        before = self._gesture_before
         self._gesture_before = None
         self._gesture_text = ""
         gesture, self._gesture = self._gesture, None
@@ -700,9 +698,7 @@ class PianoRollView(QGraphicsView):
                 note.lyric_text = text
                 note.update()
             warning = (
-                tr("Overlapping note: move, shorten or remove it before aligning the lyrics.")
-                if note.filtered
-                else ""
+                tr("Overlapping note: move, shorten or remove it before aligning the lyrics.") if note.filtered else ""
             )
             tooltip = "\n".join(part for part in (text, warning) if part)
             if note.toolTip() != tooltip:

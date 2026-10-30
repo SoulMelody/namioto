@@ -102,14 +102,10 @@ class Aligner(LoadingThread):
             align.fetch_fp16(directory, self.provider, self.model, progress=self._downloading)
             backend = align.OnnxBackend(align.model_file(directory, self.provider), provider=self.provider)
             if self.chunk == "off":
-                self.message.emit(
-                    tr("Aligning over {seconds:.1f}s of audio in one pass\u2026", seconds=seconds)
-                )
+                self.message.emit(tr("Aligning over {seconds:.1f}s of audio in one pass\u2026", seconds=seconds))
             else:
                 backend = align.ChunkedBackend(backend, silence=self.chunk == "silence", progress=self.progress.emit)
-                self.message.emit(
-                    tr("Aligning over {seconds:.1f}s of audio in chunks\u2026", seconds=seconds)
-                )
+                self.message.emit(tr("Aligning over {seconds:.1f}s of audio in chunks\u2026", seconds=seconds))
             emission = align.whole_emissions(backend, audio)
             with suppress(OSError):
                 align.save_emissions(self.path, self.model, self.provider, self.chunk, emission)
@@ -236,9 +232,7 @@ class AlignDialog(QDialog):
         if cells:
             step = 60.0 / max(self.tempo, 1.0) / cells
             spans = [
-                (None, None)
-                if start is None
-                else (round((start - self.offset) / step) * step + self.offset, end)
+                (None, None) if start is None else (round((start - self.offset) / step) * step + self.offset, end)
                 for start, end in spans
             ]
         self._thread = None

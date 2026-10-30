@@ -26,7 +26,7 @@ import argparse
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
 )
 
 from namioto import i18n, ipc, midi, params, project, qtplugins
+from namioto import lyrics as words
 from namioto import settings as store
 from namioto import state as window_state
 from namioto.analysis import bpm, harmonic
@@ -64,7 +65,6 @@ from namioto.analysis.spectrum import CHANNEL_MODES, NoteSpectrum
 from namioto.channels import Channel, free_channel
 from namioto.channels import audible as audible_channels
 from namioto.channels import set_field as channel_set_field
-from namioto import lyrics as words
 from namioto.playback import note_frequency
 from namioto.tempo_map import TempoMap
 from namioto.ui import theme
@@ -1316,21 +1316,6 @@ class MainWindow(QMainWindow):
             i18n.tr("GAME found {notes} notes on channel {channel}", notes=len(arriving), channel=0)
         )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     def _target_notes(self, channel: int = 0) -> list[tuple[float, float, int, int]]:
         """One channel's notes in seconds, ordered by time then pitch then stable id."""
         return list(self._notes_by_channel((channel,))[channel])
@@ -1343,19 +1328,6 @@ class MainWindow(QMainWindow):
                     (self.view.to_seconds(note.start), self.view.to_seconds(note.end), note.pitch, note.id)
                 )
         return {channel: tuple(sorted(notes)) for channel, notes in found.items()}
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def _open_audio(self, target: Path | None) -> str:
         """Load the audio a project names, or say why there is none: its notes are worth having either way."""
@@ -1505,7 +1477,6 @@ class MainWindow(QMainWindow):
         self._send_program()
         if playing:
             self.player.play(position)
-
 
     def _on_channels_changed(self, *_args) -> None:
         """A channel edit is a document change, and a mute or instrument lands in the running sound."""

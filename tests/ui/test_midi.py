@@ -342,10 +342,6 @@ def test_the_command_line_analysis_values_start_the_dialog_and_stop_there(own_wi
     assert own_window.project_settings.analysis.channels == "left"
 
 
-
-
-
-
 def test_the_command_line_takes_audio_and_projects_but_not_a_midi_alone(qt_app, monkeypatch, tmp_path) -> None:
     fake_loaders(monkeypatch)
     audio = tmp_path / "clip.flac"

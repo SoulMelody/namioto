@@ -15,10 +15,9 @@ import time
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from namioto import ipc
-from namioto.channels import Channel
-from namioto import midi
+from namioto import ipc, midi
 from namioto import settings as store
+from namioto.channels import Channel
 from namioto.ui.app import MainWindow
 
 TIMEOUT = 5.0

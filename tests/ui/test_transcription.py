@@ -6,7 +6,6 @@ import queue
 import pytest
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QToolButton
 
-from namioto import midi, project
 from namioto.analysis import devices, transcription
 from namioto.channels import Channel
 from namioto.ui.transcription_dialog import TranscriptionDialog
@@ -307,8 +306,6 @@ def test_the_window_is_pinned_to_its_content(own_window) -> None:
 
     assert dialog.size().height() > collapsed
     assert dialog.minimumSize() == dialog.maximumSize() == dialog.size()
-
-
 
 
 def test_transcription_creates_channel_zero_when_missing(own_window) -> None:

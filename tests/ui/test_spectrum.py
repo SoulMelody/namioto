@@ -359,4 +359,3 @@ def test_note_visual_sync_repaints_only_changed_lyrics_or_colours(own_window, mo
     assert calls == [True]
     view._sync_channel_visuals()
     assert calls == [True]
-

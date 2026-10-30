@@ -167,14 +167,6 @@ def test_notes_that_are_not_a_list_leave_an_empty_project() -> None:
     assert project.from_dict({"format": "namioto", "notes": "lots"}).notes == ()
 
 
-
-
-
-
-
-
-
-
 def test_the_audio_is_stored_beside_the_project_when_it_can_be(tmp_path) -> None:
     (tmp_path / "song.wav").write_bytes(b"")
     assert project.store_audio(tmp_path / "song.nto", tmp_path / "song.wav") == "song.wav"
@@ -302,12 +294,6 @@ def test_a_next_id_that_would_reuse_a_taken_one_is_pushed_past_it() -> None:
         "notes": [{"start": 1.0, "duration": 1.0, "pitch": 60, "id": 5}],
     }
     assert project.from_dict(data).next_id == 6
-
-
-
-
-
-
 
 
 def test_a_single_tempo_project_writes_no_map(tmp_path) -> None:
