@@ -27,6 +27,7 @@ from .helpers import (
     device_point,
     draw_note,
     fake_loaders,
+    focus,
     make_spectrum,
     roll_mouse,
     ruler_click,
@@ -504,7 +505,7 @@ def test_the_tempo_suggestion_floats_without_widening_the_bar(window) -> None:
 
 def test_the_tempo_suggestion_does_not_take_the_keyboard(window) -> None:
     suggestion = window.transport.suggestion
-    QApplication.setActiveWindow(window)
+    focus(window)
     window.view.setFocus()
     window._on_tempo_loaded(window._audio_generation, fake_estimate())
 

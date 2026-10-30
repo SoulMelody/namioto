@@ -11,7 +11,7 @@ from namioto.channels import Channel
 from namioto.interaction import Tool
 from namioto.ui.roll import PITCH_MAX
 
-from .helpers import FakeOutput, draw_note, reset_channels, roll_mouse, roll_mouse_here, wheel
+from .helpers import FakeOutput, draw_note, focus, reset_channels, roll_mouse, roll_mouse_here, wheel
 
 
 def roll_context_menu(window, scene_pos: QPointF) -> None:
@@ -737,7 +737,7 @@ def test_ctrl_d_deletes_the_selection(window) -> None:
     draw_note(window, QPointF(2.0, 40.0), QPointF(3.0, 40.0))
     assert len(window.view.notes()) == 1
 
-    QApplication.setActiveWindow(window)  # an offscreen window is never active on its own
+    focus(window)  # an offscreen window is never active on its own
     QTest.keyClick(window, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
     assert window.view.notes() == []
 
@@ -751,7 +751,7 @@ def test_the_roll_shortcuts_need_the_roll(window) -> None:
     window.view.set_channels((Channel(channel=0),))
     window.view.clear_notes()
     window.view.add_note(60, 2.0, 1.0).setSelected(True)
-    QApplication.setActiveWindow(window)
+    focus(window)
 
     window.transport.bpm.setFocus()
     QTest.keyClick(window.transport.bpm, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)

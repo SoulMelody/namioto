@@ -13,7 +13,7 @@ from namioto.interaction import Interaction, Tool
 from namioto.ui.controls import EditBar
 from namioto.ui.roll import PITCH_MAX, SNAP_CHOICES, PianoRollView
 
-from .helpers import draw_note, roll_mouse
+from .helpers import draw_note, focus, roll_mouse
 
 
 def test_copy_and_paste_drops_the_selection_at_the_playhead() -> None:
@@ -212,7 +212,7 @@ def test_ctrl_c_and_ctrl_v_carry_the_selection(window) -> None:
     window.view.add_note(69, 2.0, 1.0).setSelected(True)
     window.view.set_playhead(2.0)  # four beats at 120 BPM
 
-    QApplication.setActiveWindow(window)  # an offscreen window is never active on its own
+    focus(window)  # an offscreen window is never active on its own
     QTest.keyClick(window, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
     QTest.keyClick(window, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
     assert [(note.pitch, note.start) for note in window.view.notes()] == [(69, 2.0), (69, 4.0)]
@@ -306,7 +306,7 @@ def test_ctrl_z_and_ctrl_shift_z_drive_the_history(window) -> None:
     window.view.undo_stack.clear()
     draw_note(window, QPointF(2.0, 40.0), QPointF(3.0, 40.0))
 
-    QApplication.setActiveWindow(window)  # an offscreen window is never active on its own
+    focus(window)  # an offscreen window is never active on its own
     QTest.keyClick(window, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     assert window.view.notes() == []
     QTest.keyClick(window, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)

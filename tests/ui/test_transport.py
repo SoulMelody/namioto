@@ -5,12 +5,11 @@ import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
 
 from namioto.ui import theme
 from namioto.ui.roll import PITCH_MAX, PianoRollView
 
-from .helpers import FakeOutput, device_point, make_spectrum, pixel_at, roll_mouse, ruler_click
+from .helpers import FakeOutput, device_point, focus, make_spectrum, pixel_at, roll_mouse, ruler_click
 
 
 def test_hover_marks_the_row_and_its_overtones(window) -> None:
@@ -327,7 +326,7 @@ def test_space_plays_and_pauses(window, monkeypatch) -> None:
     monkeypatch.setattr(window, "player", fake)
     window.view.clear_notes()
     window.view.add_note(69, 0.0, 2.0)
-    QApplication.setActiveWindow(window)  # an offscreen window is never active on its own
+    focus(window)  # an offscreen window is never active on its own
 
     QTest.keyClick(window, Qt.Key.Key_Space)
     assert fake.is_playing

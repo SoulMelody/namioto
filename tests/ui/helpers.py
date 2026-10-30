@@ -2,7 +2,7 @@
 """Shared UI gestures and fakes.
 
 Offscreen, QTest.mouseMove delivers nothing, so send events to the handlers instead.
-Shortcuts need QApplication.setActiveWindow(window) and keys sent to window.view.
+Shortcuts need the window to be the active one - `focus(window)` - and keys sent to window.view.
 QWidget.grab() still renders, so pixel checks work.
 """
 
@@ -21,6 +21,13 @@ from namioto.channels import Channel
 from namioto.project import text_key
 from namioto.ui.controls import Cluster
 from namioto.ui.roll import PianoRollView
+
+
+def focus(window) -> None:
+    """Make the window the active one, so its shortcuts hear the keys a test sends: an offscreen
+    window is never active on its own."""
+    window.activateWindow()
+    QApplication.processEvents()
 
 
 def wheel(widget, notches: int) -> None:
