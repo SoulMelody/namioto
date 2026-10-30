@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.14'
+          enable-cache: true
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 fonts-noto-cjk
+      - run: uv sync --locked --extra cpu
+      - run: uvx ruff check namioto tests scripts/package_release.py
+      - run: uv run --no-sync pytest
+
+  build:
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.14'
+          enable-cache: true
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 desktop-file-utils
+      - name: Build frozen application
+        run: bash build.sh app
+      - name: Package Linux AppImage
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download 1.9.1 --repo AppImage/appimagetool --pattern appimagetool-x86_64.AppImage --dir build
+          chmod +x build/appimagetool-x86_64.AppImage
+          python3 scripts/package_release.py appimage --appimagetool build/appimagetool-x86_64.AppImage
+      - name: Upload Linux package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: namioto-Linux-x86_64
+          path: dist/release/namioto-linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Windows application
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: namioto-Windows-x86_64
+          path: dist/namioto
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: namioto-*-x86_64
+          path: artifacts
+      - name: Assemble release assets
+        run: |
+          mkdir -p release
+          cp artifacts/namioto-Linux-x86_64/namioto-linux-x86_64.AppImage release/
+          python3 scripts/package_release.py windows --app artifacts/namioto-Windows-x86_64 --output release
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd release
+          sha256sum ./*.AppImage ./*.zip > SHA256SUMS
+          gh release create "$RELEASE_TAG" ./* --verify-tag --draft --generate-notes --title "$RELEASE_TAG"

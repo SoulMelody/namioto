@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Namioto
+Comment=Spectrum-assisted MIDI and karaoke editor
+Exec=namioto %F
+Icon=namioto
+Categories=AudioVideo;Audio;Midi;
+Terminal=false

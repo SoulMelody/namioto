@@ -45,6 +45,41 @@ for the enforced boundaries.
 Neither wheels nor frozen builds bundle analysis models. Model publishing uses
 `scripts/upload_models.sh`; preserve each model's license and attribution in [NOTICE](../NOTICE).
 
+### GitHub Actions and releases
+
+The CI workflow runs lint and the default headless tests on Ubuntu 24.04 for pull requests,
+main-branch commits, version tags and manual runs. Slow tests are excluded.
+
+Every run builds the CPU-only GUI on Ubuntu 24.04 x86_64 and Windows x64 after checks pass,
+and uploads it as an Actions artifact: the AppImage for Linux, the frozen application directory
+for Windows (extract the downloaded artifact and run `namioto.exe`). Only a `v*` tag push creates
+a GitHub Release **draft** containing:
+
+- `namioto-linux-x86_64.AppImage`
+- `namioto-windows-x86_64.zip` (extract the entire archive and run `namioto/namioto.exe`)
+- `SHA256SUMS`
+
+Review the draft and manually test the applications before publishing. The workflow verifies
+build/package success, not application startup, desktop interaction or audio-device operation.
+Windows builds are unsigned and may trigger SmartScreen. Linux builds target Ubuntu 24.04 and
+newer compatible systems; older glibc distributions such as Ubuntu 22.04 are not supported.
+AppImage execution normally requires FUSE; where unavailable, use its
+`--appimage-extract-and-run` option.
+
+No wheel, sdist or separate CLI package is published by this workflow. Both applications keep
+settings and downloaded models in the normal user directories, not beside the executable.
+
+To package locally, first run `bash build.sh app`, then:
+
+```bash
+# Linux: download appimagetool 1.9.1 for x86_64 and make it executable first
+python3 scripts/package_release.py appimage --appimagetool /path/to/appimagetool-x86_64.AppImage
+# Windows: zip the frozen application
+python3 scripts/package_release.py windows
+```
+
+Packages are written to `dist/release/`.
+
 ## Model conversion
 
 The aligner runs converted ONNX models; conversion requires dependencies outside the normal

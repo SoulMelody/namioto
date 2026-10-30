@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec "$(dirname "$(readlink -f "$0")")/namioto/namioto" "$@"
