@@ -269,24 +269,45 @@ def test_keyboard_rows_line_up_with_the_roll(window) -> None:
     assert [y + offset for y in white_keys] == white_rows
 
 
-def test_the_black_keys_span_the_whole_keyboard(window) -> None:
+def _assert_black_keys_span_the_keyboard(window) -> None:
+    """Every black key on screen is one solid colour across the keyboard's whole width."""
     window.view.set_hover_pitch(None)
     keyboard = window.keyboard
     image = keyboard.grab().toImage()
     origin = keyboard.origin().y()
+    # The keys are clipped to the viewport, which is shorter than the keyboard by the horizontal
+    # scrollbar's height, so a row that fits the image can still have its middle outside the clip
+    # and read the panel colour instead of the key's. Only rows the painter actually drew are sampled.
+    visible = origin + window.view.viewport().height()
     for pitch in range(PITCH_MIN, PITCH_MAX + 1):
         if not is_black_key(pitch):
             continue
         row = PITCH_MAX - pitch
         top = origin + window.view.mapFromScene(QPointF(0.0, float(row))).y()
         bottom = origin + window.view.mapFromScene(QPointF(0.0, float(row) + 1.0)).y()
-        if top < 0 or bottom > image.height():
+        if top < origin or bottom > visible:
             continue
         y = (top + bottom) // 2
         black = theme.CANVAS["light"].key_black
         assert all(image.pixelColor(x, y) == black for x in range(keyboard.width()))
         return
     raise AssertionError("no black key is fully on screen")
+
+
+def test_the_black_keys_span_the_whole_keyboard(window) -> None:
+    _assert_black_keys_span_the_keyboard(window)
+
+
+@pytest.mark.parametrize("height", (720, 736, 744, 751))
+def test_the_black_keys_survive_every_scrollbar_phase(own_window, height) -> None:
+    """The horizontal scrollbar makes the viewport 16 px shorter than the keyboard, and where a row
+    falls in that band changes with the window's height. Every phase must still be drawn, so this
+    walks the heights that put a black key's middle just past the clip.
+    """
+    own_window.resize(1200, height)
+    own_window.show()
+    QApplication.processEvents()
+    _assert_black_keys_span_the_keyboard(own_window)
 
 
 def test_the_division_button_flips_between_beats_and_seconds(window) -> None:
