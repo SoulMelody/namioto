@@ -191,6 +191,25 @@ class FakeSong:
         self.position = seconds
         self.calls.append("seek")
 
+    def close(self) -> None:
+        self.is_playing = False
+        self.calls.append("close")
+
+
+def test_midi_is_prepared_with_the_delay_before_playing(window, monkeypatch) -> None:
+    song, notes = FakeSong(), FakeOutput()
+    monkeypatch.setattr(window, "song", song)
+    monkeypatch.setattr(window, "player", notes)
+    window.view.clear_notes()
+    window.view.add_note(69, 0.0, 1.0)
+    monkeypatch.setattr(window.settings.midi, "playback_delay_ms", -125)
+
+    window._play()
+
+    assert notes.delay_ms == -125  # the synth is told how early to send, before the transport starts
+    window._stop()
+    window.view.clear_notes()
+
 
 def test_a_speed_change_reaches_the_notes_while_they_play(window, monkeypatch) -> None:
     song, notes = FakeSong(), FakeOutput()

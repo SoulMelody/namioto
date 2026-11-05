@@ -56,13 +56,19 @@ def test_applying_the_settings_window_reaches_the_window_and_the_file(own_window
     dialog.applied.connect(own_window.settings_store.apply)  # the window wires this up when it opens it
     row_writer(dialog, "tempo", "window_seconds")(20.0)
     row_writer(dialog, "midi", "wavetone")(False)
+    row_writer(dialog, "midi", "playback_delay_ms")(-125)
     dialog.apply()
 
     assert own_window.settings.tempo.window_seconds == 20.0
     assert own_window.settings.midi.wavetone is False
+    assert own_window.settings.midi.playback_delay_ms == -125
+    assert own_window.player.delay_ms == -125
     saved = json.loads(store.default_path().read_text())
     assert saved["tempo"]["window_seconds"] == 20.0
     assert saved["midi"]["wavetone"] is False
+    assert saved["midi"]["playback_delay_ms"] == -125
+    own_window._rebuild_player()  # a player built again takes the delay with it
+    assert own_window.player.delay_ms == -125
     dialog.close()
 
 
@@ -107,11 +113,14 @@ def test_restoring_defaults_puts_every_widget_back(own_window) -> None:
     dialog = SettingsDialog(own_window.settings, parent=own_window)
     row_writer(dialog, "tempo", "window_seconds")(8.0)
     row_writer(dialog, "midi", "wavetone")(False)
+    row_writer(dialog, "midi", "playback_delay_ms")(-125)
     assert store.get_value(dialog.values(), "midi", "wavetone") is False
+    assert store.get_value(dialog.values(), "midi", "playback_delay_ms") == -125
 
     dialog.restore_defaults()
     values = dialog.values()
     assert store.get_value(values, "midi", "wavetone") is True
+    assert store.get_value(values, "midi", "playback_delay_ms") == 0
     assert store.get_value(values, "tempo", "window_seconds") == 12.0
     dialog.close()
 

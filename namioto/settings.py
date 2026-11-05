@@ -150,6 +150,17 @@ SECTIONS: tuple[Section, ...] = (
         "MIDI",
         (
             Field(
+                "playback_delay_ms",
+                "int",
+                0,
+                "MIDI playback delay (ms)",
+                "Negative sends MIDI early; positive sends it late. Mouse previews cannot play early. "
+                "Changes take effect on the next playback or seek.",
+                low=-1000,
+                high=1000,
+                step=1,
+            ),
+            Field(
                 "wavetone",
                 "bool",
                 True,

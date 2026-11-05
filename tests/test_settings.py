@@ -29,6 +29,25 @@ def test_missing_file_gives_the_defaults(settings_file) -> None:
     assert store.get_value(loaded, "midi", "wavetone") is True
 
 
+def test_the_midi_playback_delay_starts_at_zero(settings_file) -> None:
+    loaded = store.load()
+    assert store.get_value(loaded, "midi", "playback_delay_ms") == 0
+
+
+def test_the_midi_playback_delay_round_trips(settings_file) -> None:
+    for milliseconds in (-1000, -125, 0, 125, 1000):
+        settings = store.Settings()
+        store.set_value(settings, "midi", "playback_delay_ms", milliseconds)
+        store.save(settings)
+        assert store.get_value(store.load(), "midi", "playback_delay_ms") == milliseconds
+
+
+@pytest.mark.parametrize("written, kept", [(-2000, -1000), (2000, 1000), (True, 0), ("100", 0), (None, 0)])
+def test_a_bad_midi_playback_delay_is_brought_back(settings_file, written, kept) -> None:
+    settings_file.write_text(json.dumps({"midi": {"playback_delay_ms": written}}))
+    assert store.get_value(store.load(), "midi", "playback_delay_ms") == kept
+
+
 def test_the_default_path_is_the_config_directory(monkeypatch) -> None:
     monkeypatch.delenv("NAMIOTO_SETTINGS", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/namioto-config-probe")

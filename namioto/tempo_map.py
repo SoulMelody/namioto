@@ -156,6 +156,4 @@ class TempoMap:
         ratio = max(MIN_BPM, float(bpm)) / self.bpm
         if ratio == 1.0:
             return self
-        return TempoMap(
-            tuple(TempoPoint(point.beat * ratio, point.bpm * ratio) for point in self.points)
-        )
+        return TempoMap(tuple(TempoPoint(point.beat * ratio, point.bpm * ratio) for point in self.points))

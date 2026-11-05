@@ -119,6 +119,7 @@ class FakeOutput:
 
     def __init__(self) -> None:
         self.gain = 1.0
+        self.delay_ms = 0
         self.duration = 0.0
         self.position = 0.0
         self.is_playing = False

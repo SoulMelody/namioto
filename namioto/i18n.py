@@ -114,6 +114,9 @@ CATALOGS: dict[str, dict[str, str]] = {
         "Audio volume": "音频音量",
         "Starting volume of the analysed audio": "被分析音频的初始音量",
         "MIDI volume": "MIDI 音量",
+        "MIDI playback delay (ms)": "MIDI 播放延迟（ms）",
+        "Negative sends MIDI early; positive sends it late. Mouse previews cannot play early. "
+        "Changes take effect on the next playback or seek.": "负值提前发送 MIDI，正值延后发送。鼠标试听无法提前。修改后在下次播放或跳转时生效。",
         "Starting volume of the note playback": "音符播放的初始音量",
         "Grid offset (ms)": "网格偏移（ms）",
         "Shifts the drawn grid lines by this many ms; - left, + right, playback untouched": "按毫秒平移绘制出的网格线（- 向左，+ 向右），不影响播放",

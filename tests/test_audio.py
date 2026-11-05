@@ -173,3 +173,126 @@ def test_without_midi_output_playback_and_preview_stay_silent(monkeypatch, unava
     assert player.position == 0.5
     player.stop()
     assert player.position == 0.0
+
+
+def offsets(events) -> list[float]:
+    return [round(event[0], 6) for event in events]
+
+
+def test_a_positive_delay_pushes_the_whole_timeline_later() -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.set_program([(60, 0.0, 0.5, 0), (62, 1.0, 0.5, 0)], 1.0)
+
+    player.play(0.0)
+    plain = offsets(player._timeline())
+
+    player.delay_ms = 500
+    player.play(0.0)
+    delayed = offsets(player._timeline())
+
+    assert plain == [0.0, 0.5, 1.0, 1.5]
+    assert delayed == [0.5, 1.0, 1.5, 2.0]  # every event moved by exactly the delay
+    player.stop()
+
+
+def test_a_negative_delay_moves_the_cursor_forward_and_drops_what_it_passed() -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.set_program(
+        [
+            (59, 9.9, 0.2, 0),  # ends before the shifted cursor: dropped outright
+            (60, 9.95, 0.2, 0),  # these three start left of the cursor: never struck again
+            (61, 9.98, 0.2, 0),
+            (62, 9.99, 0.2, 0),
+            (63, 10.5, 0.7, 0),
+            (64, 10.75, 0.15, 0),
+            (65, 11.0, 0.1, 0),
+        ],
+        1.0,
+    )
+    player.delay_ms = -500
+    player.play(10.0)
+
+    events = player._timeline()
+    assert offsets(events) == [0.0, 0.25, 0.4, 0.5, 0.6, 0.7]
+    assert [event[1] for event in events] == [NOTE_ON, NOTE_ON, NOTE_OFF, NOTE_ON, NOTE_OFF, NOTE_OFF]
+    assert [event[2] for event in events] == [63, 64, 64, 65, 65, 63]
+    player.stop()
+
+
+@pytest.mark.parametrize("milliseconds", [-500, 0, 500])
+def test_a_note_left_of_the_cursor_is_never_struck_again(milliseconds) -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.set_program([(60, 0.0, 3.0, 0), (62, 1.0, 2.0, 0)], 1.0)
+    player.delay_ms = milliseconds
+    player.play(1.0)
+
+    first_on = next(event for event in player._timeline() if event[1] == NOTE_ON)
+    assert first_on[2] == 62  # 60 began before the cursor, and a delay must not bring it back
+    player.stop()
+
+
+def test_a_positive_delay_holds_a_preview_before_it_sounds(pump) -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.delay_ms = 200
+
+    player.preview(60, 0.15)
+    assert note_messages(port) == []  # the note waits for the delay
+
+    pump(0.4)
+    assert note_messages(port) == [[NOTE_ON, 60, VELOCITY], [NOTE_OFF, 60, 0]]
+
+
+def test_a_negative_delay_does_not_make_a_preview_sound_early() -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.delay_ms = -500
+
+    player.preview(60, 0.15)
+    assert note_messages(port)[0] == [NOTE_ON, 60, VELOCITY]  # a mouse click cannot play ahead of itself
+    player.stop()
+
+
+def test_stopping_cancels_a_preview_that_is_still_waiting(pump) -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.delay_ms = 500
+
+    player.preview(60, 0.15)
+    player.stop()
+
+    pump(0.8)
+    assert note_messages(port) == []  # nothing was ever struck, so nothing is owed a note-off
+
+
+def test_clicking_a_waiting_preview_again_starts_it_once(pump) -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.delay_ms = 100
+
+    player.preview(60, 0.3)
+    player.preview(60, 0.3)  # the second click replaces the wait rather than layering a note
+    pump(0.6)
+
+    assert note_messages(port) == [[NOTE_ON, 60, VELOCITY], [NOTE_OFF, 60, 0]]
+
+
+def test_clicking_a_sounding_preview_again_releases_it_first(pump) -> None:
+    port = FakePort()
+    player = MidiPortOut(port)
+    player.delay_ms = 100
+
+    player.preview(60, 0.3)
+    pump(0.2)  # the delay has passed, so the note is sounding
+    player.preview(60, 0.3)
+    pump(0.6)
+
+    assert note_messages(port) == [
+        [NOTE_ON, 60, VELOCITY],
+        [NOTE_OFF, 60, 0],  # a synth still holding the note only layers a second one
+        [NOTE_ON, 60, VELOCITY],
+        [NOTE_OFF, 60, 0],
+    ]

@@ -82,9 +82,7 @@ def report(cases: list[tuple[str, str, float, int, str]], runner) -> None:
 
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] != "--child":
-        cases = [
-            (sys.argv[1], "mono", 40.0, 8192, backend) for backend in ("wavetone", "notedigger", "cqt")
-        ]
+        cases = [(sys.argv[1], "mono", 40.0, 8192, backend) for backend in ("wavetone", "notedigger", "cqt")]
         report(cases, run_case)
         return 0
 

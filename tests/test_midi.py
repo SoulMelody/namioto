@@ -177,12 +177,7 @@ def test_a_tempo_map_is_written_as_several_tempo_events_and_read_back(tmp_path) 
     midi.write(path, (Channel(channel=0),), notes, tempo)
 
     written = mido.MidiFile(path)
-    changes = [
-        message
-        for track in written.tracks
-        for message in track
-        if message.type == "set_tempo"
-    ]
+    changes = [message for track in written.tracks for message in track if message.type == "set_tempo"]
     assert [round(mido.tempo2bpm(message.tempo)) for message in changes] == [120, 60]
 
     imported = midi.read(path)

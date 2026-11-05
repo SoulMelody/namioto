@@ -54,6 +54,7 @@ class NotePlayer(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.gain = 1.0
+        self.delay_ms = 0  # how far ahead or behind the sound runs; the silent player carries it too
 
     def set_program(self, notes, speed, channels=()) -> None:
         """Prepare the notes to play: `(pitch, start, duration[, channel])` in seconds, the
@@ -145,12 +146,14 @@ class MidiPortOut(NotePlayer):
         self.velocity = velocity
         self._notes: tuple[tuple[int, float, float, int], ...] = ()
         self._speed = 1.0
+        self._delay = 0.0
         self._start = 0.0
         self._started: float | None = None
         self._events: list[tuple[float, int, int, int]] = []  # (offset, status, pitch, channel), in order
         self._cursor = 0  # the first event still to be sent
         self._sounding: dict[tuple[int, int], int] = {}  # (channel, pitch) -> note-ons still owed an off
         self._previews: dict[int, QTimer] = {}
+        self._preview_sounding: set[int] = set()  # pitches a preview has actually struck
         self._tick = QTimer(self)
         self._tick.setInterval(SCHEDULER_TICK_MS)
         self._tick.timeout.connect(self._advance)
@@ -193,7 +196,7 @@ class MidiPortOut(NotePlayer):
     def position(self) -> float:
         if self._started is None:
             return self._start
-        return self._start + (time.monotonic() - self._started) * self._speed
+        return min(self.duration, self._start + (time.monotonic() - self._started) * self._speed)
 
     @property
     def is_playing(self) -> bool:
@@ -204,6 +207,7 @@ class MidiPortOut(NotePlayer):
         if not self._notes:
             return
         self._start = max(0.0, min(seconds, self.duration))
+        self._delay = self.delay_ms / 1000.0
         self._started = time.monotonic()
         self._events = self._timeline()
         self._cursor = 0
@@ -218,6 +222,7 @@ class MidiPortOut(NotePlayer):
         if self.is_playing:
             self.play(seconds)
         else:
+            self.stop()  # a preview waiting on the delay is no longer wanted once the cursor moves
             # the end of the program is not the end of the timeline: play() clamps when the sound starts
             self._start = max(0.0, seconds)
 
@@ -229,6 +234,9 @@ class MidiPortOut(NotePlayer):
             timer.stop()
             timer.deleteLater()
         self._previews.clear()
+        for pitch in tuple(self._preview_sounding):  # a preview that already struck its note is still held
+            self._send(NOTE_OFF, pitch, 0)
+        self._preview_sounding.clear()
         for (channel, pitch), count in tuple(self._sounding.items()):  # a synth keeps sounding until it is told to stop
             for _ in range(count):
                 self._send(NOTE_OFF, pitch, 0, channel)
@@ -244,13 +252,38 @@ class MidiPortOut(NotePlayer):
         if pending is not None:
             pending.stop()
             pending.deleteLater()
-            self._send(NOTE_OFF, pitch, 0)  # a synth still holding the note only layers a second one
-        self._send(NOTE_ON, pitch, self.velocity)
+        if pitch in self._preview_sounding:  # a synth still holding the note only layers a second one
+            self._preview_sounding.discard(pitch)
+            self._send(NOTE_OFF, pitch, 0)
+
+        def begin() -> None:
+            self._send(NOTE_ON, pitch, self.velocity)
+            self._preview_sounding.add(pitch)
+            release = QTimer(self)
+            release.setSingleShot(True)
+            release.setInterval(max(0, round(seconds * 1000)))
+            release.timeout.connect(partial(self._release_preview, pitch, release))
+            self._previews[pitch] = release
+            release.start()
+
+        delay = max(0.0, self.delay_ms / 1000.0)  # a preview can wait for the delay but never run ahead of it
+        if not delay:
+            begin()
+            return
 
         timer = QTimer(self)
         timer.setSingleShot(True)
-        timer.setInterval(max(0, round(seconds * 1000)))
-        timer.timeout.connect(partial(self._release_preview, pitch, timer))
+        timer.setInterval(round(delay * 1000))
+
+        def fire() -> None:
+            if self._previews.get(pitch) is not timer:  # a newer click owns the pitch by now
+                timer.deleteLater()
+                return
+            self._previews.pop(pitch, None)
+            timer.deleteLater()
+            begin()
+
+        timer.timeout.connect(fire)
         self._previews[pitch] = timer
         timer.start()
 
@@ -260,6 +293,7 @@ class MidiPortOut(NotePlayer):
             return
         self._previews.pop(pitch, None)
         timer.deleteLater()
+        self._preview_sounding.discard(pitch)
         self._send(NOTE_OFF, pitch, 0)
 
     def _timeline(self) -> list[tuple[float, int, int, int]]:
@@ -270,11 +304,12 @@ class MidiPortOut(NotePlayer):
         """
         events: list[tuple[float, int, int, int]] = []
         for pitch, start, duration, channel in self._notes:
-            if start + duration <= self._start:
+            end = (start + duration - self._start) / self._speed + self._delay
+            if start < self._start or end <= 0:  # a note the cursor has passed is never struck again
                 continue
-            begin = max(start, self._start)
-            events.append(((begin - self._start) / self._speed, NOTE_ON, pitch, channel))
-            events.append(((start + duration - self._start) / self._speed, NOTE_OFF, pitch, channel))
+            begin = max(0.0, (start - self._start) / self._speed + self._delay)
+            events.append((begin, NOTE_ON, pitch, channel))
+            events.append((end, NOTE_OFF, pitch, channel))
         return sorted(events, key=lambda event: (round(event[0], 6), event[1]))
 
     def _advance(self) -> None:
@@ -287,7 +322,8 @@ class MidiPortOut(NotePlayer):
             _offset, kind, pitch, channel = self._events[self._cursor]
             self._cursor += 1
             self._send(kind, pitch, self.velocity if kind == NOTE_ON else 0, channel)
-        if elapsed >= (self.duration - self._start) / self._speed:
+        # a negative delay never lets the run end sooner than the notes it still has to send
+        if elapsed >= (self.duration - self._start) / self._speed + max(0.0, self._delay):
             self._tick.stop()
             self._started = None
             self._start = self.duration

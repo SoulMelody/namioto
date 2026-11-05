@@ -339,9 +339,7 @@ def test_a_project_is_picked_up_from_the_command_line(qt_app, tmp_path) -> None:
 
 def test_a_new_project_needs_no_audio(own_window, tmp_path) -> None:
     own_window.view.set_notes([(60, 0.0, 1.0), (64, 2.0, 1.0)])
-    own_window.view.set_tempo(
-        TempoMap((TempoPoint(0.0, 120.0), TempoPoint(4.0, 60.0))), keep_notes=False
-    )
+    own_window.view.set_tempo(TempoMap((TempoPoint(0.0, 120.0), TempoPoint(4.0, 60.0))), keep_notes=False)
     own_window.project_dirty = False
 
     assert own_window.new_project() is True

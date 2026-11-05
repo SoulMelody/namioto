@@ -490,9 +490,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("audio", help="input audio file")
     parser.add_argument("--channels", choices=CHANNEL_MODES, default="mono", help="which channels to analyse")
     parser.add_argument("--t-num", type=float, default=40.0, help="analysis frames per second (default: 40)")
-    parser.add_argument(
-        "--backend", choices=BACKENDS, default="wavetone", help="spectrum backend (default: wavetone)"
-    )
+    parser.add_argument("--backend", choices=BACKENDS, default="wavetone", help="spectrum backend (default: wavetone)")
     parser.add_argument(
         "--fft-points", type=int, default=8192, help="noteDigger FFT size (default: 8192; ignored by wavetone)"
     )
