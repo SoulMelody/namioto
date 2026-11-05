@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from namioto.audio import Engine, Output, Stretcher
+from namioto.audio.eq import BAND_COUNT, EQ_BANDS
 
 SAMPLE_RATE = 48000
 TONE = 440.0
@@ -321,3 +322,112 @@ def test_without_a_device_the_transport_stays_silent_and_says_why(monkeypatch):
     assert output.error()
     assert output.duration == pytest.approx(1.0)  # the song stays loaded, it just cannot be heard
     output.close()
+
+
+def _reference(source: np.ndarray, frames: int, speed: float = 1.0) -> np.ndarray:
+    """What the engine heard before it had a pitch and a curve: the stretcher's own frames."""
+    stretcher = Stretcher(SAMPLE_RATE)
+    stretcher.load(source, 0.0)
+    return stretcher.pull(frames, speed)
+
+
+def _band_energy(samples: np.ndarray, centre: float, width: float = 0.2) -> float:
+    """The energy around `centre`, from an `rfft` of the whole array."""
+    spectrum = np.abs(np.fft.rfft(samples))
+    frequencies = np.fft.rfftfreq(len(samples), 1 / SAMPLE_RATE)
+    mask = (frequencies >= centre * (1.0 - width)) & (frequencies <= centre * (1.0 + width))
+    return float(np.sum(spectrum[mask] ** 2))
+
+
+def test_a_zero_shift_and_a_flat_curve_leave_the_output_sample_for_sample():
+    """The guard the whole wiring hangs on: a player who moved nothing must hear nothing new."""
+    source = _tone(TONE, 2.0)
+    engine = Engine(SAMPLE_RATE, pitch_semitones=0.0, eq_bands=(0.0,) * BAND_COUNT)
+    engine.load(source)
+    engine.play(0.0)
+
+    heard = engine.pull(SAMPLE_RATE // 2)
+    reference = _reference(source, SAMPLE_RATE // 2)
+
+    assert heard.dtype == reference.dtype
+    assert float(np.max(np.abs(heard - reference))) == 0.0
+
+
+def test_twelve_semitones_double_the_pitch_of_the_played_song():
+    engine = Engine(SAMPLE_RATE, pitch_semitones=12.0)
+    engine.load(_tone(TONE, 2.0))
+    engine.play(0.0)
+
+    output = engine.pull(SAMPLE_RATE // 2)
+
+    assert _dominant_frequency(output[EDGE:-EDGE]) == pytest.approx(2 * TONE, rel=0.02)
+
+
+def test_a_shift_does_not_change_how_many_frames_come_out():
+    engine = Engine(SAMPLE_RATE, pitch_semitones=12.0)
+    engine.load(_tone(TONE, 2.0))
+    engine.play(0.0)
+
+    assert len(engine.pull(SAMPLE_RATE // 2)) == SAMPLE_RATE // 2
+
+
+def test_the_playhead_keeps_one_clock_whatever_the_shift():
+    def position_after(semitones: float) -> float:
+        engine = Engine(SAMPLE_RATE, pitch_semitones=semitones)
+        engine.load(_tone(TONE, 4.0))
+        engine.play(0.0)
+        engine.pull(SAMPLE_RATE // 2)
+        engine.pull(SAMPLE_RATE // 2)
+        return engine.position
+
+    assert position_after(12.0) == position_after(0.0)
+
+
+def test_a_band_cut_takes_more_than_eight_db_out_of_that_band():
+    bands = [0.0] * BAND_COUNT
+    bands[EQ_BANDS.index(1000.0)] = -12.0
+    flat = Engine(SAMPLE_RATE)
+    cut = Engine(SAMPLE_RATE, eq_bands=tuple(bands))
+    for engine in (flat, cut):
+        engine.load(_tone(1000.0, 2.0))
+        engine.play(0.0)
+
+    before = _band_energy(flat.pull(SAMPLE_RATE // 2)[EDGE:-EDGE], 1000.0)
+    after = _band_energy(cut.pull(SAMPLE_RATE // 2)[EDGE:-EDGE], 1000.0)
+
+    assert 10.0 * np.log10(before / after) >= 8.0
+
+
+def test_switching_the_shift_off_and_on_again_never_blows_up():
+    engine = Engine(SAMPLE_RATE)
+    engine.load(_tone(TONE, 2.0))
+    engine.play(0.0)
+
+    heard = [engine.pull(2048) for _ in range(4)]
+    engine.pitch_semitones = 12.0
+    heard += [engine.pull(2048) for _ in range(4)]
+    engine.pitch_semitones = 0.0
+    heard += [engine.pull(2048) for _ in range(4)]
+
+    output = np.concatenate(heard)
+
+    assert np.all(np.isfinite(output))
+    # a unit tone, and the little a block seam may add on top of it (measured at 1.006); a stale
+    # delay line would leave the output far above this rather than barely at it
+    assert float(np.max(np.abs(output))) <= 1.02
+
+
+def test_setting_the_same_shift_again_resets_nothing():
+    """A control re-sent its own value must leave the carried context where it was."""
+
+    def heard(repeat: bool) -> np.ndarray:
+        engine = Engine(SAMPLE_RATE)
+        engine.load(_tone(TONE, 2.0))
+        engine.play(0.0)
+        engine.pitch_semitones = 12.0
+        first = engine.pull(4096)
+        if repeat:
+            engine.pitch_semitones = 12.0
+        return np.concatenate([first, engine.pull(4096)])
+
+    assert np.array_equal(heard(True), heard(False))

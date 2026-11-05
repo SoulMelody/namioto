@@ -8,6 +8,8 @@ QWidget.grab() still renders, so pixel checks work.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QWheelEvent
@@ -152,6 +154,22 @@ class FakeOutput:
     def seek(self, seconds: float) -> None:
         self.position = seconds
         self.calls.append("seek")
+
+
+class RateOutput(FakeOutput):
+    """A backend that also carries what `MidiPortOut` reads its position from.
+
+    `MidiPortOut.position` is `_start + (now - _started) * _speed`, and sync trims the rate by
+    re-anchoring those two, so the fake needs them to stand in for the real thing.
+    """
+
+    def __init__(self, position: float = 0.0, playing: bool = True) -> None:
+        super().__init__()
+        self.position = position
+        self.is_playing = playing
+        self._speed = 1.0
+        self._start = 0.0
+        self._started = time.monotonic()
 
 
 def make_spectrum(frames: int = 4, value: float = 1.0) -> NoteSpectrum:

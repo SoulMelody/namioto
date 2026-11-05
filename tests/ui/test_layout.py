@@ -7,16 +7,20 @@ from PySide6.QtGui import QColor, QFocusEvent, QFont, QImage, QKeyEvent, QMouseE
 from PySide6.QtWidgets import QApplication, QLabel, QToolButton
 
 from namioto.analysis.bpm import BpmEstimate
+from namioto.i18n import tr
 from namioto.interaction import Interaction, Tool
+from namioto.markers import Marker
 from namioto.ui import theme
 from namioto.ui.app import MainWindow, TempoLoader
 from namioto.ui.controls import Cluster, EditBar, TransportBar, ValueSlider
 from namioto.ui.roll import (
+    MARKER_TRACK_HEIGHT,
     PITCH_MAX,
     PITCH_MIN,
     RULER_HEIGHT,
     RULER_TIME_ROW,
     SNAP_CHOICES,
+    MarkerTrack,
     PianoRollView,
     is_black_key,
 )
@@ -588,3 +592,83 @@ def test_closing_waits_for_the_audio_loaders(own_window, monkeypatch) -> None:
     own_window.project_dirty = False
     own_window.close()
     assert waited
+
+
+def marker_line_columns(image: QImage) -> set[int]:
+    """Columns holding a bookmark line: the only pixels in the lane painted with the playhead colour."""
+    line = theme.canvas().playhead.name()
+    return {
+        x for x in range(image.width()) if any(QColor(image.pixel(x, y)).name() == line for y in range(image.height()))
+    }
+
+
+def test_the_marker_track_draws_one_line_per_bookmark(window) -> None:
+    window.view.set_markers((Marker(0.0, "Verse"), Marker(4.0, "Chorus"), Marker(8.0, "Outro")))
+    window.view.centerOn(QPointF(6.0, 30.0))  # bring beat 0 on screen: the lane only draws what it sees
+    track = MarkerTrack(window.view)
+    track.resize(window.view.viewport().width(), MARKER_TRACK_HEIGHT)
+    track.move(window.view.mapToGlobal(QPoint(0, 0)))  # the lane and the roll share their left edge
+    track.show()
+    QApplication.processEvents()
+
+    image = track.grab().toImage()
+
+    assert len(marker_line_columns(image)) == 3
+
+    track.close()
+    window.view.set_markers(())
+
+
+def test_the_marker_track_is_placed_between_the_ruler_and_the_roll(own_window) -> None:
+    own_window.show()
+    QApplication.processEvents()
+    track = own_window.marker_track
+
+    # it is in the window's layout, not a strip that was built and never added
+    assert own_window.isAncestorOf(track)
+    assert track.isVisibleTo(own_window)
+    assert track.view is own_window.view
+    assert track.height() == MARKER_TRACK_HEIGHT
+    # beside the ruler and above the roll, on the same row the ruler's numbers use
+    assert track.y() >= own_window.ruler.y() + own_window.ruler.height() - 1
+    assert track.y() + track.height() <= own_window.view.mapTo(own_window, QPoint(0, 0)).y() + 1
+
+
+def test_the_ab_loop_card_is_gone_from_the_bar(window) -> None:
+    """The A-B loop lives in the Transport menu now, so no block on the bar is named for it."""
+    assert "loop" not in {name for name, _cluster in clusters(window)}
+
+
+def test_the_menu_bar_offers_its_commands_and_none_of_them_is_dead(own_window) -> None:
+    menus = [action.menu() for action in own_window.menuBar().actions()]
+    assert len(menus) == 8  # File, Edit, View, Transport, Tools, Sync, Settings, Help
+
+    counts = [len([item for item in menu.actions() if not item.isSeparator()]) for menu in menus]
+    assert counts == [7, 6, 4, 7, 6, 2, 1, 1]
+    # a menu entry that does nothing is worse than one that is missing
+    assert all(item.isEnabled() for menu in menus for item in menu.actions())
+
+
+def test_the_help_menu_opens_the_shortcuts_sheet(own_window) -> None:
+    """Help is last, and its one entry is the same action F1 triggers."""
+    help_action = own_window.menuBar().actions()[-1]
+    assert help_action.text() == tr("Help")
+    entries = [item for item in help_action.menu().actions() if not item.isSeparator()]
+    assert [item.text() for item in entries] == [tr("Keyboard shortcuts…")]
+    assert entries[0] is own_window._shortcuts_action
+    assert entries[0].isEnabled()
+
+
+def test_a_menu_switch_mirrors_its_bar_button_instead_of_copying_it(own_window) -> None:
+    action = own_window._actions["follow"]
+    own_window.transport.auto_page.setChecked(True)
+    assert action.isChecked() is True
+    own_window.transport.auto_page.setChecked(False)
+    assert action.isChecked() is False
+
+    # triggering the menu entry clicks the bar's own button rather than flipping a second switch
+    pressed: list[bool] = []
+    own_window.transport.auto_page.toggled.connect(pressed.append)
+    action.trigger()
+    assert pressed == [True]
+    own_window.transport.auto_page.setChecked(False)

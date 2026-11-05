@@ -32,7 +32,7 @@ class Field:
     """One parameter: its default, how to read it back, and how a form shows it."""
 
     name: str
-    kind: str  # bool, int, float, choice, device, text or style
+    kind: str  # bool, int, float, floats, choice, device, text, secret or style
     default: Any
     caption: str
     tooltip: str = ""
@@ -55,7 +55,7 @@ class Section:
 
 
 def _python_type(kind: str) -> type:
-    return {"bool": bool, "int": int, "float": float}.get(kind, str)
+    return {"bool": bool, "int": int, "float": float, "floats": tuple}.get(kind, str)
 
 
 def build(sections: Sequence[Section]) -> type:
@@ -89,6 +89,33 @@ def set_value(model: Any, section: str, name: str, value: Any) -> None:
     setattr(getattr(model, section), name, coerce(type(model).__field_specs__[(section, name)], value))
 
 
+def _bounded(spec: Field, value: float) -> float:
+    """Clamp one number to the field's range, then snap it to the field's step.
+
+    Kept apart because a curve of numbers needs exactly what a single number does, item by item.
+    """
+    number = min(spec.high, max(spec.low, float(value)))
+    return round(number / spec.step) * spec.step if spec.step else number
+
+
+def _curve(spec: Field, value: Any) -> tuple[float, ...]:
+    """A whole curve in one field: each item brought in line, then the curve fitted to its length.
+
+    A ten-band gain curve is one thing the user sees as a shape, not ten unrelated settings; ten
+    `Field`s would repeat the same range and the same check ten times, and the section would grow a
+    row per band. JSON reads a curve back as a list, so both `list` and `tuple` are taken, and the
+    result is always a tuple: the dataclass default and the engine both speak tuples.
+    """
+    items = value if isinstance(value, (list, tuple)) else ()
+    kept = [
+        round(_bounded(spec, item), spec.decimals)
+        for item in items
+        if isinstance(item, (int, float)) and not isinstance(item, bool)
+    ]
+    width = len(spec.default)
+    return tuple((kept + list(spec.default))[:width])
+
+
 def coerce(spec: Field, value: Any) -> Any:
     """A file may hold anything at all, so every value is checked before it is used."""
     if spec.kind == "bool":
@@ -96,11 +123,12 @@ def coerce(spec: Field, value: Any) -> Any:
     if spec.kind in ("choice", "device"):
         # a bool would pass for 0 or 1 here, and the synthesiser would be sent a true instead of a number
         return value if not isinstance(value, bool) and value in spec.choices else spec.default
+    if spec.kind == "floats":
+        return _curve(spec, value)
     if spec.kind in ("int", "float"):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return spec.default
-        number = min(spec.high, max(spec.low, float(value)))
-        number = round(number / spec.step) * spec.step if spec.step else number
+        number = _bounded(spec, value)
         return int(round(number)) if spec.kind == "int" else round(number, spec.decimals)
     if value is None:  # a null is a missing text, not the word "None"
         return spec.default

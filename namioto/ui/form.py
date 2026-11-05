@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QSpinBox,
@@ -181,6 +182,8 @@ def field_editor(value: Any, field: Field) -> tuple[QWidget, Callable[[], Any], 
     elif field.kind == "secret":
         widget = QLineEdit()
         widget.setEchoMode(QLineEdit.EchoMode.Password)
+    elif field.kind == "floats":
+        return curve_editor(value, field)
     else:
         raise TypeError(f"no editor for a {field.kind} field")
     _write(widget, value)
@@ -201,6 +204,41 @@ def style_editor(value: Any):
     entries = [(tr("System default ({name})", name=theme.platform_style()), "")]
     entries += [(name, name) for name in available]
     return combo_editor(entries, value)
+
+
+def curve_editor(value: Any, field: Field):
+    """One box per item of a curve, in a single row, because a curve is a shape and not ten settings.
+
+    Each box carries the field's own range and step, the same ones `namioto.params.coerce` uses, so
+    what a form shows and what a file keeps cannot drift apart. `namioto.ui.controls.EqualizerPopup`
+    looks similar and is deliberately left alone: it is the live control of the playing mix, while
+    this row edits the value the settings file remembers, and neither has to know the other exists.
+    """
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(2)
+    boxes = []
+    for _ in range(len(field.default)):
+        box = QDoubleSpinBox()
+        box.setRange(field.low, field.high)
+        box.setDecimals(field.decimals)
+        box.setSingleStep(field.step or 0.1)
+        box.setSuffix(field.suffix)
+        box.setKeyboardTracking(False)
+        layout.addWidget(box)
+        boxes.append(box)
+
+    def write(new: Any) -> None:
+        items = tuple(new) if isinstance(new, (list, tuple)) else ()
+        for box, item in zip(boxes, items + tuple(field.default), strict=False):
+            box.setValue(float(item))
+
+    def read() -> tuple[float, ...]:
+        return tuple(box.value() for box in boxes)
+
+    write(value)
+    return row, read, write
 
 
 def advanced_section(form: QFormLayout) -> QToolButton:

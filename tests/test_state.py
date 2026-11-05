@@ -67,3 +67,18 @@ def test_a_project_block_that_is_not_a_section_map_is_dropped(state_file) -> Non
 
     state_file.write_text(json.dumps({"project": [1, 2, 3]}))
     assert window_state.load().project == {}
+
+
+def test_the_ab_loop_round_trips(state_file) -> None:
+    window_state.save(window_state.State(loop=(1.5, 4.25)))
+    assert window_state.load().loop == (1.5, 4.25)
+
+
+def test_an_ab_loop_that_is_not_two_increasing_numbers_is_off(state_file) -> None:
+    # the loop is session state, so an unusable one means "off" rather than a half-armed span
+    for broken in ([], [1.0], [1.0, "2"], [3.0, 1.0], [2.0, 2.0], [True, False], [1.0, None]):
+        state_file.write_text(json.dumps({"loop": broken}))
+        assert window_state.load().loop is None, broken
+
+    state_file.write_text(json.dumps({"loop": [1.0, float("inf")]}))
+    assert window_state.load().loop is None

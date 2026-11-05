@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -42,21 +43,26 @@ from PySide6.QtCore import (
     QTranslator,
     Signal,
 )
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from namioto import i18n, ipc, midi, params, project, qtplugins
+from namioto import i18n, ipc, midi, midi_port, params, project, qtplugins
 from namioto import lyrics as words
 from namioto import settings as store
 from namioto import state as window_state
@@ -65,6 +71,9 @@ from namioto.analysis.spectrum import CHANNEL_MODES, NoteSpectrum
 from namioto.channels import Channel, free_channel
 from namioto.channels import audible as audible_channels
 from namioto.channels import set_field as channel_set_field
+from namioto.markers import MarkerList
+from namioto.meter_map import MeterMap, MeterPoint
+from namioto.mtc import Rate
 from namioto.playback import note_frequency
 from namioto.tempo_map import TempoMap
 from namioto.ui import theme
@@ -77,17 +86,32 @@ from namioto.ui.ipc_server import IpcServer
 from namioto.ui.loading import LoadingThread
 from namioto.ui.lyrics_dialog import LyricsDialog
 from namioto.ui.midi_dialog import MidiImportDialog
+from namioto.ui.mtc_port import MtcPort
 from namioto.ui.open_dialog import OpenAudioDialog
-from namioto.ui.roll import SNAP_CHOICES, PianoKeyboard, PianoRollView, TimelineRuler
+from namioto.ui.properties_dialog import wire as properties_action
+from namioto.ui.record_dialog import wire as record_action
+from namioto.ui.roll import PITCH_MAX, PITCH_MIN, SNAP_CHOICES, MarkerTrack, PianoKeyboard, PianoRollView, TimelineRuler
 from namioto.ui.settings_dialog import SettingsDialog, SettingsStore
+from namioto.ui.shortcuts_dialog import wire as shortcuts_action
 from namioto.ui.song import SongPlayer, load_song
 from namioto.ui.spectrogram import HarmonicLoader, SpectrumLoader
-from namioto.ui.text import note_name
+from namioto.ui.tempo_dialog import wire as tempo_action
+from namioto.ui.text import format_time, note_name
 from namioto.ui.transcription_dialog import TranscriptionDialog
 
 POSITION_INTERVAL_MS = 40
 SPEED_SETTLE_MS = 100
 AUTOSAVE_DELAY_MS = 3000
+# long enough to read the span and short enough that the message does not hold the status bar
+LOOP_MESSAGE_MS = 3000
+# the same bargain for the opening hint: it says where the help is, then gives the bar back
+INTRO_MESSAGE_MS = 8000
+# MTC chase, in the units the sync port hands over: seconds of drift and a rate around 1.0
+MTC_SEEK_SECONDS = 0.05  # 50 ms: past this a jump is cheaper than a nudge
+MTC_TRIM_GAIN = 0.5  # the proportional term of the nudge
+MTC_TRIM_LIMIT = 0.05  # any more than 5% and the correction is heard as a wobble
+# the file's spelling of each rate, so a settings value can be a person's word rather than an enum
+MTC_RATES = {"24": Rate.FPS_24, "25": Rate.FPS_25, "29.97drop": Rate.FPS_29_97_DROP, "30": Rate.FPS_30}
 # common libsndfile formats; anything rarer is reachable through All files
 AUDIO_SUFFIXES = (
     ".wav",
@@ -117,6 +141,53 @@ def _audio_filter() -> str:
 
 def _midi_filter() -> str:
     return i18n.tr("MIDI file ({patterns})", patterns=" ".join(f"*{suffix}" for suffix in midi.SUFFIXES))
+
+
+def _label(text: str) -> QLabel:
+    """A caption in the interface's language: the dialogs here build their own rows."""
+    return QLabel(i18n.tr(text))
+
+
+def loop_target(span: tuple[float, float] | None, position: float) -> float | None:
+    """Where a repeating transport jumps to, or None to let it run on.
+
+    The whole A-B policy is this one comparison, kept out of the tick handler so a test can drive it
+    without a timer: an armed span sends the playhead back to A as soon as it reaches B. Seconds, the
+    same clock `player.position` runs on, so no beat conversion stands between the span and the seek.
+    """
+    if span is None:
+        return None
+    start, end = span
+    return start if position >= end else None
+
+
+def loop_text(span: tuple[float, float] | None) -> str:
+    """The span as the status bar shows it: the two times, or that there is none.
+
+    The label that used to carry this text is gone with the bar's A-B card, so the status bar is
+    where the times are now; `_show_loop` gives them a timeout, since the window shows this while it
+    is still opening and a message without one would sit over everything said afterwards.
+    """
+    if span is None:
+        return i18n.tr("A-B off")
+    return f"A {format_time(span[0])}  B {format_time(span[1])}"
+
+
+def mtc_correction(drift: float) -> tuple[str, float]:
+    """What a position from the sync port does to the transport: `("seek", 0.0)` or `("trim", rate)`.
+
+    50 ms is where a jump is worth more than a nudge; below that the transport keeps its place and
+    only the rate moves - by half the drift, clamped to +/-5%, which is as far as a rate change stops
+    being audible as a wobble. Negative drift (the port is behind us) follows the same rule.
+    """
+    if abs(drift) > MTC_SEEK_SECONDS:
+        return ("seek", 0.0)
+    return ("trim", clamp_rate(1.0 + MTC_TRIM_GAIN * drift))
+
+
+def clamp_rate(speed: float) -> float:
+    """A rate change is only ever a nudge: outside +/-5% it stops correcting and starts wobbling."""
+    return max(1.0 - MTC_TRIM_LIMIT, min(1.0 + MTC_TRIM_LIMIT, speed))
 
 
 _translators: list[QTranslator] = []
@@ -255,6 +326,17 @@ class MainWindow(QMainWindow):
         self.ipc: IpcServer | None = None
         self._bridge: WindowBridge | None = None
         self._reported_playing: bool | None = None
+        # every menu item is looked up here by name, so a command has one action and one place it
+        # is wired; the bars' own buttons stay the state, and the actions that stand for them mirror
+        self._actions: dict[str, QAction] = {}
+        # the A-B ends the user set, whether or not the loop is armed: `state.loop` holds the span in
+        # force, and these keep the ends so switching the loop off and on loses nothing
+        self._loop_ends: list[float | None] = [None, None]
+        # what the status bar last said about the span, so showing it again does not repeat itself
+        self._loop_text_shown = loop_text(None)
+        self.mtc_mode = ""  # "", "send" or "receive"
+        self.mtc = MtcPort(self)
+        self.setAcceptDrops(True)  # a project dropped on the window opens, the way the chooser would
 
         editor = self.project_settings.editor
         self.view = PianoRollView()
@@ -264,6 +346,7 @@ class MainWindow(QMainWindow):
         self.view.division = editor.division
         self.ruler = TimelineRuler(self.view)
         self.keyboard = PianoKeyboard(self.view)
+        self.marker_track = MarkerTrack(self.view)
         self.player, self.player_name = self._make_player()
         self._current_player_key = self._player_key()
         self.player.gain = self.project_settings.playback.midi_volume / 100.0
@@ -288,6 +371,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(corner, 0, 0)
         layout.addWidget(self.ruler, 0, 1)
+        # the bookmarks lane sits between the ruler and the roll: it reads the roll's markers and
+        # scroll position, so it is a strip over the same viewport rather than a widget of its own
+        layout.addWidget(self.marker_track, 1, 1)
         layout.addWidget(self.keyboard, 2, 0)
         layout.addWidget(self.view, 2, 1)
         layout.setColumnStretch(1, 1)
@@ -374,6 +460,10 @@ class MainWindow(QMainWindow):
         self.transport.bpm.valueChanged.connect(self._mark_dirty)
         self.play_shortcut = QShortcut(QKeySequence("Space"), self)
         self.play_shortcut.activated.connect(self._toggle_play)
+        # F1 is the help key the platform already teaches, and the action the Help menu carries is
+        # the one thing it triggers: `_mirror`'s rule, one binding per command
+        self._shortcuts_action = shortcuts_action(self)
+        QShortcut(QKeySequence("F1"), self).activated.connect(self._shortcuts_action.trigger)
         for keys, slot in (
             ("Ctrl+N", self.new_project),
             ("Ctrl+O", self._on_open),
@@ -402,8 +492,20 @@ class MainWindow(QMainWindow):
             shortcut.activated.connect(slot)
         self.cursor_note = QLabel()
         self.statusBar().addPermanentWidget(self.cursor_note)
+        # the commands this batch adds: the audio tone, the sync port and the menus. The A-B loop is not
+        # among them: it lives in the Transport menu, where WaveTone keeps it too, rather than adding a
+        # second row to the bar. The twenty connects above stay as they are - rewriting them would be
+        # a diff with no behaviour behind it, and the bars are still the one place each of those lives.
+        self.mix.pitch_changed.connect(self._on_pitch)
+        self.mix.eq_changed.connect(self._on_eq)
+        self.mtc.position.connect(self._on_mtc_position)  # queued: RtMidi calls back on its own thread
+        self.mtc.failed.connect(self._on_mtc_failed)
+        self._apply_tone()
+        self._build_menus()
+        self._restore_loop()  # after the menu, because showing the span also fills its menu item
         self._restore_session()
-        self._show_hint()
+        # a hint, not a manual: the keys live in the help dialog, and the bar is free for messages
+        self.statusBar().showMessage(i18n.tr("Press F1 for the keyboard shortcuts"), INTRO_MESSAGE_MS)
         self._update_status()
         self.view.setFocus()  # the roll holds the keyboard, so the bar opens without a focus ring on its first button
         if self.settings.remote.enabled:
@@ -498,6 +600,8 @@ class MainWindow(QMainWindow):
             # so setting the channels over the old notes would leave their channels behind
             self.view.clear_notes()
             self.view.set_channels([Channel(channel=0)])
+            self.view.set_meter_map(MeterMap.single())
+            self.view.set_markers(())
             self.view.set_spectrum(None)
             self.view.undo_stack.clear()
             self._apply_project_settings()
@@ -753,9 +857,12 @@ class MainWindow(QMainWindow):
 
     def _on_settings_changed(self, settings) -> None:
         """The settings window applied: the program's own preferences take over at once."""
+        previous = self.settings
         self.settings = settings
         self.player.delay_ms = settings.midi.playback_delay_ms
         self._seed_bindings(lambda binding: binding.model is None)
+        self._apply_tone()  # a pitch or a curve the settings hold reaches the player at once
+        self._apply_mtc_settings(previous)  # a rate or a port changed under a running port
         self._apply_theme()
         self._update_status()
         if settings.remote.enabled and self.ipc is None:
@@ -1053,6 +1160,8 @@ class MainWindow(QMainWindow):
             self.autosave_timer.stop()
             self._clear_audio()
             self.view.set_tempo(TempoMap.single(self.project_settings.tempo.bpm), keep_notes=False)
+            self.view.set_meter_map(MeterMap.single())
+            self.view.set_markers(())
             self.view.set_channels((Channel(channel=0),))
             self.view.clear_notes()
             self._apply_project_settings()
@@ -1078,6 +1187,8 @@ class MainWindow(QMainWindow):
             self.autosave_timer.stop()
             # the map comes before the notes: their beats are read out of it
             self.view.set_tempo(opened.tempo_map, keep_notes=False)
+            self.view.set_meter_map(opened.meter_map)
+            self.view.set_markers(opened.markers)
             missing = self._open_audio(project.resolve_audio(self.project_path, opened.audio))
             self.view.set_channels(opened.channels)
             loaded = (
@@ -1127,6 +1238,8 @@ class MainWindow(QMainWindow):
             notes=notes,
             next_id=self.view.document.next_id,
             tempo_map=self.view.tempo,
+            meter_map=self.view.meter_map,
+            markers=self.view.markers,
         )
         try:
             project.save(payload, target)
@@ -1379,6 +1492,7 @@ class MainWindow(QMainWindow):
         self.settings_store.flush()
         self._save_state()
         self.stop_ipc()
+        self.mtc.stop()  # a port left open would outlive the window that owns it
         self.player.stop()  # a preview waiting on the delay would outlive the window that owns its timer
         self.song.close()  # the engine owns the audio device, so it leaves before the window does
         super().closeEvent(event)
@@ -1562,6 +1676,8 @@ class MainWindow(QMainWindow):
             self.song.play(seconds)
         self._send_program()
         self.player.play(seconds)
+        if self.mtc_mode == "send":
+            self.mtc.seek_to(seconds)
         self._show_position()
         if self._is_playing():
             self.position_timer.start()
@@ -1585,17 +1701,23 @@ class MainWindow(QMainWindow):
         self.position_timer.stop()
         self.song.pause()
         self.player.pause()
+        if self.mtc_mode == "send":
+            self.mtc.seek_to(self._position())
         self._show_position()
 
     def _stop(self) -> None:
         self.position_timer.stop()
         self.song.stop()
         self.player.stop()
+        if self.mtc_mode == "send":
+            self.mtc.seek_to(self._position())
         self._show_position()
 
     def _seek(self, seconds: float) -> None:
         self.song.seek(seconds)
         self.player.seek(seconds)
+        if self.mtc_mode == "send":
+            self.mtc.seek_to(seconds)  # the code follows the transport, wherever it was put
         self._show_position()
 
     def _position(self) -> float:
@@ -1611,6 +1733,8 @@ class MainWindow(QMainWindow):
     def _show_position(self) -> None:
         seconds = self._position()
         playing = self._is_playing()
+        if playing and self._on_loop_tick(seconds):
+            return  # the span was reached and `_seek` already showed where the loop sent it
         self.transport.set_position(seconds)
         self.transport.set_playing(playing)
         if playing != self._reported_playing:
@@ -1642,19 +1766,6 @@ class MainWindow(QMainWindow):
             self.cursor_note.clear()
             return
         self.cursor_note.setText(f"{note_name(pitch)}   {note_frequency(pitch):.2f} Hz")
-
-    def _show_hint(self) -> None:
-        self.statusBar().showMessage(
-            i18n.tr(
-                "space: play or pause  |  click (outside edit mode): move the playhead  |  "
-                "pen: drag an empty row to draw  |  select: drag a box, ctrl-click to add  |  "
-                "shift drag a note: trim its start (left half) or end (right half)  |  "
-                "right click: move to a channel  |  "
-                "ctrl C: copy the selection, ctrl V: paste it at the playhead, ctrl D: delete it  |  "
-                "ctrl Z: undo, ctrl shift Z: redo  |  "
-                "middle drag: pan  |  ctrl wheel: zoom x, ctrl shift wheel: zoom y  |  gear: settings"
-            )
-        )
 
     def _on_division_changed(self, *_args) -> None:
         self.view.division = self._division_value()
@@ -1751,6 +1862,605 @@ class MainWindow(QMainWindow):
                 "{document} — Namioto — {notes} notes",
                 document=self._document_name(),
                 notes=len(self.view.notes()),
+            )
+        )
+
+    # -- actions and menus -------------------------------------------------------------------
+
+    def _register(self, name: str, action: QAction) -> QAction:
+        self._actions[name] = action
+        return action
+
+    def _mirror(self, name: str, button, label: str) -> QAction:
+        """A menu item that stands for a button the bar already has.
+
+        The button stays the one place the state lives: a checkable action copies the button's state,
+        follows it with `toggled`, and triggering it clicks the button rather than flipping a second
+        copy, so a menu and a button can never disagree about whether a switch is on. No shortcut is
+        set here: the window's `QShortcut`s are the one binding, and a second one on the action would
+        fire the command twice.
+        """
+        action = QAction(i18n.tr(label), self)
+        if button.isCheckable():
+            action.setCheckable(True)
+            action.setChecked(button.isChecked())
+            button.toggled.connect(action.setChecked)
+        action.triggered.connect(lambda *_args: button.click())
+        return self._register(name, action)
+
+    def _command(self, name: str, label: str, slot: Callable, checkable: bool = False) -> QAction:
+        """A menu item for a command only the menu offers - Save As, Quit, meter editing.
+
+        A checkable command's slot wants the state the user just chose, so it is handed the same
+        `checked` Qt puts on `triggered`; every other command takes no argument.
+        """
+        action = QAction(i18n.tr(label), self)
+        action.setCheckable(checkable)
+        if checkable:
+            action.triggered.connect(lambda checked=False: slot(checked))
+        else:
+            action.triggered.connect(lambda *_args: slot())
+        return self._register(name, action)
+
+    def _build_menus(self) -> None:
+        """The window's menus, built from what the window already does.
+
+        Every entry is either a button the bars already hold (mirrored, so one state) or a command
+        this window already has. Nothing is listed that would do nothing: a dead menu item is worse
+        than a missing one, and the grouping only follows WaveTone's where Namioto has the feature.
+        """
+        bars = self.menuBar()
+
+        file_menu = bars.addMenu(i18n.tr("File"))
+        file_menu.addAction(self._mirror("open", self.transport.open, "Open…"))
+        file_menu.addAction(self._mirror("save", self.transport.save, "Save"))
+        file_menu.addAction(self._command("save-as", "Save As…", self._on_save_as))
+        file_menu.addSeparator()
+        file_menu.addAction(self._command("import-midi", "Import MIDI…", self._import_midi_file))
+        file_menu.addAction(self._mirror("export-midi", self.transport.export, "Export MIDI…"))
+        file_menu.addSeparator()
+        file_menu.addAction(self._register("properties", properties_action(self)))
+        file_menu.addAction(self._command("quit", "Quit", self.close))
+
+        edit_menu = bars.addMenu(i18n.tr("Edit"))
+        edit_menu.addAction(self._command("undo", "Undo", self.view.undo))
+        edit_menu.addAction(self._command("redo", "Redo", self.view.redo))
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._command("cut", "Cut", self._cut_selection))
+        edit_menu.addAction(self._command("copy", "Copy", self.view.copy_selection))
+        edit_menu.addAction(self._command("paste", "Paste", self.view.paste_notes))
+        edit_menu.addAction(self._command("delete", "Delete", self.view.delete_selection))
+
+        view_menu = bars.addMenu(i18n.tr("View"))
+        view_menu.addAction(self._command("zoom-in", "Zoom In", lambda: self._zoom_view(1.25)))
+        view_menu.addAction(self._command("zoom-out", "Zoom Out", lambda: self._zoom_view(0.8)))
+        view_menu.addAction(self._command("zoom-fit", "Fit", self._fit_view))
+        view_menu.addAction(self._mirror("follow", self.transport.auto_page, "Follow Playhead"))
+
+        transport_menu = bars.addMenu(i18n.tr("Transport"))
+        transport_menu.addAction(self._mirror("play", self.transport.play_pause, "Play/Pause"))
+        transport_menu.addAction(self._mirror("stop", self.transport.stop, "Stop"))
+        transport_menu.addAction(self._register("record", record_action(self)))
+        # the A-B loop is four entries rather than a card on the bar: WaveTone keeps it in the menu
+        # too, and a row of its own made the control area taller than the window had room for
+        transport_menu.addAction(self._command("loop", "A-B Loop", self._on_loop_toggled, checkable=True))
+        transport_menu.addAction(self._command("loop-a", "Set A", self._set_loop_a))
+        transport_menu.addAction(self._command("loop-b", "Set B", self._set_loop_b))
+        transport_menu.addAction(self._command("loop-clear", "Clear A-B", self._clear_loop))
+
+        tools_menu = bars.addMenu(i18n.tr("Tools"))
+        tools_menu.addAction(self._register("tempo", tempo_action(self)))
+        tools_menu.addAction(self._command("transcribe", "Transcription…", self._open_transcription))
+        tools_menu.addAction(self._command("align", "Align Lyrics…", self._open_align))
+        tools_menu.addSeparator()
+        tools_menu.addAction(self._command("bookmark-add", "Add Bookmark at Playhead", self._add_bookmark))
+        tools_menu.addAction(self._command("bookmark-remove", "Remove Nearest Bookmark", self._remove_bookmark))
+        tools_menu.addAction(self._command("meter", "Meter…", self._edit_meter))
+
+        sync_menu = bars.addMenu(i18n.tr("Sync"))
+        send = QAction(i18n.tr("MTC Send…"), self)
+        send.setCheckable(True)
+        send.triggered.connect(lambda checked: self._set_mtc_mode("send" if checked else ""))
+        sync_menu.addAction(self._register("mtc-send", send))
+        receive = QAction(i18n.tr("MTC Receive…"), self)
+        receive.setCheckable(True)
+        receive.triggered.connect(lambda checked: self._set_mtc_mode("receive" if checked else ""))
+        sync_menu.addAction(self._register("mtc-receive", receive))
+
+        settings_menu = bars.addMenu(i18n.tr("Settings"))
+        settings_menu.addAction(self._mirror("settings", self.transport.settings_button, "Settings…"))
+
+        help_menu = bars.addMenu(i18n.tr("Help"))
+        help_menu.addAction(self._register("shortcuts", self._shortcuts_action))
+
+    # -- dragging a file in ------------------------------------------------------------------
+
+    def _dragged_file(self, event) -> str:
+        """The local file a drag carries, or "": the same rule the Open dialog's filter applies.
+
+        A drag may carry several paths; this window opens one document, so only the first is taken,
+        as WaveTone's `DragQueryFileW(0)` does. Anything that is not a local file - a URL from a
+        browser - is left to the widget underneath rather than guessed at.
+        """
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return ""
+        urls = mime.urls()
+        if not urls:
+            return ""
+        first = urls[0]
+        return first.toLocalFile() if first.isLocalFile() else ""
+
+    def dragEnterEvent(self, event) -> None:
+        if self._dragged_file(event):
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event) -> None:
+        path = self._dragged_file(event)
+        if not path:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        # `open_file` already decides by suffix and asks about unsaved work where it must, so a drop
+        # behaves exactly like a file picked from the chooser - no second confirmation here
+        self.open_file(path)
+
+    def _cut_selection(self) -> None:
+        """Cut is copy then delete: the roll owns those two and no third gesture.
+
+        It is two undo steps rather than one, which is the honest cost of not adding a command to
+        `roll.py` - a file this batch may not touch.
+        """
+        if self.view.copy_selection():
+            self.view.delete_selection()
+
+    def _import_midi_file(self) -> None:
+        """The menu's Import MIDI: the chooser, then the same import the Open dialog would run."""
+        if self.project_path is None:
+            self.statusBar().showMessage(
+                i18n.tr("Open a song first: a MIDI file is imported into a project, not on its own")
+            )
+            return
+        chosen, _filter = QFileDialog.getOpenFileName(
+            self, i18n.tr("Import MIDI"), self._start_directory(), _midi_filter()
+        )
+        if chosen:
+            self.import_midi(chosen)
+
+    # -- view zoom ---------------------------------------------------------------------------
+
+    def _zoom_view(self, factor: float) -> None:
+        """Zoom both axes around the middle: the menu's In and Out, on the roll's own setter."""
+        zoom_x, zoom_y = self.view.zoom
+        self.view.set_zoom(zoom_x * factor, zoom_y * factor)
+
+    def _fit_view(self) -> None:
+        """Fit the whole score: one bar of pixels per beat across, and the pitch range down the side."""
+        beats = max(1.0, self.view.to_beats(self._duration()))
+        viewport = self.view.viewport().size()
+        rows = max(1, PITCH_MAX - PITCH_MIN + 1)
+        self.view.set_zoom(viewport.width() / beats, viewport.height() / rows)
+        self.view.center_on(beats / 2.0, (PITCH_MIN + PITCH_MAX) / 2.0)
+
+    @property
+    def meter_map(self) -> MeterMap:
+        """The song's bar lengths, where `properties_dialog` looks for them."""
+        return self.view.meter_map
+
+    # -- the A-B loop ------------------------------------------------------------------------
+
+    def _restore_loop(self) -> None:
+        """Take up the span the last run left armed, if any, and show it."""
+        span = self.state.loop
+        if span is not None:
+            self._loop_ends = [span[0], span[1]]
+        self._show_loop()
+
+    def _show_loop(self) -> None:
+        """Show the span in force, filling the menu item in quietly: showing is not arming it.
+
+        The item is the one place the armed state is visible now, so it is filled the way the toggle
+        on the bar used to be - signals blocked, because a restored span is not the user switching
+        the loop on. The times go to the status bar with a timeout, and only when they change: the
+        window opens through here with no span at all, and there is nothing to announce then.
+        """
+        span = self.state.loop
+        armed = span is not None
+        action = self._actions["loop"]
+        if action.isChecked() != armed:
+            blocked = action.blockSignals(True)
+            action.setChecked(armed)
+            action.blockSignals(blocked)
+        text = loop_text(span)
+        if text != self._loop_text_shown:
+            self._loop_text_shown = text
+            self.statusBar().showMessage(text, LOOP_MESSAGE_MS)
+
+    def _set_loop_a(self) -> None:
+        self._store_loop_end(0, self._position())
+
+    def _set_loop_b(self) -> None:
+        self._store_loop_end(1, self._position())
+
+    def _store_loop_end(self, index: int, seconds: float) -> None:
+        """Place one end and, when both are placed, arm the loop.
+
+        The span is session state and never touches the document: `docs/usage.md` keeps view and
+        volume changes out of the dirty flag, and a loop is the same kind of thing - press A, press
+        B, and the project is still saved. That is the opposite of the meter dialog, which edits the
+        song and does mark it.
+        """
+        self._loop_ends[index] = seconds
+        start, end = self._loop_ends
+        if start is None or end is None or end <= start:
+            self.state.loop = None
+            self._show_loop()
+            if start is not None and end is not None:
+                self.statusBar().showMessage(i18n.tr("B must come after A"))
+            return
+        self.state.loop = (start, end)
+        self._show_loop()
+        self._save_state()
+
+    def _clear_loop(self) -> None:
+        self._loop_ends = [None, None]
+        self.state.loop = None
+        self._show_loop()
+        self._save_state()
+
+    def _on_loop_toggled(self, armed: bool) -> None:
+        """The toggle arms the span the user placed; without both ends there is nothing to arm."""
+        if not armed:
+            self.state.loop = None
+            self._show_loop()
+            self._save_state()
+            return
+        start, end = self._loop_ends
+        if start is None or end is None or end <= start:
+            self._actions["loop"].setChecked(False)  # nothing to repeat: the item falls back
+            self.statusBar().showMessage(i18n.tr("Set A and B on the transport first: A-B loop"))
+            return
+        self.state.loop = (start, end)
+        self._show_loop()
+        self._save_state()
+
+    def _on_loop_tick(self, seconds: float) -> bool:
+        """Send the transport back to A when it reaches B; True when it did."""
+        target = loop_target(self.state.loop, seconds)
+        if target is None:
+            return False
+        self._seek(target)
+        return True
+
+    # -- the audio tone: pitch and the equaliser ---------------------------------------------
+
+    def _apply_tone(self) -> None:
+        """Give the audio player the pitch and curve the settings hold.
+
+        `audio.eq_bands` is a tuple either way: `namioto.params.coerce` builds it that way on the way
+        in, and the engine takes a tuple, so nothing here has to guess at its length.
+        """
+        pitch = self.settings.audio.pitch_semitones
+        bands = self.settings.audio.eq_bands
+        self.mix.set_pitch(pitch)
+        self.mix.set_eq_bands(bands)
+        self._on_pitch(pitch)
+        self._on_eq(self.mix.eq_bands)  # the engine always holds the curve the bar shows
+
+    def _on_pitch(self, semitones: float) -> None:
+        self.song.pitch_semitones = float(semitones)
+
+    def _on_eq(self, bands) -> None:
+        self.song.eq_bands = tuple(float(value) for value in bands)
+
+    # -- MTC sync ----------------------------------------------------------------------------
+
+    def _mtc_rate(self) -> Rate | None:
+        """The frame rate the settings name, or None when they name none.
+
+        A silent fall back to 25 fps would put a wrong timecode on the wire, which a receiving machine
+        cannot detect, so an unset rate refuses to start instead.
+        """
+        return MTC_RATES.get(self.settings.mtc.framerate)
+
+    def _choose_midi_port(self, direction: str) -> str:
+        """The port to sync over: the one the settings name, or one picked from what this machine has.
+
+        A name in the settings file is the whole point of the two `mtc` port fields - a machine set up
+        once should not ask again on every start - so the dialog only appears when the field is empty
+        or the port it names is gone. A port the user picks is kept, so the next start needs no
+        answer either. `namioto.ui.midi_dialog` picks channels out of a file and
+        `namioto.analysis.devices` picks ONNX providers, so neither is a port picker;
+        `QInputDialog.getItem` is the smallest honest one, and the names come from
+        `namioto.midi_port`, which imports its backend lazily, so a machine with no MIDI backend
+        still starts.
+        """
+        try:
+            names = list(midi_port.output_names() if direction == "output" else midi_port.input_names())
+        except Exception as error:  # a backend that cannot enumerate ports is the same as none
+            self.statusBar().showMessage(i18n.tr("MIDI ports could not be read: {error}", error=error))
+            return ""
+        if not names:
+            message = (
+                "No MIDI output is available on this machine"
+                if direction == "output"
+                else "No MIDI input is available on this machine"
+            )
+            self.statusBar().showMessage(i18n.tr(message))
+            return ""
+        current = self._stored_port(direction)
+        if current in names:
+            return current
+        if current:
+            self.statusBar().showMessage(
+                i18n.tr("MTC port {port} is not on this machine; pick another", port=current)
+            )
+        chosen, accepted = QInputDialog.getItem(
+            self, i18n.tr("MTC"), i18n.tr("Port"), names, 0, False
+        )
+        if not accepted or not chosen:
+            return ""
+        self._remember_port(direction, chosen)
+        return chosen
+
+    def _stored_port(self, direction: str) -> str:
+        return getattr(self.settings.mtc, f"{direction}_port")
+
+    def _remember_port(self, direction: str, port: str) -> None:
+        """Keep the port that was picked, so the question is asked once rather than every start.
+
+        `touch` rather than `apply`: this is one field of the settings already in force, and applying
+        the whole lot back would re-enter `_on_settings_changed` in the middle of starting a port.
+        """
+        setattr(self.settings.mtc, f"{direction}_port", port)
+        self.settings_store.touch()
+
+    def _apply_mtc_settings(self, previous) -> None:
+        """A frame rate or port the settings window changed reaches the port that is running.
+
+        Sending on at the old rate after a new one was asked for would put a timecode on the wire that
+        the receiving machine cannot tell is wrong, so a running port is stopped and started again;
+        `_set_mtc_mode` then either opens it at the new settings or leaves it off and says why - an
+        emptied frame rate refuses to start rather than quietly timing at the old one.
+        """
+        if not self.mtc_mode:
+            return  # nothing is running, and the next start reads the settings anyway
+        now, before = self.settings.mtc, previous.mtc
+        if (now.framerate, now.input_port, now.output_port) == (
+            before.framerate,
+            before.input_port,
+            before.output_port,
+        ):
+            return
+        mode = self.mtc_mode
+        self._set_mtc_mode("")  # the port open now speaks for the settings that have just been replaced
+        self._set_mtc_mode(mode)
+
+    def _set_mtc_mode(self, mode: str) -> None:
+        """The one place the sync mode changes: stop what was running, start what was asked for.
+
+        `mode` is "", "send" or "receive"; both menu items are switched to match, so a failed start
+        cannot leave a checked item pointing at a port that never opened.
+        """
+        if mode == self.mtc_mode:
+            self._sync_mtc_actions()
+            return
+        if self.mtc_mode:  # a port that was never started has nothing to close
+            self.mtc.stop()
+        self.mtc_mode = ""
+        started = mode == "" or (self._start_mtc_send() if mode == "send" else self._start_mtc_receive())
+        if started and mode:
+            self.mtc_mode = mode
+        self._sync_mtc_actions()
+        self._apply_delay_policy()
+
+    def _sync_mtc_actions(self) -> None:
+        send, receive = self._actions.get("mtc-send"), self._actions.get("mtc-receive")
+        if send is not None:
+            send.setChecked(self.mtc_mode == "send")
+        if receive is not None:
+            receive.setChecked(self.mtc_mode == "receive")
+
+    def _start_mtc_send(self) -> bool:
+        rate = self._mtc_rate()
+        if rate is None:
+            self.statusBar().showMessage(
+                i18n.tr("MTC needs a frame rate: set mtc.framerate in the settings file (24, 25, 29.97drop or 30)")
+            )
+            return False
+        port = self._choose_midi_port("output")
+        if not port:
+            return False
+        if not self.mtc.start_send(port, rate):
+            return False
+        self.mtc.seek_to(self._position())
+        self.statusBar().showMessage(i18n.tr("MTC sent on {port}", port=port))
+        return True
+
+    def _start_mtc_receive(self) -> bool:
+        port = self._choose_midi_port("input")
+        if not port:
+            return False
+        if not self.mtc.start_receive(port):
+            return False
+        self.statusBar().showMessage(i18n.tr("MTC received on {port}", port=port))
+        return True
+
+    def _apply_delay_policy(self) -> None:
+        """In receive mode the external clock says when the sound goes, so the playback delay must not
+        move it: it is zeroed for the session and put back when sync ends.
+
+        There is no delay slider among the bars - the delay is a settings field - so nothing can be
+        disabled here; zeroing it is what removes the conflict, and the settings file keeps its value.
+        """
+        receiving = self.mtc_mode == "receive"
+        self.player.delay_ms = 0 if receiving else self.settings.midi.playback_delay_ms
+        if receiving:
+            self.statusBar().showMessage(i18n.tr("MTC receive: the playback delay is off while the port drives"))
+
+    def _on_mtc_position(self, seconds: float) -> None:
+        """A position from the port: a jump, or a nudge of the rate. GUI thread only.
+
+        `MtcPort` emits from RtMidi's own thread and never touches the window; this slot runs on the
+        GUI thread because Qt queues a cross-thread connection, which is the whole reason the port
+        only emits.
+        """
+        if self.mtc_mode != "receive":
+            return
+        drift = seconds - self._position()
+        kind, value = mtc_correction(drift)
+        if kind == "seek":
+            self._seek(seconds)
+        else:
+            self._trim_playback_rate(value)
+
+    def _trim_playback_rate(self, speed: float) -> None:
+        """Nudge the note playback's rate towards the external clock, without moving the playhead.
+
+        `MidiPortOut` reads its position as `_start + (now - _started) * _speed`, so writing a new rate
+        alone would jump the playhead by `elapsed × Δspeed`. Re-anchoring `_started` on the position
+        the transport already shows keeps it continuous, and the formula itself is untouched. The
+        audio player is left alone: its rate lives in the engine, and its position mapping is not
+        this window's to re-anchor.
+        """
+        player = self.player
+        if not player.is_playing:
+            return
+        position = player.position
+        player._speed = speed
+        player._started = time.monotonic() - (position - player._start) / speed
+
+    def _on_mtc_failed(self, message: str) -> None:
+        self.statusBar().showMessage(i18n.tr("MTC failed: {error}", error=message))
+        self._set_mtc_mode("")
+
+    # -- bookmarks and meters ----------------------------------------------------------------
+
+    def _add_bookmark(self) -> None:
+        """A bookmark at the playhead, named for the beat it sits on until it is renamed."""
+        beat = self.view.to_beats(max(0.0, self._position()))
+        markers = MarkerList(self.view.markers)
+        if any(abs(marker.beat - beat) < 1e-4 for marker in markers):
+            self.statusBar().showMessage(i18n.tr("There is already a bookmark on this beat"))
+            return
+        markers.add(beat, "")
+        self.view.set_markers(markers.markers)
+        self._mark_dirty()  # a bookmark is song data: it goes into the project file
+        self.statusBar().showMessage(i18n.tr("Bookmark added at {time}", time=format_time(self._position())))
+
+    def _remove_bookmark(self) -> None:
+        """Drop the bookmark nearest the playhead, if one is near at all."""
+        markers = MarkerList(self.view.markers)
+        if not markers:
+            self.statusBar().showMessage(i18n.tr("This project has no bookmarks"))
+            return
+        beat = self.view.to_beats(max(0.0, self._position()))
+        nearest = min(markers, key=lambda marker: abs(marker.beat - beat))
+        markers.remove(nearest)
+        self.view.set_markers(markers.markers)
+        self._mark_dirty()
+        self.statusBar().showMessage(i18n.tr("Bookmark removed"))
+
+    def _edit_meter(self) -> None:
+        """Edit the score's meter changes.
+
+        Unlike the A-B loop, a meter is song data: it decides where every bar line and number falls,
+        it is written into the project file and into the MIDI export, so a change here marks the
+        project dirty. The dialog is built fresh each time because it edits a copy of whatever map is
+        in force now.
+        """
+        dialog = MeterDialog(self.view.meter_map, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        meter = dialog.meter_map()
+        if meter == self.view.meter_map:
+            return
+        self.view.set_meter_map(meter)
+        self._mark_dirty()
+        self.statusBar().showMessage(i18n.tr("Meter changed: {bars} bars", bars=len(meter.points)))
+
+
+class MeterDialog(QDialog):
+    """The score's meter changes, edited as rows of `(beat, beats_per_bar, bar_offset)`.
+
+    A `MeterMap` normalises itself - sorted, one point per beat, a point on beat 0 - so the dialog
+    does not sort or dedupe: it hands its rows over and the map decides. Same division as the
+    bookmark list, and it keeps those rules in the one place that owns them.
+
+    This is song data, unlike the A-B loop: a meter decides where every bar line and number falls,
+    it is written to the project file and to the MIDI export, so the caller marks the project dirty
+    after a change.
+    """
+
+    def __init__(self, meter: MeterMap, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(i18n.tr("Meter"))
+        self._rows: list[tuple[QWidget, QDoubleSpinBox, QDoubleSpinBox, QSpinBox]] = []
+        self._rows_layout = QVBoxLayout()
+        for point in meter.points:
+            self._append(point.beat, point.beats_per_bar, point.bar_offset)
+
+        add = QPushButton(i18n.tr("Add a meter change"))
+        add.clicked.connect(lambda: self._append(0.0, 4.0, 1))
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=self
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(_label("Meter changes: the beat each takes effect on, its beats per bar, and the bar number"))
+        layout.addLayout(self._rows_layout)
+        layout.addWidget(add)
+        layout.addWidget(buttons)
+
+    def _append(self, beat: float, beats_per_bar: float, bar_offset: int) -> None:
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        beat_box = QDoubleSpinBox(row)
+        beat_box.setRange(0.0, 99999.0)
+        beat_box.setDecimals(4)
+        beat_box.setValue(beat)
+        beats_box = QDoubleSpinBox(row)
+        beats_box.setRange(0.25, 32.0)
+        beats_box.setDecimals(2)
+        beats_box.setValue(beats_per_bar)
+        offset_box = QSpinBox(row)
+        offset_box.setRange(1, 9999)
+        offset_box.setValue(bar_offset)
+        remove = QPushButton(i18n.tr("Remove"), row)
+        remove.clicked.connect(lambda: self._remove(row))
+        for widget in (
+            _label("Beat"),
+            beat_box,
+            _label("Beats/bar"),
+            beats_box,
+            _label("Bar"),
+            offset_box,
+            remove,
+        ):
+            line.addWidget(widget)
+        self._rows_layout.addWidget(row)
+        self._rows.append((row, beat_box, beats_box, offset_box))
+
+    def _remove(self, row: QWidget) -> None:
+        for index, (widget, _beat, _beats, _offset) in enumerate(self._rows):
+            if widget is not row:
+                continue
+            self._rows.pop(index)
+            self._rows_layout.removeWidget(row)
+            row.deleteLater()
+            return
+
+    def meter_map(self) -> MeterMap:
+        """The rows as a map: one point on beat 0 is added or kept by `MeterMap` itself."""
+        return MeterMap(
+            tuple(
+                MeterPoint(beat.value(), beats.value(), offset.value())
+                for _row, beat, beats, offset in self._rows
             )
         )
 

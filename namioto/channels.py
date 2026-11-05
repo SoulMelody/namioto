@@ -8,14 +8,21 @@ carry the channel number and stay in one flat sequence.
 `CHANNEL_COUNT` is 16 and the drum channel is a channel like any other. No name is kept here: a
 library name rides on a MIDI track chunk and may repeat, so names live in the project file alone.
 `GM_PROGRAMS` is the General MIDI instrument a program number selects, in that number's order, and
-`PROGRAM_LABELS` is those names as a picker shows them.
+`PROGRAM_LABELS` is those names as a picker shows them. A channel may be muted, or soloed to leave
+every other one out; `audible` is the single answer to which channels sound. The track clipboard at
+the end of the file holds one lifted track in memory - a snapshot of one channel and its notes - so
+copying and pasting a whole track needs no temp file and no state of its own.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, NamedTuple
 
 from namioto.i18n import tr
+
+if TYPE_CHECKING:  # a note carries its channel number, so this module reads notes but never owns them
+    from namioto.document import Note
 
 CHANNEL_COUNT = 16
 COLOR_HEX = 7
@@ -164,6 +171,7 @@ class Channel:
     program: int = 0
     volume: int = 100  # 0-127, 100 being unity
     mute: bool = False
+    solo: bool = False
     visible: bool = True
     lock: bool = False
 
@@ -191,7 +199,16 @@ def free_channel(channels) -> int | None:
 
 
 def audible(channels) -> list[int]:
-    """The channel numbers that sound; the sidebar's mute is the only filter."""
+    """The channel numbers that sound: the one judgment of what plays, shared by players and panel.
+
+    Solo wins outright. As soon as one channel is soloed the mix is exactly the soloed ones, muted or
+    not, because pressing solo says "only this" more plainly than an earlier mute said "not that"
+    - and pressing mute on the same card then leaves it sounding, never silent by accident.
+    With no solo anywhere every channel that is not muted sounds, which is the old behavior.
+    """
+    soloed = [channel.channel for channel in channels if channel.solo]
+    if soloed:
+        return soloed
     return [channel.channel for channel in channels if not channel.mute]
 
 
@@ -204,3 +221,73 @@ def valid_color(value) -> str:
             return ""
         return value.lower()
     return ""
+
+
+class TrackClip(NamedTuple):
+    """One whole track lifted off the document: a channel's settings and all of its notes.
+
+    A snapshot, not a set of references: the notes are copies, so a copy taken before an edit still
+    pastes what was there. The clipboard lives in memory; a temp file was the way to share a track
+    between processes, and nothing here has a second process to hand it to.
+    """
+
+    channel: Channel
+    notes: tuple[Note, ...]
+
+
+_clipboard: TrackClip | None = None
+
+
+def copied_track() -> TrackClip | None:
+    """The track last copied, or None while nothing has been copied."""
+    return _clipboard
+
+
+def copy_track(channel_index: int, channels, notes) -> TrackClip:
+    """Lift one track into the clipboard and return it: the channel and every note it plays.
+
+    The notes keep their pitch, start and length exactly, and are copied, so the document and the
+    clip cannot both change under one another. A channel with no notes still copies its settings.
+    """
+    channel = next((entry for entry in channels if entry.channel == channel_index), None)
+    lifted = TrackClip(
+        channel if channel is not None else Channel(channel=channel_index),
+        tuple(replace(note) for note in notes if note.channel == channel_index),
+    )
+    global _clipboard
+    _clipboard = lifted
+    return lifted
+
+
+def _with_channel(channels, replacement: Channel) -> list[Channel]:
+    """The list with `replacement` taking the slot of its number, and added when that number is free."""
+    placed = [replacement if channel.channel == replacement.channel else channel for channel in channels]
+    if not any(channel.channel == replacement.channel for channel in channels):
+        placed.append(replacement)
+    return placed
+
+
+def paste_track(clip: TrackClip, target_index: int, channels, notes) -> tuple[list[Channel], list[Note]]:
+    """Put a clip on another channel: its settings land there and its notes join the score.
+
+    Both lists come back new; neither argument is touched, the way the roll's undo snapshots expect.
+    The notes keep their time and pitch and take the target channel, and are appended rather than
+    replacing what the target already plays. Their ids still name the notes they came from, so the
+    document hands the newcomers fresh ones where the two would collide.
+    """
+    settings = replace(clip.channel, channel=target_index)
+    pasted = [replace(note, channel=target_index) for note in clip.notes]
+    return _with_channel(channels, settings), [*notes, *pasted]
+
+
+def delete_track(channel_index: int, channels, notes) -> tuple[list[Channel], list[Note]]:
+    """Empty one track: its notes go and its channel returns to the defaults it started with.
+
+    The channel stays in the list - a number is always a place a note can play on, and the sidebar
+    keeps a card for it - so only the notes and the settings are cleared. Nothing is touched in
+    place, and the other channels come back as they were.
+    """
+    return (
+        _with_channel(channels, Channel(channel=channel_index)),
+        [note for note in notes if note.channel != channel_index],
+    )

@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
 from functools import partial
 
 from PySide6.QtCore import QObject, QTimer, Signal
+
+from namioto import midi_port
+
+# the two finders live in `midi_port` now, which is the one place the port rules sit; the names stay
+# here because this module is what the window and the tests already reach for
+from namioto.midi_port import find_port as find_port
+from namioto.midi_port import find_synth_port as find_synth_port
 
 PREVIEW_SECONDS = 0.6
 SCHEDULER_TICK_MS = 5  # how late a note may start; the old thread slept in slices of the same size
@@ -17,32 +23,6 @@ DEFAULT_PROGRAM = 0  # a grand piano
 CHANNEL_VOLUME = (0xB0, 0x07)  # control change 7: the volume of a channel, 0 to 127
 ALL_NOTES_OFF = 123  # control change 123: releases every note of a channel, the sweep's safety net
 DEFAULT_CHANNEL = (0, DEFAULT_PROGRAM, 100)  # what a program without channels still plays on
-SYNTH_NAMES = ("timidity", "fluidsynth", "qsynth", "wavetable")
-
-
-def find_synth_port(port_names: Sequence[str]) -> int | None:
-    """Index of the first port that looks like a software synth; Midi Through is a loopback."""
-    for index, name in enumerate(port_names):
-        lowered = name.lower()
-        if "through" not in lowered and any(part in lowered for part in SYNTH_NAMES):
-            return index
-    return None
-
-
-def find_port(port_names: Sequence[str], wanted: str = "") -> int | None:
-    """The port a name asks for, else the first software synth: either way, None when there is none.
-
-    The name is matched loosely as well, because a synthesiser's port is numbered by its client when
-    it starts, and that number changes between sessions.
-    """
-    if wanted:
-        for index, name in enumerate(port_names):
-            if name == wanted:
-                return index
-        for index, name in enumerate(port_names):
-            if wanted.lower() in name.lower():
-                return index
-    return find_synth_port(port_names)
 
 
 class NotePlayer(QObject):
@@ -172,7 +152,7 @@ class MidiPortOut(NotePlayer):
     def _send_volume(self, channel: int) -> None:
         # the channel volume rides on the global one, both on the same control change
         level = min(1.0, min(1.27, self._volumes.get(channel, 100) / 100) * self._gain)
-        self.port.send_message([CHANNEL_VOLUME[0] | channel, CHANNEL_VOLUME[1], round(level * 127)])
+        self.port.send([CHANNEL_VOLUME[0] | channel, CHANNEL_VOLUME[1], round(level * 127)])
 
     def set_program(self, notes, speed, channels=()) -> None:
         self.stop()
@@ -185,7 +165,7 @@ class MidiPortOut(NotePlayer):
         for channel, program, volume in channels:
             self._programs[channel] = program
             self._volumes[channel] = volume
-            self.port.send_message([PROGRAM_CHANGE | channel, program])
+            self.port.send([PROGRAM_CHANGE | channel, program])
             self._send_volume(channel)
 
     @property
@@ -242,7 +222,7 @@ class MidiPortOut(NotePlayer):
                 self._send(NOTE_OFF, pitch, 0, channel)
         self._sounding.clear()
         for channel in tuple(self._programs):  # catches a voice the bookkeeping lost, which an exact sweep cannot
-            self.port.send_message([CHANNEL_VOLUME[0] | channel, ALL_NOTES_OFF, 0])
+            self.port.send([CHANNEL_VOLUME[0] | channel, ALL_NOTES_OFF, 0])
         self._started = None
         self._start = 0.0
 
@@ -330,7 +310,7 @@ class MidiPortOut(NotePlayer):
             self.finished.emit()
 
     def _send(self, status: int, pitch: int, velocity: int, channel: int = 0) -> None:
-        self.port.send_message([status | channel, pitch, velocity])
+        self.port.send([status | channel, pitch, velocity])
         key = (channel, pitch)
         if status == NOTE_ON:  # a synth voices every note-on of a pitch, so each is owed its own note-off
             self._sounding[key] = self._sounding.get(key, 0) + 1
@@ -347,14 +327,7 @@ def open_player(
     program: int = DEFAULT_PROGRAM,
 ) -> tuple[NotePlayer, str]:
     """An external MIDI player, or a silent player when no MIDI output is available."""
-    try:
-        import supriya_midi
-
-        port = supriya_midi.MidiOut()
-        index = find_port(port.get_ports(), port_name)
-        if index is not None:
-            port.open_port(index)
-            return MidiPortOut(port, parent, velocity=velocity, program=program), port.get_port_name(index)
-    except Exception:
-        pass
+    port = midi_port.open_output(port_name)
+    if port is not None:
+        return MidiPortOut(port, parent, velocity=velocity, program=program), port.name
     return SilentPlayer(parent), "No MIDI output"

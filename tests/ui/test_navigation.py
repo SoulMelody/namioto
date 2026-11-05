@@ -4,16 +4,17 @@ from __future__ import annotations
 import time
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QKeyEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QSlider
 
 from namioto.interaction import Tool
+from namioto.meter_map import MeterMap, MeterPoint
 from namioto.ui.audio import MidiPortOut, SilentPlayer, find_synth_port
-from namioto.ui.roll import PITCH_MAX
+from namioto.ui.roll import MIN_GRID_SPACING, PITCH_MAX, PianoRollView
 
-from .helpers import FakeOutput, draw_note
+from .helpers import FakeOutput, RateOutput, draw_note
 
 
 def roll_wheel(window, delta: int, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
@@ -256,7 +257,7 @@ class FakePort:
         self.messages: list[list[int]] = []
         self.times: list[float] = []
 
-    def send_message(self, message) -> None:
+    def send(self, message) -> None:
         self.messages.append(list(message))
         self.times.append(time.monotonic())
 
@@ -306,3 +307,95 @@ def test_a_preview_plays_the_note_and_releases_it(pump) -> None:
     assert [0x90, 72, 100] in port.messages
     pump(0.15)
     assert [0x80, 72, 0] in port.messages
+
+
+def test_bar_lines_follow_the_meter_and_keep_the_numbers_consecutive() -> None:
+    view = PianoRollView()
+    view.resize(900, 500)
+    view.set_meter_map(MeterMap((MeterPoint(0.0, 4.0, 1), MeterPoint(8.0, 3.0, 1))))
+
+    lines = view.bar_lines(QRectF(0.0, 0.0, 40.0, 1.0))
+
+    # two 4/4 bars, then every three beats: 8 is bar 3, 11 bar 4, 14 bar 5, and so on
+    assert [(beat, bar) for beat, bar in lines if 8.0 <= beat < 20.0] == [(8.0, 3), (11.0, 4), (14.0, 5), (17.0, 6)]
+    assert [bar for _beat, bar in lines] == list(range(1, len(lines) + 1))  # no number skips at the change
+
+
+def test_the_grid_marks_bar_lines_on_the_meter_map_beats_not_a_uniform_stride() -> None:
+    view = PianoRollView()
+    view.resize(900, 500)
+    view.set_meter_map(MeterMap((MeterPoint(0.0, 4.0, 1), MeterPoint(8.0, 3.0, 1))))
+
+    lines = view.division_lines(QRectF(0.0, 0.0, 20.0, 1.0), MIN_GRID_SPACING)
+    bars = [beat for beat, level in lines if level == 2]
+
+    # a 2-beat grid stride would skip bars 4 and 6 in the 3/4 passage; the meter map draws them all
+    assert bars == [0.0, 4.0, 8.0, 11.0, 14.0, 17.0]
+
+
+def test_the_ab_span_sends_the_transport_back_to_a(own_window) -> None:
+    own_window.player = RateOutput(3.0)
+    own_window.state.loop = (1.0, 3.0)
+    own_window._show_loop()
+
+    assert own_window._actions["loop"].isChecked() is True
+    assert own_window._on_loop_tick(3.0) is True
+    assert own_window.player.position == pytest.approx(1.0)
+    assert own_window.statusBar().currentMessage().startswith("A 00:01.000")
+
+
+def test_a_position_inside_the_span_is_left_alone(own_window) -> None:
+    own_window.player = RateOutput(2.5)
+    own_window.state.loop = (1.0, 3.0)
+    assert own_window._on_loop_tick(2.5) is False
+    assert own_window.player.calls == []
+
+
+def test_a_span_needs_b_after_a(own_window) -> None:
+    own_window.player = RateOutput(2.0)
+    own_window._set_loop_a()
+    own_window.player.position = 1.0  # B before A is not a span
+    own_window._set_loop_b()
+    assert own_window.state.loop is None
+    assert "B must come after A" in own_window.statusBar().currentMessage()
+
+
+def test_setting_the_ab_span_does_not_make_the_project_dirty(own_window) -> None:
+    """`docs/usage.md`: view and volume changes are saved but leave the project clean, and a loop is
+    the same kind of thing - it belongs to the window's state, never to the song."""
+    own_window.project_dirty = False
+    own_window.player = RateOutput(2.0)
+    own_window._set_loop_a()
+    own_window.player.position = 4.0
+    own_window._set_loop_b()
+
+    assert own_window.state.loop == (2.0, 4.0)
+    assert own_window.project_dirty is False
+
+
+def test_clearing_the_span_switches_the_loop_off(own_window) -> None:
+    own_window.player = RateOutput(2.0)
+    own_window._set_loop_a()
+    own_window.player.position = 4.0
+    own_window._set_loop_b()
+    assert own_window._actions["loop"].isChecked() is True
+
+    own_window._clear_loop()
+    assert own_window.state.loop is None
+    assert own_window._actions["loop"].isChecked() is False
+    assert own_window.statusBar().currentMessage() == "A-B off"
+
+
+def test_the_transport_menu_places_the_span_and_arms_it(own_window) -> None:
+    """The A-B loop moved off the bar, so the menu items are the whole way in now."""
+    own_window.player = RateOutput(2.0)
+    own_window._actions["loop-a"].trigger()
+    own_window.player.position = 4.0
+    own_window._actions["loop-b"].trigger()
+
+    assert own_window.state.loop == (2.0, 4.0)
+    assert own_window._actions["loop"].isChecked() is True
+
+    own_window._actions["loop"].trigger()  # the same item switches the loop off
+    assert own_window.state.loop is None
+    assert own_window._actions["loop"].isChecked() is False

@@ -25,7 +25,7 @@ class FakePort:
     def __init__(self) -> None:
         self.messages: list[list[int]] = []
 
-    def send_message(self, message) -> None:
+    def send(self, message) -> None:
         self.messages.append(list(message))
 
 

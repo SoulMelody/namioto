@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from namioto import project
+from namioto.markers import Marker
+from namioto.meter_map import MeterMap
 from namioto.tempo_map import TempoMap, TempoPoint
 
 
@@ -49,6 +51,8 @@ def test_only_the_values_that_belong_to_the_document_are_written() -> None:
         "channels",
         "notes",
         "note_id",
+        "meter_map",
+        "markers",
         "analysis",
         "spectrum",
         "playback",
@@ -315,6 +319,62 @@ def test_a_tempo_map_round_trips_and_names_its_first_point_in_the_tempo_section(
     opened = project.load(path)
     assert opened.tempo_map == tempo
     assert opened.settings.tempo.bpm == 96.0
+
+
+def test_a_new_project_writes_its_meter_and_markers_as_top_level_keys() -> None:
+    written = project.to_dict(make())
+    # song data beside the notes, not a settings section: `PROJECT_SECTIONS` holds neither
+    assert written["meter_map"] == {"points": [[0.0, 4.0, 1]]}
+    assert written["markers"] == []
+    assert "meter_map" not in written["editor"]
+    assert "markers" not in written["editor"]
+
+
+def test_an_older_project_without_the_new_keys_opens_in_plain_four_four() -> None:
+    data = {"format": "namioto", "tempo": {"bpm": 100.0}, "notes": []}
+    opened = project.from_dict(data)
+    assert opened.meter_map == MeterMap.single()
+    assert opened.meter_map.bar_at(0.0) == (1, 0.0)
+    assert opened.markers == ()
+
+
+def test_a_meter_map_and_three_markers_round_trip(tmp_path) -> None:
+    meter = MeterMap.from_pairs([[0, 4, 1], [8, 3, 1]])
+    markers = (Marker(0.0, "intro"), Marker(8.0, "bridge"), Marker(11.0, "chorus"))
+    path = tmp_path / "song.nto"
+    project.save(make(meter_map=meter, markers=markers), path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["meter_map"] == {"points": [[0.0, 4.0, 1], [8.0, 3.0, 1]]}
+    assert data["markers"] == [
+        {"beat": 0.0, "name": "intro"},
+        {"beat": 8.0, "name": "bridge"},
+        {"beat": 11.0, "name": "chorus"},
+    ]
+
+    opened = project.load(path)
+    assert opened.meter_map == meter
+    assert opened.markers == markers
+    assert opened.meter_map.bar_at(11.0) == (4, 0.0)
+
+
+def test_a_broken_meter_map_falls_back_instead_of_failing_the_load() -> None:
+    for broken in ("garbage", [1, 2, 3], 42, {"points": "junk"}, {"points": [[0, "high", 1]]}):
+        opened = project.from_dict({"format": "namioto", "meter_map": broken})
+        assert opened.meter_map == MeterMap.single()
+    # a bar length of zero cannot be a meter, so the file still opens in 4/4
+    assert project.from_dict({"format": "namioto", "meter_map": {"points": [[0, 0, 1]]}}).meter_map == MeterMap.single()
+
+
+def test_markers_that_make_no_sense_leave_the_score_without_bookmarks() -> None:
+    assert project.from_dict({"format": "namioto", "markers": "junk"}).markers == ()
+    opened = project.from_dict(
+        {"format": "namioto", "markers": [{"beat": 4.0, "name": "verse"}, {"name": "nowhere"}, "junk"]}
+    )
+    assert opened.markers == (Marker(4.0, "verse"),)
+    # a repeated beat keeps one marker, as the editor's own list does
+    assert project.from_dict(
+        {"format": "namioto", "markers": [{"beat": 4.0, "name": "a"}, {"beat": 4.0, "name": "b"}]}
+    ).markers == (Marker(4.0, "b"),)
 
 
 def test_a_version_one_file_is_read_as_one_tempo_point() -> None:

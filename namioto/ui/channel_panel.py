@@ -4,9 +4,12 @@
 The panel is a view of `PianoRollView.channels`, never a copy; edits go through
 `set_channel_field`, `add_channel`, `remove_channel` and `set_channel_number`. A card shows the MIDI
 channel number in the channel's own note colour, and the card of `PianoRollView.active_channel` is
-outlined in the palette's `Highlight`. Its three switches are `checkable` and mark the exceptional
-state - locked, hidden or muted - and hiding a channel locks it too. `Channel.color` is the palette
-entry of the channel's number, and `theme.note_shades` derives a note's body and bevels from it.
+outlined in the palette's `Highlight`. Its four switches are `checkable` and mark the exceptional
+state - locked, hidden, muted or soloed - and hiding a channel locks it too. A card's menu lifts the
+whole track out, puts a lifted one back and empties it; each of those is one step in the roll's undo
+stack, because they hand the view both the channels and the notes at once through `replace`.
+`Channel.color` is the palette entry of the channel's number, and `theme.note_shades` derives a
+note's body and bevels from it.
 """
 
 from __future__ import annotations
@@ -27,7 +30,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from namioto.channels import GM_PROGRAMS, PROGRAM_LABELS, Channel, free_channel
+from namioto.channels import (
+    GM_PROGRAMS,
+    PROGRAM_LABELS,
+    Channel,
+    copied_track,
+    copy_track,
+    delete_track,
+    free_channel,
+    paste_track,
+)
 from namioto.i18n import tr
 from namioto.ui import icons
 from namioto.ui.controls import CORNER_RADIUS, FIELD_HEIGHT, icon_button
@@ -37,6 +49,11 @@ from namioto.ui.roll import PianoRollView
 CARD_WIDTH = 300
 SWATCH_WIDTH = 5
 ACTIVE_BORDER = 2
+
+
+def _note_rows(notes) -> list[tuple]:
+    """Notes as the rows `PianoRollView.replace` takes: pitch, start, length, channel, id, lyric."""
+    return [(note.pitch, note.start, note.duration, note.channel, note.id, note.lyric) for note in notes]
 
 
 class _NameLabel(QLabel):
@@ -59,10 +76,11 @@ class _NameLabel(QLabel):
 
 
 class _Card(QWidget):
-    """One channel: colour swatch, name and instrument, the lock/eye/mute buttons.
+    """One channel: colour swatch, name and instrument, the lock/eye/mute/solo buttons.
 
     The active channel — where new notes land, and the only one the roll's frame selects — wears the
-    palette's selection colour as an outline, so which one it is can be read off the sidebar.
+    palette's selection colour as an outline, so which one it is can be read off the sidebar. The
+    menu above the card lifts the whole track out, pastes one in and empties it.
     """
 
     def __init__(self, panel: ChannelPanel, channel: Channel):
@@ -88,7 +106,15 @@ class _Card(QWidget):
         self.lock_button = icon_button("unlock", tr("Lock: notes on this channel cannot be edited"), checkable=True)
         self.eye_button = icon_button("eye", tr("Show or hide the notes of this channel"), checkable=True)
         self.mute_button = icon_button("sound", tr("Mute this channel during playback"), checkable=True)
-        for button, field in ((self.lock_button, "lock"), (self.eye_button, "visible"), (self.mute_button, "mute")):
+        # solo is one glyph in both states: the fill alone says "only this channel sounds", so it
+        # cannot be read for the mute it sits beside
+        self.solo_button = icon_button("note_lyrics", tr("Solo: hear only this channel"), checkable=True)
+        for button, field in (
+            (self.lock_button, "lock"),
+            (self.eye_button, "visible"),
+            (self.mute_button, "mute"),
+            (self.solo_button, "solo"),
+        ):
             button.clicked.connect(lambda _c, field=field: self._toggle(field))
 
         head = QHBoxLayout()
@@ -99,6 +125,7 @@ class _Card(QWidget):
         head.addWidget(self.lock_button)
         head.addWidget(self.eye_button)
         head.addWidget(self.mute_button)
+        head.addWidget(self.solo_button)
 
         text = QVBoxLayout()
         text.setContentsMargins(0, 2, 0, 2)
@@ -134,6 +161,7 @@ class _Card(QWidget):
         self.eye_button.setChecked(not channel.visible)
         self.mute_button.setIcon(icons.icon("mute" if channel.mute else "sound"))
         self.mute_button.setChecked(channel.mute)
+        self.solo_button.setChecked(channel.solo)
 
     def set_active(self, active: bool) -> None:
         self.setProperty("active", active)
@@ -161,6 +189,12 @@ class _Card(QWidget):
         rename = menu.addAction(tr("Rename…"))
         volume = menu.addAction(tr("Volume…"))
         number = menu.addAction(tr("Channel ID…"))
+        menu.addSeparator()
+        copy = menu.addAction(tr("Copy track"))
+        paste = menu.addAction(tr("Paste track"))
+        paste.setEnabled(copied_track() is not None)
+        delete = menu.addAction(tr("Delete track"))
+        menu.addSeparator()
         remove = menu.addAction(tr("Delete channel"))
         chosen = menu.exec(event.globalPos())
         view = panel.view
@@ -176,8 +210,34 @@ class _Card(QWidget):
             value, ok = QInputDialog.getInt(self, tr("Channel ID"), tr("MIDI channel (0-15):"), self._number, 0, 15)
             if ok and not view.set_channel_number(self._number, value):
                 QMessageBox.warning(self, tr("Channel ID"), tr("Channel {number} is already in use", number=value))
+        elif chosen is copy:
+            self._copy_track()
+        elif chosen is paste:
+            self._paste_track()
+        elif chosen is delete:
+            self._delete_track()
         elif chosen is remove:
             view.remove_channel(self._number)
+
+    def _copy_track(self) -> None:
+        """Lift this track into the clipboard; the document does not change, so there is no step."""
+        view = self._panel.view
+        copy_track(self._number, view.channels, [item.note for item in view.notes()])
+
+    def _paste_track(self) -> None:
+        """Put the copied track here as one step: its settings and its notes in a single replace."""
+        clip = copied_track()
+        if clip is None:
+            return
+        view = self._panel.view
+        channels, notes = paste_track(clip, self._number, view.channels, [item.note for item in view.notes()])
+        view.replace(channels, _note_rows(notes), tr("Paste track"))
+
+    def _delete_track(self) -> None:
+        """Empty this track as one step and keep its card: a channel number is always a place to draw."""
+        view = self._panel.view
+        channels, notes = delete_track(self._number, view.channels, [item.note for item in view.notes()])
+        view.replace(channels, _note_rows(notes), tr("Delete track"))
 
     def _toggle(self, field: str) -> None:
         channel = self._channel

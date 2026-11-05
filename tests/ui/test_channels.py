@@ -6,6 +6,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QContextMenuEvent, QKeyEvent, QPalette
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu
 
+from namioto import channels as channel_model
 from namioto import settings as store
 from namioto.channels import Channel
 from namioto.ui import theme
@@ -119,6 +120,19 @@ def test_a_muted_channel_is_left_out_of_the_program(window) -> None:
     reset_channels(window)
 
 
+def test_a_soloed_channel_leaves_the_others_out_of_the_program(window) -> None:
+    window.view.clear_notes()
+    window.view.add_channel(program=4)
+    window.view.add_note(60, 0.0, 1.0, 0)
+    window.view.add_note(64, 0.0, 1.0, 1)
+
+    window.view.set_channel_field(0, solo=True)
+    notes, channels = window._program()  # the app already asks `audible`, so solo needs no wiring of its own
+    assert [note[0] for note in notes] == [60]
+    assert [channel[0] for channel in channels] == [0]
+    reset_channels(window)
+
+
 def test_the_channels_button_toggles_the_sidebar(window) -> None:
     window.channel_panel.setVisible(False)
     window.transport.channels.click()
@@ -211,6 +225,94 @@ def test_the_card_menu_can_change_the_channel_id(own_window, monkeypatch) -> Non
         QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(0, 0), card.mapToGlobal(QPoint(0, 0)))
     )
     assert [channel.channel for channel in view.channels] == [1, 5]
+
+
+def test_the_solo_button_toggles_the_channel(own_window) -> None:
+    view = own_window.view
+    view.set_channels((Channel(channel=0), Channel(channel=1)))
+    card = own_window.channel_panel._cards[0]
+
+    card.solo_button.click()
+    assert own_window.channel_panel._cards[0].solo_button.isChecked() is True
+    assert view.channels[0].solo is True
+
+    card.solo_button.click()
+    assert own_window.channel_panel._cards[0].solo_button.isChecked() is False
+    assert view.channels[0].solo is False
+
+
+def test_a_soloed_and_muted_card_lights_both_switches(own_window) -> None:
+    own_window.view.set_channels((Channel(channel=0, mute=True, solo=True), Channel(channel=1)))
+    cards = own_window.channel_panel._cards
+    assert cards[0].mute_button.isChecked() is True
+    assert cards[0].solo_button.isChecked() is True
+    assert cards[1].solo_button.isChecked() is False  # solo is the exceptional state, off by default
+
+
+def test_the_card_menu_offers_copy_paste_and_delete_for_the_whole_track(own_window, monkeypatch) -> None:
+    view = own_window.view
+    view.set_channels((Channel(channel=0), Channel(channel=1)))
+    card = own_window.channel_panel._cards[0]
+    seen: list[str] = []
+
+    def choose(menu, *args, **kwargs):
+        seen.extend(action.text() for action in menu.actions() if not action.isSeparator())
+        return None  # the menu closes with nothing chosen
+
+    monkeypatch.setattr(QMenu, "exec", choose)
+    card.contextMenuEvent(
+        QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(0, 0), card.mapToGlobal(QPoint(0, 0)))
+    )
+    assert {"Copy track", "Paste track", "Delete track"} <= set(seen)
+
+
+def _choose(monkeypatch, name: str) -> None:
+    monkeypatch.setattr(
+        QMenu, "exec", lambda self, *args, **kwargs: next(a for a in self.actions() if a.text() == name)
+    )
+
+
+def _open_menu(card) -> None:
+    card.contextMenuEvent(
+        QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(0, 0), card.mapToGlobal(QPoint(0, 0)))
+    )
+
+
+def test_pasting_a_track_is_one_undo_step(own_window, monkeypatch) -> None:
+    view = own_window.view
+    view.set_channels((Channel(name="Vocal", channel=0, program=4), Channel(channel=1)))
+    view.set_notes([(60, 0.0, 1.0, 0), (64, 2.0, 1.0, 0)])
+    source, target = own_window.channel_panel._cards[0], own_window.channel_panel._cards[1]
+    monkeypatch.setattr(channel_model, "_clipboard", None)
+
+    _choose(monkeypatch, "Copy track")
+    _open_menu(source)
+    _choose(monkeypatch, "Paste track")
+    _open_menu(target)
+
+    assert [note.channel for note in view.notes()] == [0, 0, 1, 1]
+    assert view.channels[1].name == "Vocal"  # the instrument comes along with the notes
+    assert view.channels[1].program == 4
+
+    view.undo()  # one step puts the channels and the notes back together
+    assert [note.channel for note in view.notes()] == [0, 0]
+    assert view.channels[1].name == "" and view.channels[1].program == 0
+
+
+def test_deleting_a_track_from_the_menu_empties_it_and_keeps_its_card(own_window, monkeypatch) -> None:
+    view = own_window.view
+    view.set_channels((Channel(name="Vocal", channel=0, program=4), Channel(channel=1)))
+    view.set_notes([(60, 0.0, 1.0, 0), (64, 1.0, 1.0, 1)])
+    _choose(monkeypatch, "Delete track")
+    _open_menu(own_window.channel_panel._cards[0])
+
+    assert [note.channel for note in view.notes()] == [1]
+    assert 0 in own_window.channel_panel._cards  # the card stays, ready for what is drawn next
+    assert view.channels[0].name == "" and view.channels[0].program == 0
+
+    view.undo()
+    assert [note.channel for note in view.notes()] == [0, 1]
+    assert view.channels[0].name == "Vocal"
 
 
 def test_the_active_channel_wears_the_selection_colour(own_window) -> None:

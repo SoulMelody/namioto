@@ -47,6 +47,8 @@ from namioto.channels import CHANNEL_COUNT, Channel, free_channel
 from namioto.document import MIN_DURATION, PITCH_COUNT, PITCH_MAX, PITCH_MIN, Document, Note
 from namioto.i18n import tr
 from namioto.interaction import Interaction, Tool
+from namioto.markers import Marker, MarkerList
+from namioto.meter_map import DEFAULT_BEATS_PER_BAR, MeterMap
 from namioto.tempo_map import TempoMap
 from namioto.ui import theme
 from namioto.ui.blocks import CLICK_SLOP_PX, Press, block_part
@@ -58,11 +60,24 @@ LENGTH_BEATS = 64
 CONTENT_MARGIN = 4.0
 NOTE_INSET = 0.06
 NOTE_VISUAL_INSET = 0.14
-BAR_BEATS = 4.0
+# The default bar length, kept under the old name for anything that imported it. The bar length a
+# line is actually drawn at comes from the view's `meter_map`, which may change it mid-score.
+BAR_BEATS = DEFAULT_BEATS_PER_BAR
 PAGE_TURN_MARGIN = 0.15  # how close to the right edge the playhead may get before the page turns
 PAGE_TURN_LEAD = 0.2  # where on the fresh page the playhead then sits
 
-SNAP_CHOICES = (("1/1", 4.0), ("1/2", 2.0), ("1/4", 1.0), ("1/8", 0.5), ("1/16", 0.25), ("1/32", 0.125))
+_PLAIN_SNAPS = (("1/1", 4.0), ("1/2", 2.0), ("1/4", 1.0), ("1/8", 0.5), ("1/16", 0.25), ("1/32", 0.125))
+# The first six keep their order and values: project files store the snap as its float, and the
+# editors' combo boxes look it up by value. The dotted and triplet steps are written as the
+# subdividing arithmetic rather than decimals (0.375, 0.6666...) so 1/16. is exactly 3/8 of a beat
+# and 1/4T is exactly two thirds; the snap comparison is relative and has to see that exactly.
+# One table feeds both the snap grid and the pen's default cell: the two have always been the same
+# value, and a grid the user picked as triplets is the grid they want the pen to start on.
+SNAP_CHOICES = (
+    _PLAIN_SNAPS
+    + tuple((f"{label}.", value * 3 / 2) for label, value in _PLAIN_SNAPS[1:5])
+    + tuple((f"{label}T", value * 2 / 3) for label, value in _PLAIN_SNAPS[1:5])
+)
 
 # The colours are read while painting rather than once at import: a window outlives a theme switch,
 # and a name read early would keep painting the theme that was in force when it was read.
@@ -75,6 +90,8 @@ HISTORY_LIMIT = 50  # snapshots of the whole document, so the depth trades memor
 NEW_CHANNEL = -1  # the channel menu's "make one" entry, since no channel number is negative
 RULER_TIME_ROW = 24
 RULER_HEIGHT = 46
+MARKER_TRACK_HEIGHT = 20  # one lane beside the ruler; fixed like the ruler's own height, not a setting
+MARKER_LABEL_SPACING = 60.0  # pixels between bookmark names, so two close markers keep one label
 TIME_LABEL_SPACING = 84.0
 MEASURE_LABEL_SPACING = 30.0
 TIME_STEPS = (0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0)
@@ -85,6 +102,12 @@ def is_black_key(pitch: int) -> bool:
 
 
 def _is_multiple(value: float, step: float) -> bool:
+    """True when `value` lands on the grid `step`.
+
+    The comparison is on the *ratio*, not on beats: a triplet step is 2/3 of a beat, and an absolute
+    tolerance would either admit everything at large beat numbers or reject every triplet. 1e-6 is
+    also what the tempo map's own beat values can drift by once they have been through seconds.
+    """
     return abs(value / step - round(value / step)) < 1e-6
 
 
@@ -350,6 +373,10 @@ class PianoRollView(QGraphicsView):
         self._preview_pitch: int | None = None
         self.playhead: float | None = None
         self._tempo = TempoMap()
+        # The bar lengths, beside the beat lengths and owned the same way: `set_tempo` moves beats in
+        # time, `set_meter_map` only decides where the bar lines and their numbers fall.
+        self._meter = MeterMap.single()
+        self._markers: tuple[Marker, ...] = ()  # bookmarks, drawn on their own lane; edits come later
         self.gain = 240.0
         self.contrast = 1.0
         self.spectrum: SpectrumImage | None = None
@@ -439,6 +466,50 @@ class PianoRollView(QGraphicsView):
         with self._edit(text):
             self.set_tempo(tempo)
         self.notes_changed.emit()  # the beats moved, so the notes' times may have to follow
+
+    @property
+    def meter_map(self) -> MeterMap:
+        return self._meter
+
+    @meter_map.setter
+    def meter_map(self, value: MeterMap) -> None:
+        self.set_meter_map(value)
+
+    def set_meter_map(self, meter: MeterMap) -> None:
+        """Adopt `meter` as the bar lengths behind the grid.
+
+        Deliberately not an undo step and not a note edit: a meter decides where bar lines and their
+        numbers are drawn, while the notes keep their beats. The project hands its map here when it
+        opens, next to its tempo map.
+        """
+        if meter == self._meter:
+            return
+        self._meter = meter
+        self.refresh()
+
+    @property
+    def markers(self) -> tuple[Marker, ...]:
+        return self._markers
+
+    def set_markers(self, markers=()) -> None:
+        """Adopt the project's bookmarks for the lane the roll draws above the keyboard.
+
+        `MarkerList` puts them in beat order and keeps one per beat, the same rules the project
+        file holds. This batch draws them only; jumping to one, adding and removing are the app's
+        to wire, so nothing here hit-tests the lane.
+        """
+        self._markers = MarkerList(markers).markers
+        self.refresh()
+
+    def bar_lines(self, rect: QRectF) -> list[tuple[float, int]]:
+        """`(beat, bar number)` of every bar line across `rect`, in the drawn grid's coordinates.
+
+        The meter map counts bars from the score's beat 0; the grid may have been slid by
+        `set_offset`, so both ends are unshifted for the lookup and shifted back for the drawing.
+        """
+        offset = self.offset_beats
+        bars = self._meter.bar_lines(rect.left() - offset, rect.right() - offset)
+        return [(beat + offset, bar) for beat, bar in bars]
 
     def content_beats(self) -> float:
         """Scrollable length: the default canvas, the spectrum or the notes, whichever is longest."""
@@ -1104,20 +1175,29 @@ class PianoRollView(QGraphicsView):
         offset = self.offset_beats
         step = self.grid_step() if snap else 1.0
         value = math.floor((rect.left() - offset) / step) * step + offset
-        lines = []
+        # The zoom's step decides the minor and beat lines; the bars come from the meter map, which
+        # is not a uniform step at all once the song changes meter (a 2-beat step would skip every
+        # other bar of a 3/4 passage). Keying by the drawn beat merges the two without duplicates.
+        levels: dict[float, int] = {}
         while value <= rect.right():
-            grid = value - offset
-            level = 2 if _is_multiple(grid, BAR_BEATS) else 1 if _is_multiple(grid, 1.0) else 0
-            if self._zoom_x * (BAR_BEATS if level == 2 else step) >= minimum:
-                lines.append((value, level))
+            if self._zoom_x * step >= minimum:
+                levels[round(value, 9)] = 1 if _is_multiple(value - offset, 1.0) else 0
             value += step
-        return lines
+        for beat, _bar in self._meter.bar_lines(rect.left() - offset, rect.right() - offset):
+            if self._zoom_x * self._meter.beats_per_bar_at(beat) >= minimum:
+                levels[round(beat + offset, 9)] = 2
+        return sorted(levels.items())
 
     def grid_step(self) -> float:
-        for step in (1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1.0, 2.0, BAR_BEATS):
+        """The beat subdivision the canvas draws, chosen so its lines stay at least MIN_GRID_SPACING.
+
+        A zoom ladder, not a bar length: with a meter map the bars are drawn from their own beats, so
+        the ladder ends at the default bar as a fallback for the widest zoom only.
+        """
+        for step in (1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1.0, 2.0, DEFAULT_BEATS_PER_BAR):
             if step * self._zoom_x >= MIN_GRID_SPACING:
                 return step
-        return BAR_BEATS
+        return DEFAULT_BEATS_PER_BAR
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -1708,17 +1788,17 @@ class TimelineRuler(ViewportStrip):
         right = self.view.mapToScene(QPoint(viewport.width(), 0)).x()
         visible = QRectF(left, 0.0, right - left, 1.0)
 
-        stride = 1
-        while stride * BAR_BEATS * self.view.pixels_per_beat() < MEASURE_LABEL_SPACING:
-            stride *= 2
-        offset = self.view.offset_beats
-        for bar in range(int((left - offset) // BAR_BEATS), int((right - offset) // BAR_BEATS) + 1):
-            px = left_offset + self.view.mapFromScene(QPointF(bar * BAR_BEATS + offset, 0.0)).x()
+        label_x: float | None = None
+        for beat, bar in self.view.bar_lines(visible):
+            px = left_offset + self.view.mapFromScene(QPointF(beat, 0.0)).x()
             painter.setPen(QPen(colors.grid_bar, 1))
             painter.drawLine(px, RULER_TIME_ROW, px, self.height())
-            if bar % stride == 0:
+            # A meter change makes bars of different widths, so the number is skipped by measured
+            # pixels rather than by a count of bars: every line is drawn, the names keep their room.
+            if label_x is None or px - label_x >= MEASURE_LABEL_SPACING:
                 painter.setPen(colors.text)
-                painter.drawText(px + 4, RULER_TIME_ROW + 15, str(bar + 1))
+                painter.drawText(px + 4, RULER_TIME_ROW + 15, str(bar))
+                label_x = px
 
         for x, level in self.view.division_lines(visible, MIN_GRID_SPACING, snap=True):
             px = left_offset + self.view.mapFromScene(QPointF(x, 0.0)).x()
@@ -1739,11 +1819,12 @@ class TimelineRuler(ViewportStrip):
         painter.drawLine(int(left_offset), self.height() - 1, right_edge, self.height() - 1)
 
     def bar_at(self, x: float) -> float:
-        """The bar line nearest viewport `x`, as a beat on the drawn grid."""
+        """The start of the bar under viewport `x`, as a beat on the drawn grid."""
         scene_x = self.view.mapToScene(QPoint(int(x - self.origin().x()), 0)).x()
         offset = self.view.offset_beats
-        index = round((scene_x - offset) / BAR_BEATS)
-        return max(0.0, index * BAR_BEATS + offset)
+        meter = self.view.meter_map
+        bar, _beat_in_bar = meter.bar_at(max(0.0, scene_x - offset))
+        return max(0.0, meter.beat_at(bar, 0.0) + offset)
 
     def _open_menu(self, position) -> None:
         """The ruler's own menu: where the beat grid's tempo changes."""
@@ -1803,6 +1884,50 @@ class TimelineRuler(ViewportStrip):
         hbar = self.view.horizontalScrollBar()
         hbar.setValue(hbar.value() - event.angleDelta().y())
         event.accept()
+
+
+class MarkerTrack(ViewportStrip):
+    """The bookmarks lane beside the ruler: a line at each marker's beat and its name.
+
+    It reads the roll's markers and scroll position exactly as the ruler reads the grid, so the
+    lane and the notes stay in step without a position of its own. This batch only draws: a click
+    on a bookmark, and adding or renaming one, belong to the app layer that owns the project.
+    """
+
+    def __init__(self, view: PianoRollView):
+        super().__init__(view)
+        self.setFixedHeight(MARKER_TRACK_HEIGHT)
+        view.view_changed.connect(self.update)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        colors = theme.canvas()
+        painter.fillRect(self.rect(), colors.panel)
+        viewport = self.view.viewport()
+        left_offset = self.origin().x()
+        painter.setClipRect(QRect(int(left_offset), 0, viewport.width(), self.height()))
+        font = QFont()
+        font.setPixelSize(9)
+        painter.setFont(font)
+        label_x: float | None = None
+        for marker in self.view.markers:
+            px = left_offset + self.view.mapFromScene(QPointF(marker.beat, 0.0)).x()
+            # The view's frame puts beat 0 one pixel left of the viewport; a bookmark on the very
+            # first beat would otherwise never show. One pixel of tolerance keeps it visible.
+            if px < -1 or px > left_offset + viewport.width():
+                continue
+            px = max(px, 0.0)
+            painter.setPen(QPen(colors.playhead, 1))
+            painter.drawLine(px, 0, px, self.height())
+            # Names are optional under the same spacing rule as the ruler's numbers: the line
+            # always shows, the name only when it has room, so close bookmarks stay readable.
+            if label_x is None or px - label_x >= MARKER_LABEL_SPACING:
+                painter.setPen(colors.text)
+                painter.drawText(px + 3, self.height() - 5, marker.label)
+                label_x = px
+        painter.setPen(QPen(colors.ruler_line, 1))
+        right_edge = left_offset + viewport.width()
+        painter.drawLine(int(left_offset), self.height() - 1, right_edge, self.height() - 1)
 
 
 class PianoKeyboard(ViewportStrip):

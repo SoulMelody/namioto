@@ -17,6 +17,8 @@ from PySide6.QtGui import QAction, QColor, QFontMetrics, QPainter, QPalette
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyleOptionSlider,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -40,6 +43,9 @@ ICON_SIZE = 17
 BUTTON_HEIGHT = 24
 FIELD_HEIGHT = 24
 CORNER_RADIUS = 4  # of a block's outline
+EQ_BANDS = 10  # the engine's equaliser has ten bands, so the window offers exactly ten
+EQ_RANGE = 24.0  # dB either way
+EQ_FREQUENCIES = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
 
 
 def _outline_colour(palette: QPalette) -> QColor:
@@ -239,6 +245,16 @@ def icon_button(kind: str, tooltip: str, checkable: bool = False) -> QToolButton
     button.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
     button.setToolTip(tooltip)
     button.setCheckable(checkable)
+    button.setAutoRaise(True)
+    button.setFixedHeight(BUTTON_HEIGHT)
+    return button
+
+
+def text_button(label: str, tooltip: str) -> QToolButton:
+    """A raised-less button that says a letter: A and B are words no glyph draws better."""
+    button = QToolButton()
+    button.setText(label)
+    button.setToolTip(tooltip)
     button.setAutoRaise(True)
     button.setFixedHeight(BUTTON_HEIGHT)
     return button
@@ -683,6 +699,9 @@ class EditBar(_Group):
 class MixBar(_Group):
     """Spectrum display parameters and the audio/MIDI mix."""
 
+    pitch_changed = Signal(float)
+    eq_changed = Signal(object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("mixBar")
@@ -695,11 +714,107 @@ class MixBar(_Group):
         self.midi_volume = ValueSlider("MIDI", 0, 100, 80, suffix="%")
         self.midi_volume.slider.setToolTip(tr("Volume of the note playback"))
 
+        # pitch and the equaliser shape the audio, not the notes: the engine resamples for the one
+        # and filters for the other, and both read as one value each, so one signal carries each
+        self.pitch = ValueSlider(tr("Pitch"), -24, 24, 0, step=1)
+        self.pitch.slider.setToolTip(tr("Audio pitch in semitones: the engine resamples, so the tempo stays"))
+        self._bands: tuple[float, ...] = (0.0,) * EQ_BANDS
+        self.eq = text_button(tr("EQ"), tr("Equalizer: ten bands over the audio playback"))
+        self.pitch.value_changed.connect(self.pitch_changed)
+        self.eq.clicked.connect(self._open_equalizer)
+
         spectrum = Cluster("spectrum")
-        spectrum.add_sliders((self.gain, self.contrast))
+        # the tone shares the spectrum block's slider columns rather than a block of its own: another
+        # column would push the whole bar wider than the window, and these columns are already there
+        spectrum.add_sliders((self.gain, self.contrast, self.pitch))
+        spectrum.add(self.eq, row=2)
 
         volume = Cluster("volume")
         volume.add_sliders((self.audio_volume, self.midi_volume))
 
         self.place(spectrum, 0, 3, rows=2)
         self.place(volume, 0, 4, rows=2)
+
+    @property
+    def eq_bands(self) -> tuple[float, ...]:
+        return self._bands
+
+    def set_pitch(self, semitones: float) -> None:
+        """Fill the slider in without telling the player: a value coming from somewhere else."""
+        self.pitch.set_value(semitones)
+
+    def set_eq_bands(self, bands) -> None:
+        self._bands = _normalised_bands(bands)
+
+    def _open_equalizer(self) -> None:
+        dialog = EqualizerPopup(self._bands, self)
+        dialog.bands_changed.connect(self._adopt_bands)
+        dialog.exec()
+
+    def _adopt_bands(self, bands) -> None:
+        self._bands = _normalised_bands(bands)
+        self.eq_changed.emit(self._bands)
+
+
+def _normalised_bands(bands) -> tuple[float, ...]:
+    """A curve of exactly `EQ_BANDS` numbers: an absent or short one pads with zero, which is flat."""
+    values = [float(value) for value in bands][:EQ_BANDS]
+    return tuple(values) + (0.0,) * (EQ_BANDS - len(values))
+
+
+def _band_caption(hz: int) -> str:
+    """A band's frequency, short enough for a slider's caption column: 31, 62 … 2k, 16k."""
+    return f"{hz // 1000}k" if hz >= 1000 else str(hz)
+
+
+class EqualizerPopup(QDialog):
+    """The ten bands of the audio equaliser, in dB.
+
+    Not in `MixBar`: that bar already reads as columns on one row, and ten sliders there would turn
+    a glance into a scan. So the bar carries one button and the bands live in a window that exists
+    only while it is open, in two columns of five so the shape stays a page rather than a strip.
+    Every move emits the whole curve, because the engine takes the curve as one value.
+    """
+
+    bands_changed = Signal(object)  # tuple[float, ...]
+
+    def __init__(self, bands, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Equalizer"))
+        bands = _normalised_bands(bands)
+        self.sliders: list[ValueSlider] = []
+
+        caption = QLabel(tr("Gain per band, in dB: 0 leaves the band alone"))
+        columns = QHBoxLayout()
+        per_column = EQ_BANDS // 2
+        for first in range(0, EQ_BANDS, per_column):
+            cluster = Cluster("equalizer")
+            column_sliders: list[ValueSlider] = []
+            for index in range(first, min(first + per_column, EQ_BANDS)):
+                slider = ValueSlider(_band_caption(EQ_FREQUENCIES[index]), -EQ_RANGE, EQ_RANGE, bands[index], step=1)
+                slider.slider.setToolTip(tr("Band at {hz} Hz", hz=EQ_FREQUENCIES[index]))
+                slider.value_changed.connect(self._emit)
+                column_sliders.append(slider)
+            cluster.add_sliders(column_sliders)
+            columns.addWidget(cluster)
+            self.sliders.extend(column_sliders)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
+        reset = buttons.addButton(tr("Reset"), QDialogButtonBox.ButtonRole.ResetRole)
+        reset.clicked.connect(self._reset)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(caption)
+        layout.addLayout(columns)
+        layout.addWidget(buttons)
+
+    def bands(self) -> tuple[float, ...]:
+        return tuple(slider.value() for slider in self.sliders)
+
+    def _emit(self, *_args) -> None:
+        self.bands_changed.emit(self.bands())
+
+    def _reset(self) -> None:
+        for slider in self.sliders:
+            slider.set_value(0.0)

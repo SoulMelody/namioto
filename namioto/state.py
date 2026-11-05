@@ -11,6 +11,7 @@ reads them back. The window writes this file as it goes, so it is not made to be
 from __future__ import annotations
 
 import json
+import math
 import os
 import warnings
 from dataclasses import dataclass, field
@@ -25,6 +26,11 @@ class State:
     geometry: str = ""
     last_audio_dir: str = ""
     project: dict[str, dict] = field(default_factory=dict)
+    # the A-B loop the transport repeats, in seconds on the playhead's own clock. Session state, not
+    # song data: a project file never carries it, and arming or moving it must not make the project
+    # dirty - the same rule that keeps view and volume changes out of the dirty flag. None means the
+    # loop is off. Beats were the other option; seconds keep it clear of `MeterMap`, which is song data.
+    loop: tuple[float, float] | None = None
 
 
 def default_path() -> Path:
@@ -46,6 +52,18 @@ def _project(value) -> dict[str, dict]:
     return {name: values for name, values in value.items() if isinstance(values, dict)}
 
 
+def _loop(value) -> tuple[float, float] | None:
+    """Two seconds, A before B: anything else means the loop is off rather than half on."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in value):
+        return None
+    start, end = (float(item) for item in value)
+    if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+        return None
+    return (start, end)
+
+
 def from_dict(data) -> State:
     if not isinstance(data, dict):
         return State()
@@ -53,6 +71,7 @@ def from_dict(data) -> State:
         geometry=_text(data.get("geometry")),
         last_audio_dir=_text(data.get("last_audio_dir")),
         project=_project(data.get("project")),
+        loop=_loop(data.get("loop")),
     )
 
 
@@ -71,5 +90,10 @@ def load(path: str | Path | None = None) -> State:
 
 def save(state: State, path: str | Path | None = None) -> Path:
     """Write the window's state out whole: a half-written file would be read as a broken one."""
-    data = {"geometry": state.geometry, "last_audio_dir": state.last_audio_dir, "project": state.project}
+    data = {
+        "geometry": state.geometry,
+        "last_audio_dir": state.last_audio_dir,
+        "project": state.project,
+        "loop": list(state.loop) if state.loop else None,
+    }
     return write_json(data, Path(path) if path is not None else default_path())

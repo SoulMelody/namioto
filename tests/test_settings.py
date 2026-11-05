@@ -48,6 +48,63 @@ def test_a_bad_midi_playback_delay_is_brought_back(settings_file, written, kept)
     assert store.get_value(store.load(), "midi", "playback_delay_ms") == kept
 
 
+def test_the_tone_and_the_sync_start_neutral() -> None:
+    settings = store.Settings()
+    assert settings.audio.pitch_semitones == 0.0
+    assert settings.audio.eq_bands == (0.0,) * 10
+    assert settings.mtc.framerate == ""
+    assert settings.mtc.input_port == ""
+    assert settings.mtc.output_port == ""
+
+
+def test_the_tone_and_the_sync_round_trip(settings_file) -> None:
+    original = store.Settings()
+    store.set_value(original, "audio", "pitch_semitones", 12.0)
+    store.set_value(original, "audio", "eq_bands", (0.0, 3.0, -6.0) + (0.0,) * 7)
+    store.set_value(original, "mtc", "framerate", "29.97drop")
+    store.set_value(original, "mtc", "output_port", "IAC Driver")
+    store.save(original)
+
+    loaded = store.load()
+    assert store.get_value(loaded, "audio", "pitch_semitones") == 12.0
+    assert store.get_value(loaded, "audio", "eq_bands") == (0.0, 3.0, -6.0) + (0.0,) * 7
+    assert isinstance(store.get_value(loaded, "audio", "eq_bands"), tuple)  # the engine's own shape
+    assert store.get_value(loaded, "mtc", "framerate") == "29.97drop"
+    assert store.get_value(loaded, "mtc", "output_port") == "IAC Driver"
+
+
+@pytest.mark.parametrize(
+    "written, kept",
+    [
+        (None, (0.0,) * 10),
+        ("garbage", (0.0,) * 10),
+        ({"bands": [1, 2]}, (0.0,) * 10),
+        ([1, 2], (1.0, 2.0) + (0.0,) * 8),
+        ([100, -100], (12.0, -24.0) + (0.0,) * 8),
+        ([1.5], (2.0,) + (0.0,) * 9),
+        ([10.0] * 12, (10.0,) * 10),
+        (["x", 4, None, 5], (4.0, 5.0) + (0.0,) * 8),
+        (True, (0.0,) * 10),
+    ],
+)
+def test_a_bad_equaliser_curve_is_brought_back(settings_file, written, kept) -> None:
+    settings_file.write_text(json.dumps({"audio": {"eq_bands": written}}))
+    assert store.get_value(store.load(), "audio", "eq_bands") == pytest.approx(kept)
+
+
+def test_an_unknown_frame_rate_is_not_guessed(settings_file) -> None:
+    settings_file.write_text(json.dumps({"mtc": {"framerate": "23.976"}}))
+    assert store.get_value(store.load(), "mtc", "framerate") == ""
+
+
+def test_an_old_file_without_the_new_sections_still_loads(settings_file) -> None:
+    settings_file.write_text(json.dumps({"version": 1, "general": {"auto_save": True}}))
+    loaded = store.load()
+    assert store.get_value(loaded, "audio", "pitch_semitones") == 0.0
+    assert store.get_value(loaded, "audio", "eq_bands") == (0.0,) * 10
+    assert store.get_value(loaded, "mtc", "framerate") == ""
+
+
 def test_the_default_path_is_the_config_directory(monkeypatch) -> None:
     monkeypatch.delenv("NAMIOTO_SETTINGS", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/namioto-config-probe")

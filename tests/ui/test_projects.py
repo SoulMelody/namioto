@@ -5,14 +5,25 @@ import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, QMimeData, QPointF, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from namioto import project
+from namioto.i18n import tr
+from namioto.markers import Marker
+from namioto.meter_map import MeterMap, MeterPoint
 from namioto.tempo_map import TempoMap, TempoPoint
 from namioto.ui.app import MainWindow
 
 from .helpers import fake_loaders
+
+
+def test_the_window_opens_without_the_long_shortcut_sentence_in_the_status_bar(own_window) -> None:
+    """The keys live in the help dialog; the bar gets a hint with a timeout, not a manual."""
+    message = own_window.statusBar().currentMessage()
+    assert message == tr("Press F1 for the keyboard shortcuts")
+    assert len(message) < 80
 
 
 def test_saving_a_project_takes_the_notes_and_the_values_with_it(own_window, tmp_path) -> None:
@@ -358,3 +369,94 @@ def test_a_new_project_needs_no_audio(own_window, tmp_path) -> None:
     saved = project.load(path)
     assert [note.pitch for note in saved.notes] == [60]
     assert saved.audio == ""
+
+
+def _mime(*paths: str, urls=None) -> QMimeData:
+    mime = QMimeData()
+    mime.setUrls([QUrl(url) for url in urls] if urls else [QUrl.fromLocalFile(path) for path in paths])
+    return mime
+
+
+def _enter(window, mime: QMimeData) -> QDragEnterEvent:
+    # Qt 6.9 deprecated the QPoint overload; the QPointF one is the supported spelling
+    event = QDragEnterEvent(
+        QPointF(10.0, 10.0),
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.dragEnterEvent(event)
+    return event
+
+
+def _drop(window, mime: QMimeData) -> QDropEvent:
+    event = QDropEvent(
+        QPointF(10.0, 10.0),
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.dropEvent(event)
+    return event
+
+
+def test_a_project_dropped_on_the_window_opens(own_window, tmp_path) -> None:
+    path = tmp_path / "dropped.nto"
+    project.save(project.Project(settings=project.default_settings()), path)
+
+    assert own_window.acceptDrops() is True
+    assert _enter(own_window, _mime(str(path))).isAccepted() is True
+    _drop(own_window, _mime(str(path)))
+
+    assert own_window.project_path == path
+
+
+def test_a_drop_carrying_several_files_takes_the_first(own_window, tmp_path) -> None:
+    # WaveTone's `DragQueryFileW(0)`: one window, one document, so only the first path is opened
+    first, second = tmp_path / "first.nto", tmp_path / "second.nto"
+    project.save(project.Project(settings=project.default_settings()), first)
+    project.save(project.Project(settings=project.default_settings()), second)
+
+    _drop(own_window, _mime(str(first), str(second)))
+
+    assert own_window.project_path == first
+
+
+def test_a_url_from_the_web_is_not_dropped_into_the_editor(own_window) -> None:
+    mime = _mime(urls=["https://example.com/song.nto"])
+
+    assert _enter(own_window, mime).isAccepted() is False
+    assert _drop(own_window, mime).isAccepted() is False
+
+
+def test_the_meter_and_the_bookmarks_go_through_the_window_and_back(own_window, tmp_path) -> None:
+    meter = MeterMap((MeterPoint(0.0, 4.0, 1), MeterPoint(8.0, 3.0, 1)))
+    own_window.view.set_meter_map(meter)
+    own_window.view.set_markers((Marker(4.0, "Verse"), Marker(12.0, "Chorus")))
+    path = tmp_path / "meter.nto"
+    assert own_window.save_project(path) is True
+
+    saved = project.load(path)
+    assert saved.meter_map == meter
+    assert saved.markers == (Marker(4.0, "Verse"), Marker(12.0, "Chorus"))
+
+    # a fresh document drops both, so what comes back is what the file held
+    assert own_window.new_project() is True
+    assert own_window.view.meter_map == MeterMap.single()
+    assert own_window.view.markers == ()
+
+    assert own_window.load_project(path) is True
+    assert own_window.view.meter_map == meter
+    assert own_window.view.markers == saved.markers
+
+
+def test_a_bookmark_is_song_data_and_marks_the_project_dirty(own_window) -> None:
+    """The opposite of the A-B loop: a bookmark is written into the project file, so it is an edit."""
+    own_window.project_dirty = False
+    own_window._seek(1.0)
+    own_window._add_bookmark()
+
+    assert len(own_window.view.markers) == 1
+    assert own_window.project_dirty is True

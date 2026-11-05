@@ -170,6 +170,65 @@ SECTIONS: tuple[Section, ...] = (
             ),
         ),
     ),
+    # the sound the program plays with, then the clock it can share: MIDI, audio, sync
+    Section(
+        "audio",
+        "Audio",
+        (
+            Field(
+                "pitch_semitones",
+                "float",
+                0.0,
+                "Playback pitch (semitones)",
+                "Shifts the pitch of the audio without changing its length; 0 leaves it alone.",
+                low=-24.0,
+                high=24.0,
+                step=1.0,
+                decimals=0,
+            ),
+            Field(
+                "eq_bands",
+                "floats",
+                (0.0,) * 10,
+                "Playback equaliser (dB)",
+                "Ten band gains from 31.5 Hz to 16 kHz; every band at 0 is flat.",
+                low=-24.0,
+                high=12.0,
+                step=1.0,
+                decimals=0,
+            ),
+        ),
+    ),
+    Section(
+        "mtc",
+        "MTC",
+        (
+            Field(
+                "framerate",
+                "choice",
+                "",
+                "MTC frame rate",
+                "The frame rate the timecode is sent and read at. Empty refuses to start rather than "
+                "put a wrong timecode on the wire.",
+                choices=("", "24", "25", "29.97drop", "30"),
+                labels=("(unset)", "24 fps", "25 fps", "29.97 fps (drop)", "30 fps"),
+            ),
+            Field(
+                "input_port",
+                "text",
+                "",
+                "MTC input port",
+                "The MIDI input the timecode is read from; empty asks every time.",
+            ),
+            Field(
+                "output_port",
+                "text",
+                "",
+                "MTC output port",
+                "The MIDI output the timecode is sent to; empty asks every time.",
+            ),
+        ),
+    ),
     # no page: a habit of the editor, kept between runs and never typed into the settings window
     Section(
         "editor",

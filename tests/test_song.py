@@ -15,6 +15,7 @@ import pytest
 import soundfile
 from PySide6.QtWidgets import QApplication
 
+from namioto.audio import Engine
 from namioto.ui import theme
 from namioto.ui.song import ENGINE_RATE, SongPlayer, load_song
 
@@ -97,15 +98,24 @@ class FakeOutput:
     """The engine with no device behind it, so the wrapper's plumbing can be checked."""
 
     def __init__(self, *_args) -> None:
+        # a real engine behind the stand-in: the wrapper hands its two playback settings to the
+        # engine the output holds, and the playhead it reports is the one that engine counts
+        self._engine = Engine(ENGINE_RATE)
         self.loaded = True
         self.playing = False
         self.finished = False
-        self.position = 0.0
-        self.duration = 1.0
         self.speed = 1.0
         self.gain = 1.0
         self.opened = False
         self.calls: list[str] = []
+
+    @property
+    def position(self) -> float:
+        return self._engine.position
+
+    @property
+    def duration(self) -> float:
+        return self._engine.duration
 
     def open(self, null_backend: bool) -> bool:
         self.opened = True
@@ -114,23 +124,26 @@ class FakeOutput:
     def close(self) -> None:
         pass
 
-    def load(self, _samples) -> None:
+    def load(self, samples) -> None:
+        self._engine.load(samples)
         self.calls.append("load")
 
     def unload(self) -> None:
+        self._engine.unload()
         self.loaded = False
 
     def play(self, seconds: float = 0.0) -> None:
+        self._engine.play(seconds)
         self.playing = True
-        self.position = seconds
         self.calls.append("play")
 
     def pause(self) -> None:
+        self._engine.pause()
         self.playing = False
         self.calls.append("pause")
 
     def seek(self, seconds: float) -> None:
-        self.position = seconds
+        self._engine.seek(seconds)
         self.calls.append("seek")
 
     def error(self) -> str:
@@ -151,3 +164,46 @@ def test_the_wrapper_opens_once_and_reports_finished(monkeypatch) -> None:
     fake.finished = True
     player._check_finished()
     assert received == [True]
+
+
+def _tone(frequency: float, seconds: float) -> np.ndarray:
+    time = np.arange(int(ENGINE_RATE * seconds)) / ENGINE_RATE
+    return np.sin(2 * np.pi * frequency * time).astype(np.float32)
+
+
+def test_the_pitch_and_the_curve_reach_the_engine() -> None:
+    player = SongPlayer()
+    player.load(np.zeros(ENGINE_RATE, dtype=np.float32), ENGINE_RATE)
+
+    player.pitch_semitones = 12.0
+    player.eq_bands = (-12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    assert player.pitch_semitones == pytest.approx(12.0)
+    assert player.eq_bands == pytest.approx((-12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    assert player._output._engine.pitch_semitones == pytest.approx(12.0)
+    assert player._output._engine.eq_bands[0] == pytest.approx(-12.0)
+
+
+def test_a_pitch_set_before_a_song_arrives_survives_the_load() -> None:
+    player = SongPlayer()
+    player.pitch_semitones = 12.0
+
+    player.load(_tone(440.0, 1.0), ENGINE_RATE)
+
+    assert player.pitch_semitones == pytest.approx(12.0)
+    assert player._output._engine.pitch_semitones == pytest.approx(12.0)
+
+
+def test_the_playhead_is_the_same_with_a_shift_as_without(monkeypatch) -> None:
+    def position_after(semitones: float) -> float:
+        fake = FakeOutput()
+        monkeypatch.setattr("namioto.ui.song.Output", lambda *args: fake)
+        player = SongPlayer()
+        player.load(_tone(440.0, 2.0), ENGINE_RATE)
+        player.pitch_semitones = semitones
+        player.play(0.0)
+        fake._engine.pull(ENGINE_RATE // 2)  # half a second of output, whatever the pitch
+        return player.position
+
+    assert position_after(0.0) == pytest.approx(0.5)
+    assert position_after(12.0) == position_after(0.0)

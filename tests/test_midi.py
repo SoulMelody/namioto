@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 from typing import Any
 
 import mido
@@ -10,6 +11,7 @@ import pytest
 
 from namioto import midi, project
 from namioto.channels import Channel
+from namioto.meter_map import MeterMap
 from namioto.tempo_map import TempoMap, TempoPoint
 
 
@@ -193,6 +195,77 @@ def test_one_bpm_is_still_written_as_one_tempo_event(tmp_path) -> None:
     changes = [message for track in written.tracks for message in track if message.type == "set_tempo"]
     assert len(changes) == 1
     assert midi.read(path).tempo_map.is_single
+
+
+def test_a_plain_four_four_score_writes_the_one_signature_it_always_wrote(tmp_path) -> None:
+    path = tmp_path / "four.mid"
+    midi.write(path, (Channel(channel=0),), (project.Note(1.0, 0.5, 60, 0),), 120.0)
+    signatures = [
+        message for track in mido.MidiFile(path).tracks for message in track if message.type == "time_signature"
+    ]
+    assert len(signatures) == 1
+    assert (signatures[0].numerator, signatures[0].denominator) == (4, 4)
+    assert signatures[0].time == 0
+    # no meter passed at all still writes the same file as a plain 4/4 project did before
+    assert midi.to_bytes((Channel(channel=0),), (project.Note(1.0, 0.5, 60, 0),), 120.0) == path.read_bytes()
+    assert midi.to_bytes((), (), 120.0, meter_map=MeterMap.single()) == midi.to_bytes((), (), 120.0)
+
+
+def test_a_meter_change_is_written_as_one_signature_on_its_own_beat(tmp_path) -> None:
+    meter = MeterMap.from_pairs([[0, 4, 1], [8, 3, 1]])
+    path = tmp_path / "meters.mid"
+    midi.write(path, (Channel(channel=0),), (project.Note(1.0, 0.5, 60, 0),), 120.0, meter_map=meter)
+
+    written = mido.MidiFile(path)
+    events = [message for track in written.tracks for message in track if message.type == "time_signature"]
+    assert [(message.numerator, message.denominator) for message in events] == [(4, 4), (3, 4)]
+    # the second change lands on beat 8, on the file's own division
+    ticks = [tick for tick, message in absolute(written.tracks[0]) if message.type == "time_signature"]
+    assert ticks == [0, 8 * midi.PPQ]
+
+
+def test_a_bar_length_that_is_not_whole_is_rounded_to_the_nearest_count() -> None:
+    meter = MeterMap.from_pairs([[0, 2.5, 1]])
+    data = midi.to_bytes((Channel(channel=0),), (project.Note(1.0, 0.5, 60, 0),), 120.0, meter_map=meter)
+    stream = mido.MidiFile(file=io.BytesIO(data))
+    events = [message for track in stream.tracks for message in track if message.type == "time_signature"]
+    # MIDI counts beats in whole numbers only, so 2.5 is written as the nearer 2
+    assert [message.numerator for message in events] == [2]
+
+
+def test_a_signature_shares_its_beat_with_the_notes_without_getting_in_front_of_them(tmp_path) -> None:
+    meter = MeterMap.from_pairs([[0, 4, 1], [8, 3, 1]])
+    path = tmp_path / "order.mid"
+    midi.write(
+        path,
+        (Channel(channel=0),),
+        (project.Note(0.5, 0.25, 60, 0), project.Note(3.0, 0.5, 62, 0)),
+        TempoMap((TempoPoint(0.0, 120.0), TempoPoint(4.0, 60.0))),
+        meter_map=meter,
+    )
+    written = mido.MidiFile(path)
+    events = absolute(written.tracks[0])
+    # a reader walks delta times, so none of them may be negative
+    assert all(message.time >= 0 for track in written.tracks for message in track)
+    # at the opening tick the conductor's meta events come before the channel's own, which is the
+    # order mido writes and the order a reader expects: the grid is set up, then the notes land on it
+    opening = [message.type for tick, message in events if tick == 0]
+    assert opening[0] == "set_tempo"
+    assert "program_change" in opening
+    # and the later signature sits on its own beat, after the notes of the bars before it
+    signature_ticks = [tick for tick, message in events if message.type == "time_signature"]
+    note_ticks = [tick for tick, message in events if message.type == "note_on"]
+    assert signature_ticks == [0, 8 * midi.PPQ]
+    assert all(tick < 8 * midi.PPQ for tick in note_ticks)
+
+
+def test_a_file_with_no_channel_still_carries_every_signature() -> None:
+    meter = MeterMap.from_pairs([[0, 4, 1], [8, 3, 1]])
+    data = midi.to_bytes((), (), TempoMap((TempoPoint(0.0, 120.0), TempoPoint(4.0, 60.0))), meter_map=meter)
+    written = mido.MidiFile(file=io.BytesIO(data))
+    events = [message for track in written.tracks for message in track if message.type == "time_signature"]
+    assert [message.numerator for message in events] == [4, 3]
+    assert all(message.time >= 0 for track in written.tracks for message in track)
 
 
 def test_a_note_that_never_ends_is_dropped(tmp_path) -> None:

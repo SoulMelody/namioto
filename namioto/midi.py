@@ -29,6 +29,7 @@ import mido
 
 from namioto import project
 from namioto.channels import CHANNEL_COUNT, Channel
+from namioto.meter_map import MeterMap
 from namioto.tempo_map import TempoMap, TempoPoint
 
 SUFFIXES = (".mid", ".midi")
@@ -151,33 +152,72 @@ def _read(mid: mido.MidiFile, *, wavetone: bool, limit: int) -> Imported:
     )
 
 
-def write(path: str | Path, channels, notes, tempo: TempoMap | float, *, wavetone: bool = False) -> Path:
+def write(
+    path: str | Path,
+    channels,
+    notes,
+    tempo: TempoMap | float,
+    *,
+    wavetone: bool = False,
+    meter_map: MeterMap | None = None,
+) -> Path:
     """Write channels and notes, both in seconds, out as a MIDI file, on the project's own tempo.
 
     `tempo` is the beat grid's map, or a single BPM for a score that keeps one. One MTrk per channel,
-    the first of them carrying the conductor's tempo changes and time signature, so the notes start
+    the first of them carrying the conductor's tempo changes and time signatures, so the notes start
     on track 0; a channel's name is not written, since a name belongs to this project and not to a
     MIDI channel. A note is written nearest the tick its time names, so one drawn on the roll's grid
     lands exactly on the tick that grid stands for and one taken from the audio keeps the time it
     has.
+
+    `meter_map` is the score's bar lengths, which this writer cannot read from `notes`: the file
+    needs a time signature, and the notes carry none. It defaults to plain 4/4 so an export with no
+    meter to hand writes exactly what it did before there were meter changes.
     """
-    return _save(path, _build(channels, notes, tempo, wavetone=wavetone))
+    return _save(path, _build(channels, notes, tempo, wavetone=wavetone, meter_map=meter_map))
 
 
-def to_bytes(channels, notes, tempo: TempoMap | float, *, wavetone: bool = False) -> bytes:
+def to_bytes(
+    channels,
+    notes,
+    tempo: TempoMap | float,
+    *,
+    wavetone: bool = False,
+    meter_map: MeterMap | None = None,
+) -> bytes:
     """Export MIDI without requiring an intermediate file."""
     stream = io.BytesIO()
-    _build(channels, notes, tempo, wavetone=wavetone).save(file=stream)
+    _build(channels, notes, tempo, wavetone=wavetone, meter_map=meter_map).save(file=stream)
     return stream.getvalue()
 
 
-def _build(channels, notes, tempo: TempoMap | float, *, wavetone: bool) -> mido.MidiFile:
+def _time_signatures(meter_map: MeterMap | None, ppq: int) -> list[tuple[int, mido.MetaMessage]]:
+    """One `time_signature` per meter point, at the tick its beat names.
+
+    MIDI's numerator is a whole count of beats, so a bar length like 2.5 is rounded: the event can
+    only say 2 or 3, and a rounded bar line is closer to the score than refusing to write it.
+    """
+    meter = meter_map if meter_map is not None else MeterMap.single()
+    events: list[tuple[int, mido.MetaMessage]] = []
+    for point in meter.points:
+        numerator = max(1, int(round(point.beats_per_bar)))
+        events.append(
+            (
+                round(point.beat * ppq),
+                mido.MetaMessage("time_signature", numerator=numerator, denominator=4),
+            )
+        )
+    return events
+
+
+def _build(channels, notes, tempo: TempoMap | float, *, wavetone: bool, meter_map: MeterMap | None) -> mido.MidiFile:
     ppq = PPQ
     tempo_map = tempo if isinstance(tempo, TempoMap) else TempoMap.single(float(tempo))
     lead_in = LEAD_IN_BEATS * ppq if wavetone else 0
 
     mid = mido.MidiFile(type=1, ticks_per_beat=ppq, charset="utf-8")
     changes = [(round(point.beat * ppq), mido.bpm2tempo(point.bpm)) for point in tempo_map.points]
+    signatures = _time_signatures(meter_map, ppq)
 
     for entry in channels:
         notes_here: list[tuple[int, int, int]] = []  # (tick, 1 for on, pitch)
@@ -195,7 +235,7 @@ def _build(channels, notes, tempo: TempoMap | float, *, wavetone: bool) -> mido.
         stream: list[tuple[int, int, mido.Message | mido.MetaMessage]] = []
         if not mid.tracks:
             stream.extend((tick, 0, mido.MetaMessage("set_tempo", tempo=tempo)) for tick, tempo in changes)
-            stream.append((0, 0, mido.MetaMessage("time_signature", numerator=4, denominator=4)))
+            stream.extend((tick, 0, signature) for tick, signature in signatures)
         stream.append((0, 1, mido.Message("program_change", channel=entry.channel, program=entry.program)))
         stream.append((0, 1, mido.Message("control_change", channel=entry.channel, control=7, value=entry.volume)))
         stream.extend(
@@ -222,11 +262,14 @@ def _build(channels, notes, tempo: TempoMap | float, *, wavetone: bool) -> mido.
         mid.tracks.append(written)
     if not mid.tracks:
         conductor = mido.MidiTrack()
+        merged = [(tick, mido.MetaMessage("set_tempo", tempo=tempo)) for tick, tempo in changes]
+        merged.extend((tick, signature) for tick, signature in signatures)
+        merged.sort(key=lambda item: item[0])  # a tempo first on its beat, then the meter that beat counts in
         previous = 0
-        for tick, tempo in changes:
-            conductor.append(mido.MetaMessage("set_tempo", tempo=tempo, time=tick - previous))
+        for tick, message in merged:
+            message.time = tick - previous
+            conductor.append(message)
             previous = tick
-        conductor.append(mido.MetaMessage("time_signature", numerator=4, denominator=4, time=0))
         mid.tracks.append(conductor)  # a file with no channel still needs the tempo
     return mid
 

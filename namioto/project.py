@@ -28,6 +28,8 @@ from typing import Any, NamedTuple
 from namioto import params
 from namioto.analysis.choices import CHANNEL_MODES
 from namioto.channels import CHANNEL_COUNT, Channel, valid_color
+from namioto.markers import Marker, MarkerList
+from namioto.meter_map import MeterMap
 from namioto.params import Field, Section
 from namioto.tempo_map import TempoMap
 from namioto.utils import write_json
@@ -317,6 +319,10 @@ class Project:
     next_id: int = 1
     # the beat grid's tempo over the song; `settings.tempo.bpm` mirrors its first point
     tempo_map: TempoMap = field(default_factory=TempoMap)
+    # the bar lengths that tempo is counted in, and the bookmarks laid on it; both are song data,
+    # so they sit beside the tempo rather than inside a settings section
+    meter_map: MeterMap = field(default_factory=MeterMap.single)
+    markers: tuple[Marker, ...] = ()
 
     def __post_init__(self) -> None:
         """Keep the one-tempo field and the map's first point saying the same thing.
@@ -363,6 +369,10 @@ def to_dict(project: Project) -> dict:
         "version": VERSION,
         **settings,
         **({} if project.tempo_map.is_single else {"tempo_map": project.tempo_map.to_pairs()}),
+        # song data, not settings: written whether or not the score uses more than one meter, so a
+        # reader never has to guess which side of the default a missing key meant
+        "meter_map": project.meter_map.to_dict(),
+        "markers": [{"beat": marker.beat, "name": marker.name} for marker in project.markers],
         "audio": project.audio,
         "channels": [_channel_dict(channel) for channel in project.channels],
         "notes": [
@@ -388,6 +398,7 @@ def _channel_dict(channel: Channel) -> dict:
         "program": channel.program,
         "volume": channel.volume,
         "mute": channel.mute,
+        "solo": channel.solo,
         "visible": channel.visible,
         "lock": channel.lock,
     }
@@ -434,6 +445,7 @@ def _channel(entry: Any) -> Channel:
 
     booleans = (
         entry.get("mute", False),
+        entry.get("solo", False),
         entry.get("visible", True),
         entry.get("lock", False),
     )
@@ -445,8 +457,9 @@ def _channel(entry: Any) -> Channel:
         program=whole(entry.get("program", 0), 0, 127, 0),
         volume=whole(entry.get("volume", 100), 0, 127, 100),
         mute=booleans[0] if isinstance(booleans[0], bool) else False,
-        visible=booleans[1] if isinstance(booleans[1], bool) else True,
-        lock=booleans[2] if isinstance(booleans[2], bool) else False,
+        solo=booleans[1] if isinstance(booleans[1], bool) else False,
+        visible=booleans[2] if isinstance(booleans[2], bool) else True,
+        lock=booleans[3] if isinstance(booleans[3], bool) else False,
     )
 
 
@@ -498,7 +511,31 @@ def from_dict(data: Any) -> Project:
         notes=notes,
         next_id=_next_id(data.get("note_id"), notes),
         tempo_map=tempo_map,
+        meter_map=_meter_map(data.get("meter_map")),
+        markers=_markers(data.get("markers")),
     )
+
+
+def _meter_map(value: Any) -> MeterMap:
+    """The file's meter map, or one plain 4/4 when the file is older or the value is unusable.
+
+    A meter that cannot be read is not a reason to lose the notes beside it: the project falls back
+    the way every other field does, and the score opens in 4/4 rather than not at all.
+    """
+    if not isinstance(value, dict):
+        return MeterMap.single()
+    try:
+        return MeterMap.from_dict(value)
+    except (AttributeError, TypeError, ValueError):
+        return MeterMap.single()
+
+
+def _markers(value: Any) -> tuple[Marker, ...]:
+    """The file's markers, in beat order; an unreadable list leaves the score without bookmarks."""
+    if not isinstance(value, list):
+        return ()
+    # `MarkerList` is the mutable editor-side shape; a project is frozen, so it keeps the tuple
+    return MarkerList.from_list(value).markers
 
 
 def _next_id(value: Any, notes: tuple[Note, ...]) -> int:

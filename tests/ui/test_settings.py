@@ -47,7 +47,7 @@ def test_the_settings_window_lists_every_visible_field(own_window) -> None:
     }
     assert names == expected  # `editor` has no page: its switches are what the program remembers itself
     pages = [dialog.findChild(QTabWidget).tabText(index) for index in range(dialog.findChild(QTabWidget).count())]
-    assert pages == ["General", "Devices", "Tempo", "Network", "MIDI", "Remote"]
+    assert pages == ["General", "Devices", "Tempo", "Network", "MIDI", "Audio", "MTC", "Remote"]
     dialog.close()
 
 

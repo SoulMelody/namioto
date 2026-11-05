@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 
 from namioto.channels import Channel
 from namioto.interaction import Tool
-from namioto.ui.roll import PITCH_MAX
+from namioto.ui.roll import PITCH_MAX, SNAP_CHOICES, _is_multiple
 
 from .helpers import FakeOutput, draw_note, focus, reset_channels, roll_mouse, roll_mouse_here, wheel
 
@@ -877,4 +877,75 @@ def test_selecting_a_note_is_not_an_undo_step(window) -> None:
     roll_mouse(window, QEvent.Type.MouseButtonRelease, QPointF(2.5, row))
     assert note.isSelected()
     assert window.view.undo_stack.count() == 0
+    window.view.clear_notes()
+
+
+def test_the_snap_table_keeps_the_plain_values_and_adds_dotted_and_triplet_steps() -> None:
+    assert SNAP_CHOICES[:6] == (
+        ("1/1", 4.0),
+        ("1/2", 2.0),
+        ("1/4", 1.0),
+        ("1/8", 0.5),
+        ("1/16", 0.25),
+        ("1/32", 0.125),
+    )
+    values = dict(SNAP_CHOICES)
+    assert values["1/2."] == 3.0
+    assert values["1/4."] == 1.5
+    assert values["1/8."] == 0.75
+    assert values["1/16."] == 0.375  # exactly 3/8, not 0.37500000001
+    assert values["1/2T"] == pytest.approx(4 / 3)
+    assert values["1/4T"] == pytest.approx(2 / 3)
+    assert values["1/8T"] == pytest.approx(1 / 3)
+    assert values["1/16T"] == pytest.approx(1 / 6)
+
+
+def test_a_stored_snap_value_still_selects_its_own_entry(window) -> None:
+    """Projects saved before the table grew store the float, so the lookup must stay by value."""
+    snap = window.edit.snap
+    assert snap.itemText(snap.findData(0.5)) == "1/8"
+    assert snap.itemText(snap.findData(0.25)) == "1/16"
+
+
+def test_a_triplet_step_is_a_multiple_of_itself() -> None:
+    assert _is_multiple(2 / 3, 2 / 3)
+    assert _is_multiple(2.0, 2 / 3)  # three triplet cells make two beats
+    assert not _is_multiple(1.0, 2 / 3)  # and one beat is not on the triplet grid
+    assert _is_multiple(1 / 6, 1 / 6)
+
+
+def test_a_triplet_note_drag_lands_on_two_thirds(window) -> None:
+    window.edit.pen.click()
+    window.view.set_channels((Channel(channel=0),))
+    window.view.clear_notes()
+    window.view.snap = 2.0 / 3
+    note = window.view.add_note(69, 2.0, 1.0)
+    row = float(PITCH_MAX - 69) + 0.5
+    window.view.centerOn(QPointF(3.0, row))
+
+    roll_mouse(window, QEvent.Type.MouseButtonPress, QPointF(2.4, row))  # well inside, not the edge
+    roll_mouse(window, QEvent.Type.MouseMove, QPointF(3.06, row))  # 0.66 of a beat: one triplet cell
+    assert note.start == pytest.approx(2.0 + 2 / 3)
+    roll_mouse(window, QEvent.Type.MouseButtonRelease, QPointF(3.06, row))
+
+    window.view.snap = 0.25
+    window.view.clear_notes()
+
+
+@pytest.mark.parametrize("target", [3.8, 4.0])  # 1.4 and 1.6 beats: both sides of the dotted line
+def test_a_dotted_step_pulls_both_sides_onto_one_and_a_half(window, target) -> None:
+    window.edit.pen.click()
+    window.view.set_channels((Channel(channel=0),))
+    window.view.clear_notes()
+    window.view.snap = 1.5
+    note = window.view.add_note(69, 2.0, 1.0)
+    row = float(PITCH_MAX - 69) + 0.5
+    window.view.centerOn(QPointF(3.0, row))
+
+    roll_mouse(window, QEvent.Type.MouseButtonPress, QPointF(2.4, row))
+    roll_mouse(window, QEvent.Type.MouseMove, QPointF(target, row))
+    assert note.start == pytest.approx(3.5)
+    roll_mouse(window, QEvent.Type.MouseButtonRelease, QPointF(target, row))
+
+    window.view.snap = 0.25
     window.view.clear_notes()
