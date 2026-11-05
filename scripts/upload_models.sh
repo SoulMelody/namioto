@@ -8,27 +8,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Defaults for this project's release; every one of them can be overridden on the command line.
-REPO="sitiyou/namioto"
+REPO="SoulMelody/namioto"
 TAG="models"
 TITLE="ONNX models"
 NOTES="ONNX models, downloaded on demand by namioto.
 
-- mms-onnx-int8.zip — Meta MMS forced aligner, Japanese (CC-BY-NC 4.0); conversion by
-  scripts/export_align_model.py
-- yohane-onnx-int8.zip — NextFire mms-300m forced aligner, Japanese (CC BY-NC-SA 4.0); conversion by
-  scripts/export_align_model.py
-- mms-onnx-fp16.zip, yohane-onnx-fp16.zip — those two graphs in half precision, which a GPU run
-  loads in place of the quantised one
-- mms-onnx.zip, yohane-onnx.zip — the int8 packages under the names releases before the rename ask
-  for, kept so those installs can still fetch them
 - tempocnn-onnx.zip — Essentia/TempoCNN deeptemp-k16-3 (CC BY-NC-SA 4.0)
 
-All of them carry non-commercial licenses: they are redistributed for use with namioto only. See NOTICE."
+It carries a non-commercial license: it is redistributed for use with namioto only. See NOTICE."
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/namioto/models"
-LANGUAGE="ja"
 TEMPOCNN=""
 OUT="dist/models"
-ONLY="mms yohane tempocnn"
+ONLY="tempocnn"
 REUSE=0
 CLOBBER=0
 DRY=0
@@ -37,19 +28,16 @@ usage() {
     cat <<'EOF'
 Usage: ./scripts/upload_models.sh [options]
 
-Publishes mms-onnx-int8.zip, yohane-onnx-int8.zip and tempocnn-onnx.zip as the assets of one
-GitHub release - one zip per ONNX model, with the aligners' half-precision packages beside them when
-they have been exported - and prints the registry lines that point the program at them.
+Publishes tempocnn-onnx.zip as the asset of one GitHub release and prints the registry line that
+points the program at it.
 `gh` must be logged in with a token that carries the `repo` scope for the repository's owner.
 
   --tag TAG          the release tag (default: models). A re-export wants a new one: the program
                      caches a model by its path, so replacing an asset under a published tag would
                      change results under it
-  --only mms,yohane,tempocnn
-                     which models to publish (default: all three)
-  --repo OWNER/NAME  default: sitiyou/namioto
-  --data-dir DIR     where the aligners live (default: $XDG_DATA_HOME/namioto/models)
-  --language CODE    the aligners' language directory (default: ja)
+  --only tempocnn    which models to publish (default: all of them)
+  --repo OWNER/NAME  default: SoulMelody/namioto
+  --data-dir DIR     where the models live (default: $XDG_DATA_HOME/namioto/models)
   --tempocnn FILE    the TempoCNN .onnx (default: the one in the data directory)
   --out DIR          where the zips are built (default: dist/models)
   --title TEXT       release title (default: "ONNX models")
@@ -91,10 +79,6 @@ while [ $# -gt 0 ]; do
             ;;
         --data-dir)
             DATA_DIR="${2:?--data-dir needs a value}"
-            shift
-            ;;
-        --language)
-            LANGUAGE="${2:?--language needs a value}"
             shift
             ;;
         --tempocnn)
@@ -148,9 +132,7 @@ fi
 
 # One zip per ONNX model, flat, and named the way GAME's own release assets are: the model, then
 # -onnx. The language is not in the name, so a second language for one model would need its own
-# tag. The aligner's package has to hold model.onnx and vocab.json together, because
-# model_store.unpack takes the folder holding the first of a model's files and moves what is beside
-# it into place.
+# tag.
 assets=()
 build_zip() {
     local asset="$1"
@@ -169,17 +151,6 @@ if [ "$DRY" == 0 ]; then
 fi
 for model in $ONLY; do
     case "$model" in
-        mms | yohane)
-            directory="$DATA_DIR/$model/$LANGUAGE"
-            build_zip "$model-onnx-int8.zip" "$directory/model.onnx" "$directory/vocab.json"
-            # the half-precision copy a GPU run loads: published apart, because it is twice the size
-            # and a CPU-only install would pay for it
-            if [ -f "$directory/model.fp16.onnx" ]; then
-                build_zip "$model-onnx-fp16.zip" "$directory/model.fp16.onnx"
-            else
-                say "no $directory/model.fp16.onnx: no half-precision package for $model"
-            fi
-            ;;
         tempocnn)
             source="$TEMPOCNN"
             [ -n "$source" ] || source="$DATA_DIR/tempocnn/deeptemp-k16-3.onnx"
@@ -191,7 +162,7 @@ for model in $ONLY; do
             fi
             ;;
         *)
-            die "Unknown model: $model (expected mms, yohane or tempocnn)"
+            die "Unknown model: $model (expected tempocnn)"
             ;;
     esac
 done
@@ -243,19 +214,6 @@ registry_hint() {
 
 Point the registry at the release (namioto/model_store.py, MODELS):
 
-  "aligner": Model(
-      name="aligner",
-      env="NAMIOTO_ALIGN_MODEL",
-      files=("model.onnx", "vocab.json"),
-      hint="convert one with scripts/export_align_model.py",
-      asset="https://github.com/$REPO/releases/download/$TAG/{model}-onnx-int8.zip",
-  ),
-  "aligner_fp16": Model(
-      name="aligner_fp16",
-      env="NAMIOTO_ALIGN_MODEL",
-      files=("model.fp16.onnx",),
-      asset="https://github.com/$REPO/releases/download/$TAG/{model}-onnx-fp16.zip",
-  ),
   "tempocnn": Model(
       name="tempocnn",
       env="NAMIOTO_TEMPOCNN_MODEL",
@@ -263,9 +221,8 @@ Point the registry at the release (namioto/model_store.py, MODELS):
       asset="https://github.com/$REPO/releases/download/$TAG/tempocnn-onnx.zip",
   ),
 
-model_store.Model.url() fills {model} with the first key of the entry - the size for game, the
-model for the aligner - so it needs that key name today instead of {variant}, and the aligner needs
-its asset filled in. One key is enough while there is one language per model.
+model_store.Model.url() fills {model} with the first key of the entry - the size for game - so the
+asset that has no key at all is written with none.
 EOF
 }
 

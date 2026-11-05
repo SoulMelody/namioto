@@ -2,5 +2,5 @@
 """Audio analysis and model inference, each module also a CLI.
 
 Deliberately imports nothing: `namioto.settings` reads `choices` and `devices` for its defaults
-while `align` and `transcription` read `settings` back, so re-exporting here would close the loop.
+while `transcription` reads `settings` back, so re-exporting here would close the loop.
 """

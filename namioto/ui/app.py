@@ -77,7 +77,6 @@ from namioto.mtc import Rate
 from namioto.playback import note_frequency
 from namioto.tempo_map import TempoMap
 from namioto.ui import theme
-from namioto.ui.align_dialog import AlignDialog
 from namioto.ui.audio import open_player
 from namioto.ui.channel_panel import ChannelPanel
 from namioto.ui.controls import ControlArea, EditBar, MixBar, TransportBar
@@ -436,7 +435,6 @@ class MainWindow(QMainWindow):
         self.transport.export_midi_requested.connect(self._on_export_midi)
         self.edit.transcribe_requested.connect(self._open_transcription)
         self.edit.lyrics_requested.connect(self._open_lyrics)
-        self.edit.align_requested.connect(self._open_align)
         self.transport.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
         self.player.finished.connect(self._on_playback_finished)
         self.song.finished.connect(self._on_playback_finished)
@@ -630,49 +628,6 @@ class MainWindow(QMainWindow):
         self.view.refresh()
         self._mark_dirty()
         return True
-
-    def _open_align(self) -> None:
-        """Ask the forced aligner for a time on every note, from the word it sings."""
-        if self.view.gesture_active:
-            return
-        if self.project_path is None:
-            self.statusBar().showMessage(i18n.tr("Save the project before aligning the lyrics"))
-            return
-        if self.audio_path is None:
-            self.statusBar().showMessage(i18n.tr("Load the audio before aligning the lyrics"))
-            return
-        notes = [item.note for item in self.view.notes() if item.note.channel == self.view.active_channel]
-        if not any(note.lyric for note in notes):
-            self.statusBar().showMessage(i18n.tr("The selected channel has no lyrics to align"))
-            return
-        dialog = AlignDialog(
-            self.audio_path,
-            [(note.lyric,) for note in notes],
-            self.view.bpm,
-            self,
-            offset=self.view.offset,
-        )
-        dialog.aligned.connect(partial(self._adopt_alignment, notes, self._audio_generation))
-        dialog.exec()
-
-    def _adopt_alignment(self, notes, generation: int, spans, _model: str) -> None:
-        """Lay the aligned spans onto the notes, as one undo step."""
-        if generation != self._audio_generation:
-            return
-        timed = [(note, span) for note, span in zip(notes, spans, strict=True) if span[0] is not None]
-        if not timed:
-            self.statusBar().showMessage(i18n.tr("The aligner put a time on no note"))
-            return
-        self.view.begin_gesture(i18n.tr("Align lyrics"))
-        try:
-            for note, (start, end) in timed:
-                note.set_range(self.view.to_beats(start), note.pitch)
-                note.set_duration(self.view.to_beats(end) - self.view.to_beats(start))
-        finally:
-            self.view.commit_gesture()
-        self.view.refresh()
-        self._mark_dirty()
-        self.statusBar().showMessage(i18n.tr("Aligned {notes} notes", notes=len(timed)))
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, parent=self)
@@ -1994,7 +1949,6 @@ class MainWindow(QMainWindow):
         tools_menu = bars.addMenu(i18n.tr("Tools"))
         tools_menu.addAction(self._register("tempo", tempo_action(self)))
         tools_menu.addAction(self._command("transcribe", "Transcription…", self._open_transcription))
-        tools_menu.addAction(self._command("align", "Align Lyrics…", self._open_align))
         tools_menu.addSeparator()
         tools_menu.addAction(self._command("bookmark-add", "Add Bookmark at Playhead", self._add_bookmark))
         tools_menu.addAction(self._command("bookmark-remove", "Remove Nearest Bookmark", self._remove_bookmark))

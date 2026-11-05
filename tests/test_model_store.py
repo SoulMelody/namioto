@@ -15,15 +15,7 @@ from namioto.analysis import model_store
 def test_each_family_keeps_the_directory_it_already_uses(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     assert model_store.path("game", "small") == tmp_path / "namioto" / "models" / "game" / "small"
-    assert model_store.path("aligner", "mms", "ja") == tmp_path / "namioto" / "models" / "mms" / "ja"
-
-
-def test_the_aligner_packages_land_where_their_model_is(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-
-    assert model_store.path("aligner_fp16", "mms", "ja") == model_store.path("aligner", "mms", "ja")
-    assert model_store.MODELS["aligner"].url(("mms", "ja")).endswith("/models/mms-onnx-int8.zip")
-    assert model_store.MODELS["aligner_fp16"].url(("mms", "ja")).endswith("/models/mms-onnx-fp16.zip")
+    assert model_store.path("tempocnn") == tmp_path / "namioto" / "models" / "tempocnn"
 
 
 def test_the_providers_a_name_stands_for() -> None:
@@ -137,27 +129,33 @@ def test_unpacking_takes_the_folder_holding_the_first_file(tmp_path, monkeypatch
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     archive = tmp_path / "release.zip"
     with zipfile.ZipFile(archive, "w") as bundle:
-        bundle.writestr("model.onnx", "weights")
-        bundle.writestr("vocab.json", "{}")
+        bundle.writestr("config.json", "{}")
 
-    target = model_store.unpack("aligner", archive, ("mms", "ja"))
+    target = model_store.unpack("game", archive, ("small",))
 
-    assert target == model_store.path("aligner", "mms", "ja")
-    assert (target / "model.onnx").read_text() == "weights"
-    assert model_store.installed("aligner", "mms", "ja")
+    assert target == model_store.path("game", "small")
+    assert (target / "config.json").read_text() == "{}"
+    assert model_store.installed("game", "small")
 
 
 def test_nothing_installed_and_no_download_says_what_to_do(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    monkeypatch.delenv(model_store.MODELS["aligner"].env, raising=False)
+    hinted = model_store.Model(
+        name="hinted",
+        env="NAMIOTO_HINTED_MODEL",
+        files=("model.onnx",),
+        hint="convert one with a script",
+    )
+    monkeypatch.setitem(model_store.MODELS, "hinted", hinted)
+    monkeypatch.delenv(hinted.env, raising=False)
 
     with pytest.raises(FileNotFoundError) as error:
-        model_store.resolve("aligner", parts=("mms", "ja"), download=False)
+        model_store.resolve("hinted", parts=("mms", "ja"), download=False)
 
     message = str(error.value)
     assert "no mms/ja model" in message
-    assert model_store.MODELS["aligner"].env in message
-    assert model_store.MODELS["aligner"].hint in message
+    assert hinted.env in message
+    assert hinted.hint in message
 
 
 def test_a_model_with_nothing_published_says_what_to_do(tmp_path, monkeypatch) -> None:

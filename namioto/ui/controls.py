@@ -610,7 +610,6 @@ class EditBar(_Group):
     quantize_requested = Signal()
     transcribe_requested = Signal()
     lyrics_requested = Signal()
-    align_requested = Signal()
 
     def __init__(self, snap_choices, parent=None):
         super().__init__(parent)
@@ -653,9 +652,6 @@ class EditBar(_Group):
         self.lyrics = icon_button("lyrics", tr("Lyrics: edit the text the project sings"))
         self.lyrics.setEnabled(False)
         self.lyrics.clicked.connect(self.lyrics_requested)
-        self.align = icon_button("align", tr("Align lyrics: put a time on every sound with the forced aligner"))
-        self.align.setEnabled(False)
-        self.align.clicked.connect(self.align_requested)
 
         tools = Cluster("tools")
         tools.add(self.mode)
@@ -666,7 +662,6 @@ class EditBar(_Group):
         tools.add(self.quantize)
         tools.add(self.transcribe)
         tools.add(self.lyrics)
-        tools.add(self.align)
 
         self.place(tools, 1, 0, 2)
         self._render()

@@ -80,26 +80,12 @@ python3 scripts/package_release.py windows
 
 Packages are written to `dist/release/`.
 
-## Model conversion
-
-The aligner runs converted ONNX models; conversion requires dependencies outside the normal
-runtime:
-
-```bash
-uv run --group export scripts/export_align_model.py --model mms
-uv run --group export scripts/export_align_model.py --model yohane
-```
-
-MMS conversion uses torch and torchaudio; yohane uses torch and transformers. Both need ONNX.
-The checkpoints are Meta's MMS forced aligner and
-`NextFire/mms-300m-ForcedAligner-karaoke-ja-Latn`, respectively.
-
 ## Code map
 
 | Location | Responsibility |
 | --- | --- |
 | `namioto/ui/` | Qt editor, dialogs, spectrum rendering and remote-control server |
-| `namioto/analysis/` | Spectrum, tempo, transcription, alignment, model downloads and devices |
+| `namioto/analysis/` | Spectrum, tempo, transcription, model downloads and devices |
 | `namioto/lyrics.py` | The word a note sings, and how a text becomes one word per note |
 | `namioto/document.py`, `project.py`, `midi.py` | Notes, project persistence and MIDI interchange |
 | `namioto/settings.py`, `state.py` | Preferences and remembered UI/new-project values |

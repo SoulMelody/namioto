@@ -109,25 +109,6 @@ They are not included in builds. Configure a GitHub mirror or proxy in Settings 
 if needed. Models have separate licenses, including non-commercial restrictions; see
 [NOTICE](../NOTICE).
 
-## Align a vocal
-
-```bash
-uv run namioto-cli align vocal.wav lines.json --out aligned.json
-```
-
-Input must be an isolated vocal and a JSON list of `{start, end, tokens}` windows. Tokens
-are romanised kana, one per sound. Windows must already be approximately correct: the
-aligner refines them, rather than finding lines throughout a song.
-
-Output gives each token's onset, end and probability; unplaced tokens remain untimed.
-Treat ends cautiously: an end is the next onset, so a final token may extend into a rest.
-Diagnostics on stderr include `empty`, `nonmonotonic` and `collapsed`; review those windows
-before trusting them.
-
-The default model is Meta's MMS; `yohane` is a karaoke fine-tune. `--dir` or
-`$NAMIOTO_ALIGN_MODEL` selects a converted model. See [development](development.md#model-conversion)
-for conversion tools.
-
 ## Remote control
 
 Remote control is off by default. Start with `uv run namioto --ipc`, or enable it in

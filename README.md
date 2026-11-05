@@ -33,15 +33,15 @@ directly, with each gesture kept as one undo step.
 
 ![Lyrics mapped to vocal notes](docs/lyrics-mapping.png)
 
-### Extract notes and align lyrics
+### Extract notes
 
 Two engines transcribe automatically: GAME for a singing voice, and MuScriptor for instruments,
-which keeps one part per instrument it hears. Alignment helps map known lyrics against a
-separated vocal. These previews show the setup dialogs, not completed inference runs.
+which keeps one part per instrument it hears. These previews show the setup dialog, not a completed
+inference run.
 
-| Singing-voice transcription | Lyrics alignment |
+| Transcription | Lyrics mapping |
 | --- | --- |
-| ![Transcription options](docs/transcription.png) | ![Lyrics alignment options](docs/alignment.png) |
+| ![Transcription options](docs/transcription.png) | ![Lyrics mapped onto notes](docs/lyrics-mapping.png) |
 
 The **Engine** row picks which one runs. GAME writes to one channel. MuScriptor needs a torch build,
 so it ships in the `pytorch-cpu` and `ort-cuda` extras rather than the base install; its checkpoints
@@ -96,9 +96,9 @@ It is enabled by default and adds/removes WaveTone's leading bar.
 | Guide | What it covers |
 | --- | --- |
 | [Using the editor](docs/usage.md) | Projects, spectrum, editing shortcuts, playback, channels and settings |
-| [Lyrics](docs/lyrics.md) | Lyric text, readings, alignment and the mapping onto notes |
-| [Command-line tools](docs/cli.md) | Analysis, note extraction, alignment and remote control |
-| [Development](docs/development.md) | Source setup, tests, packaging and model conversion |
+| [Lyrics](docs/lyrics.md) | Lyric text, readings and the mapping onto notes |
+| [Command-line tools](docs/cli.md) | Analysis, note extraction and remote control |
+| [Development](docs/development.md) | Source setup, tests, packaging and models |
 
 ## License
 

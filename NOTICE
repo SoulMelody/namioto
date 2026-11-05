@@ -96,47 +96,6 @@ Third-party code and assets
 - Consequence: parts produced with those checkpoints are non-commercial. Accepting the license on
   each model page is a prerequisite for the download.
 
-### FA-Kara (forced alignment)
-- Upstream: moriwx/FA-Kara, https://github.com/moriwx/FA-Kara
-- License: MIT
-- Used for: the alignment core `namioto/align.py` ports. `align()`'s per-token flow - flatten a
-  line's tokens into characters, force them onto the model's frames, group the frames back into one
-  span per token - is reimplemented here in numpy and ONNX Runtime, with the audio windowed by the
-  caller. The module loads a converted ONNX graph from the data directory
-  (`~/.local/share/namioto/models/<model>/<language>`, via `platformdirs`), from
-  `$NAMIOTO_ALIGN_MODEL`, or, when neither has one, from this project's `models` release
-  (`mms-onnx-int8.zip`, `yohane-onnx-int8.zip`, and a half-precision `mms-onnx-fp16.zip` or
-  `yohane-onnx-fp16.zip` that a GPU run loads in its place), which it downloads.
-  `scripts/export_align_model.py` produces those graphs from the two models below, and
-  `scripts/upload_models.sh` publishes them.
-
-### torchaudio (CTC forced alignment)
-- Upstream: pytorch/audio, https://github.com/pytorch/audio
-- License: BSD 2-Clause
-- Used for: `forced_align` and `merge_tokens`, whose numpy port in `namioto/align.py` computes the
-  CTC trellis and the token spans. torchaudio is not a dependency of the program; only
-  `scripts/export_align_model.py` uses it, to convert the MMS checkpoint.
-
-### MMS forced-alignment model (redistributed, converted)
-- Upstream: Meta AI, `torchaudio.pipelines.MMS_FA` (the `ctc_alignment_mling_uroman` checkpoint)
-- License: Creative Commons Attribution-NonCommercial 4.0 International
-  (https://creativecommons.org/licenses/by-nc/4.0/) — NOT AGPL-3.0
-- Namioto's default aligner (`--model mms`). `scripts/export_align_model.py` converts it from the
-  network, and this project publishes the converted graph as `mms-onnx-int8.zip` on its `models`
-  release;
-  the original checkpoint is never shipped. Conversion changes nothing about the license, so the
-  published graph stays non-commercial, with the attribution above.
-
-### yohane karaoke alignment model (redistributed, converted)
-- Upstream: `NextFire/mms-300m-ForcedAligner-karaoke-ja-Latn`,
-  https://huggingface.co/NextFire/mms-300m-ForcedAligner-karaoke-ja-Latn
-- License: Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
-  (https://creativecommons.org/licenses/by-nc-sa/4.0/) — NOT AGPL-3.0
-- Namioto's `--model yohane`, converted from HuggingFace by `scripts/export_align_model.py` and
-  published as `yohane-onnx-int8.zip` on this project's `models` release, under the same terms as MMS.
-- Consequence: an alignment produced with a converted aligner is non-commercial, like TempoCNN's and
-  GAME's models.
-
 ### Audio output (reached at runtime)
 - sounddevice (https://github.com/spatialaudio/python-sounddevice) — MIT; the output stream the song
   is played through. Its Linux wheel leaves PortAudio to the system, so a desktop needs
@@ -159,8 +118,8 @@ Third-party code and assets
 | mido | MIT |
 | sounddevice, PortAudio | MIT |
 | supriya-midi, RtMidi | MIT |
-| torch, torchaudio, onnx, onnxscript (development only) | BSD-3-Clause / Apache-2.0 |
-| transformers (development only) | Apache-2.0 |
+| torch, torchaudio (the MuScriptor extras only) | BSD-3-Clause / Apache-2.0 |
+| muscriptor (the MuScriptor extras only) | MIT |
 | packaging | Apache-2.0 OR BSD-2-Clause |
 | soxr | LGPL-2.1-or-later |
 | pytest (development only) | MIT |

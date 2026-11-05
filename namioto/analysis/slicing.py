@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Cutting a waveform at its silences, shared by the GAME extractor and the forced aligner.
+"""Cutting a waveform at its silences, shared by the GAME extractor and the note table.
 
 GAME (Team OpenVPI) ships this as `inference/n2.py`, and it is kept as it stands: an energy RMS per
 frame, a silence runs long enough to be worth cutting, and the cut placed at the run's lowest point.

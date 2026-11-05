@@ -51,10 +51,6 @@ pytorch-cpu = [
 # group may carry one: `uv sync` always includes it, so `--extra ort-cuda`/`ort-webgpu` would install a second
 # build over it. Development picks its build with `--extra ort-cpu` (or `--extra ort-cuda`/`--extra ort-webgpu`)
 dev = ["pytest>=9.2.0"]
-# transformers/onnx are only for scripts/export_align_model.py. torch itself is an extra, because the
-# CPU wheel and the CUDA wheel cannot be installed together; this group only adds what an export needs
-# on top of whichever torch the chosen extra already brought in
-export = ["onnx", "transformers"]
 
 [build-system]
 requires = ["hatchling"]

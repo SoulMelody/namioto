@@ -769,7 +769,7 @@ class PianoRollView(QGraphicsView):
                 note.lyric_text = text
                 note.update()
             warning = (
-                tr("Overlapping note: move, shorten or remove it before aligning the lyrics.") if note.filtered else ""
+                tr("Overlapping note: move, shorten or remove it before mapping the lyrics.") if note.filtered else ""
             )
             tooltip = "\n".join(part for part in (text, warning) if part)
             if note.toolTip() != tooltip:

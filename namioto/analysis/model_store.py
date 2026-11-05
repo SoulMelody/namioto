@@ -2,11 +2,11 @@
 """Where the ONNX models come from: one registry, one order of search, one downloader.
 
 The program ships no model: every one of them is fetched into the data directory on demand. A family
-keeps its own keys and its own files - GAME a size, the aligner a model and a language - while the
-order they are looked up in, the download that puts them there and the session opened on them are
-the same for all of them. A family is looked up as an explicit path, its environment variable, an
-installed copy under `models/`, then the release it names; the first file of a family is what a
-downloaded package is recognized by.
+keeps its own keys and its own files - GAME a size, TempoCNN none - while the order they are looked
+up in, the download that puts them there and the session opened on them are the same for all of
+them. A family is looked up as an explicit path, its environment variable, an installed copy under
+`models/`, then the release it names; the first file of a family is what a downloaded package is
+recognized by.
 
 This module does not import ONNX Runtime of its own: the runtime is optional and is reached only
 when a session is opened, so importing this module never pulls it into the GUI's startup path. The
@@ -65,21 +65,6 @@ MODELS: dict[str, Model] = {
         files=("config.json",),
         directory="game",
         asset="https://github.com/openvpi/GAME/releases/download/v1.0.3/GAME-1.0.3-{model}-onnx.zip",
-    ),
-    "aligner": Model(
-        name="aligner",
-        env="NAMIOTO_ALIGN_MODEL",
-        files=("model.onnx", "vocab.json"),
-        hint="convert one with scripts/export_align_model.py",
-        asset="https://github.com/sitiyou/namioto/releases/download/models/{model}-onnx-int8.zip",
-    ),
-    # the aligner's half-precision copy of the same graphs, published apart: it is twice the size of
-    # the quantised model a CPU run loads, and only a device that can run it fetches it
-    "aligner_fp16": Model(
-        name="aligner_fp16",
-        env="NAMIOTO_ALIGN_MODEL",
-        files=("model.fp16.onnx",),
-        asset="https://github.com/sitiyou/namioto/releases/download/models/{model}-onnx-fp16.zip",
     ),
     "tempocnn": Model(
         name="tempocnn",
