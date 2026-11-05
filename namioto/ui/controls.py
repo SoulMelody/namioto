@@ -647,7 +647,7 @@ class EditBar(_Group):
             tr("Quantize: put the starts and ends of the notes on the snap grid, the selection if there is one"),
         )
         self.quantize.clicked.connect(self.quantize_requested)
-        self.transcribe = icon_button("transcribe", tr("Transcribe the singing voice of the loaded audio with GAME"))
+        self.transcribe = icon_button("transcribe", tr("Transcribe the loaded audio"))
         self.transcribe.setEnabled(False)
         self.transcribe.clicked.connect(self.transcribe_requested)
         self.lyrics = icon_button("lyrics", tr("Lyrics: edit the text the project sings"))

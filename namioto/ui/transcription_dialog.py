@@ -60,7 +60,7 @@ class TranscriptionDialog(QDialog):
 
     def __init__(self, audio: str, tempo: float, parent=None, channel_has_notes: bool = False, offset: float = 0.0):
         super().__init__(parent)
-        self.setWindowTitle(tr("Transcribe the singing voice with GAME"))
+        self.setWindowTitle(tr("Transcribe"))
         self.audio = str(audio)
         self.tempo = float(tempo)
         self.offset = float(offset)
@@ -70,6 +70,7 @@ class TranscriptionDialog(QDialog):
         self._process = None
         self._queue = None
         self._notes: list[tuple[float, float, float]] = []
+        self._parts: list[tuple] = []
         self._settled = True
         self._downloading = False
         self._timer = QTimer(self)
@@ -112,6 +113,22 @@ class TranscriptionDialog(QDialog):
     def notes(self) -> list[tuple[float, float, float]]:
         return list(self._notes)
 
+    def parts(self) -> list[tuple]:
+        """The instrument parts, snapped on the same grid as `notes`; empty for a single-voice run."""
+        cells = self._parameters["quantize"]
+        if not cells:
+            return list(self._parts)
+        from namioto.analysis.notes import Part, quantized_parts
+
+        phase = self.offset if self._parameters["estimate_phase"] else 0.0
+        snapped, _unit, _phase = quantized_parts(
+            [Part(name, program, tuple(notes)) for name, program, notes in self._parts],
+            self.tempo,
+            cells,
+            phase=phase,
+        )
+        return [(part.name, part.program, list(part.notes)) for part in snapped]
+
     def _build_form(self) -> QWidget:
         widget = QWidget()
         widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
@@ -151,7 +168,7 @@ class TranscriptionDialog(QDialog):
         return (
             QMessageBox.question(
                 self,
-                tr("Transcribe with GAME"),
+                tr("Transcribe"),
                 tr("Channel 0 already has notes. Replace them with the transcription?"),
             )
             == QMessageBox.StandardButton.Yes
@@ -190,7 +207,7 @@ class TranscriptionDialog(QDialog):
         """Ask before a repeat run is skipped; the notes are never listed anywhere, only offered back."""
         answer = QMessageBox.question(
             self,
-            tr("Transcribe with GAME"),
+            tr("Transcribe"),
             tr(
                 "A run with these exact parameters already found {count} notes.\n"
                 "Use it instead of running the model again?",
@@ -247,6 +264,7 @@ class TranscriptionDialog(QDialog):
         elif kind == "progress":
             self._show_progress(*message[1:])
         elif kind == "done":
+            self._parts = list(message[2]) if len(message) > 2 else []
             self._settle(list(message[1]), save=True)
         elif kind == "error":
             self._fail(message[1])

@@ -172,7 +172,7 @@ def test_transcribe_reports_progress_and_the_result(fake_game) -> None:
 
     assert fake_game["size"] == "medium"
     assert ("progress", "parts", 1, 2) in messages
-    assert messages[-1] == ("done", [(0.0, 0.5, 60.0), (0.5, 1.0, 62.0)])
+    assert messages[-1] == ("done", [(0.0, 0.5, 60.0), (0.5, 1.0, 62.0)], [])
     assert fake_game["extract"]["language"] is None
 
 
@@ -182,7 +182,7 @@ def test_transcribe_hands_the_notes_over_raw(fake_game) -> None:
     messages = drain(channel)
 
     # the grid is the parent's to apply, so the model's own notes come back whole
-    assert messages[-1] == ("done", [(0.0, 0.5, 60.0), (0.5, 1.0, 62.0)])
+    assert messages[-1] == ("done", [(0.0, 0.5, 60.0), (0.5, 1.0, 62.0)], [])
 
 
 def test_transcribe_runs_on_the_device_its_choice_resolves_to(fake_game, monkeypatch) -> None:
@@ -212,3 +212,43 @@ def test_transcribe_reports_a_failure_instead_of_raising(monkeypatch) -> None:
 
     assert messages[-1][0] == "error"
     assert "no model here" in messages[-1][1]
+
+
+def test_the_engine_is_part_of_what_makes_a_run() -> None:
+    singing = transcription.default_parameters()
+    instruments = dict(singing, engine="muscriptor")
+
+    transcription.save_run(AUDIO, singing, [(0.0, 0.5, 60.0)])
+
+    assert transcription.find_run(AUDIO, instruments) is None
+    assert transcription.run_key(AUDIO, singing) != transcription.run_key(AUDIO, instruments)
+
+
+def test_transcribe_runs_muscriptor_when_that_engine_is_chosen(monkeypatch) -> None:
+    """The instrument engine is reached only for its own choice, and its parts come back flat."""
+    calls: dict = {}
+
+    def resolve_model(size="small", progress=None):
+        calls["size"] = size
+        progress(1, 1)
+        return pathlib.Path("/models/muscriptor") / size
+
+    def load(folder, device="cpu"):
+        calls["device"] = device
+        return object()
+
+    def extract(model, path, progress=None, instruments=None):
+        calls["path"] = path
+        progress(1, 1)
+        from namioto.analysis.notes import Part
+
+        return [Part("violin", 40, ((0.0, 0.5, 60.0),)), Part("cello", 42, ((0.5, 1.0, 48.0),))]
+
+    monkeypatch.setattr("namioto.analysis.muscriptor.resolve_model", resolve_model)
+    monkeypatch.setattr("namioto.analysis.muscriptor.load", load)
+    monkeypatch.setattr("namioto.analysis.muscriptor.extract", extract)
+    channel = queue.Queue()
+    transcription.transcribe(AUDIO, {"engine": "muscriptor", "size": "medium"}, channel)
+
+    assert calls == {"size": "medium", "device": "cpu", "path": AUDIO}
+    assert drain(channel)[-1] == ("done", [(0.0, 0.5, 60.0), (0.5, 1.0, 48.0)], [("violin", 40, [(0.0, 0.5, 60.0)]), ("cello", 42, [(0.5, 1.0, 48.0)])])

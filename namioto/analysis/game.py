@@ -33,7 +33,40 @@ except ImportError:  # the extractor itself only needs numpy; the file loader an
     librosa = None
 
 from namioto.analysis import devices, model_store
+from namioto.analysis.notes import (
+    Note,
+    estimate_grid_period,
+    estimate_grid_phase,
+    quantize_notes,
+    quantized,
+    save_midi,
+)
 from namioto.analysis.slicing import Slicer
+
+# the single-voiced grid helpers GAME's own CLI snaps with live in `namioto.analysis.notes`; they are
+# named here again so the port keeps the names its tests and its CLI were written against
+__all__ = [
+    "MODEL_FILES",
+    "MODEL_SIZES",
+    "Note",
+    "OnnxBackend",
+    "asset_url",
+    "collect_notes",
+    "estimate_grid_period",
+    "estimate_grid_phase",
+    "extract",
+    "is_installed",
+    "main",
+    "merge_notes",
+    "model_dir",
+    "models_root",
+    "parse_args",
+    "quantize_notes",
+    "quantized",
+    "resolve_model",
+    "save_midi",
+    "save_text",
+]
 
 MODEL_SIZES = ("small", "medium", "large")
 # the package also holds `dur2bd`, which the run has no use for: see `extract`
@@ -41,7 +74,6 @@ MODEL_FILES = ("encoder", "segmenter", "estimator", "bd2dur")
 # `cuda` keeps the CPU in the list, so a machine whose CUDA provider cannot be set up still runs
 PROVIDERS = model_store.PROVIDERS
 SAMPLE_FORMATS = (".wav", ".flac", ".mp3", ".aac", ".ogg")
-Note = tuple[float, float, float]  # onset and offset in seconds, then the pitch
 
 
 def _size(size: str) -> str:
@@ -155,109 +187,6 @@ def merge_notes(notes: Sequence[Note]) -> list[Note]:
     return merged
 
 
-def quantize_notes(notes: Sequence[Note], unit: float, phase: float = 0.0) -> list[Note]:
-    """Snap to the grid cells picked around `phase`, output strictly on the absolute grid.
-
-    The phase only influences rounding decisions; it is never baked into the output. A note the grid
-    leaves without a cell of its own has nowhere to sit and is dropped, which is what takes GAME's
-    sub-grid fragments out of a quantised run.
-    """
-    out = []
-    last_time = 0.0
-    for onset, oset, pitch in notes:
-        onset = unit * round((onset - phase) / unit)
-        oset = unit * round((oset - phase) / unit)
-        # a monophonic line: a note the grid put before the one before it ended starts at that end
-        onset = max(onset, last_time)
-        if oset <= onset:  # what is left is shorter than a cell, so there is no note here
-            continue
-        out.append((onset, oset, pitch))
-        last_time = oset
-    return out
-
-
-def estimate_grid_phase(onsets, unit: float) -> float:
-    """Best global phase offset for the grid: the one with the least quantization distortion."""
-    o = np.asarray(onsets, dtype=np.float64)
-    if o.size == 0:
-        return 0.0
-
-    def score(phase):
-        off = (o - phase) / unit
-        err = off - np.round(off)
-        return float(np.sum(err * err))
-
-    coarse = np.linspace(0.0, unit, 65, endpoint=False)
-    s = [score(p) for p in coarse]
-    k = int(np.argmin(s))
-    lo, hi = coarse[(k - 1) % len(coarse)], coarse[(k + 1) % len(coarse)]
-    if lo > hi:
-        lo, hi = hi, lo
-    for _ in range(20):  # golden section on [lo, hi]
-        a = lo + (hi - lo) * 0.382
-        b = lo + (hi - lo) * 0.618
-        if score(a) < score(b):
-            hi = b
-        else:
-            lo = a
-    return (lo + hi) / 2
-
-
-def estimate_grid_period(onsets, phase: float, unit: float, max_drift: float = 0.05) -> float:
-    """Refine the grid period around `unit` by least squares on the snapped groups."""
-    o = np.asarray(onsets, dtype=np.float64)
-    if o.size < 4:
-        return unit
-    k = np.round((o - phase) / unit)
-    for _ in range(6):
-        k = np.round((o - phase) / unit)
-        valid = (k > 0) & (np.abs(o - (phase + k * unit)) < unit * 0.25)
-        if valid.sum() < 3:
-            break
-        period = float(np.sum(k[valid] * (o[valid] - phase)) / np.sum(k[valid] ** 2))
-        if unit * (1 - max_drift) <= period <= unit * (1 + max_drift):
-            unit = period
-        else:
-            break
-    return unit
-
-
-def save_midi(path: pathlib.Path, notes: Sequence[Note], tempo: float, grid: tuple[float, int] | None = None) -> None:
-    """Write the notes as a type 1 MIDI file; `grid` is (seconds per cell, ticks per cell)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    us_per_qn = round(60_000_000 / tempo)
-    track_data = bytearray()
-    track_data += _vlq(0) + bytes([0xFF, 0x51, 0x03]) + us_per_qn.to_bytes(3, "big")
-    last_time = 0
-    for onset, oset, pitch in notes:
-        if grid is not None:
-            seconds, ticks = grid
-            onset_ticks = round(onset / seconds) * ticks
-            offset_ticks = round(oset / seconds) * ticks
-        else:
-            onset_ticks = round(onset * tempo * 8)
-            offset_ticks = round(oset * tempo * 8)
-        midi_pitch = round(pitch)
-        if offset_ticks <= onset_ticks:
-            continue
-        track_data += _vlq(onset_ticks - last_time) + bytes([0x90, midi_pitch, 100])
-        track_data += _vlq(offset_ticks - onset_ticks) + bytes([0x80, midi_pitch, 64])
-        last_time = offset_ticks
-    track_data += _vlq(0) + bytes([0xFF, 0x2F, 0x00])
-    header = bytes([0x4D, 0x54, 0x68, 0x64])  # MThd
-    header += (6).to_bytes(4, "big") + (1).to_bytes(2, "big")
-    header += (1).to_bytes(2, "big") + (480).to_bytes(2, "big")
-    header += bytes([0x4D, 0x54, 0x72, 0x6B]) + len(track_data).to_bytes(4, "big")
-    path.write_bytes(header + bytes(track_data))
-
-
-def _vlq(value: int) -> bytes:
-    out = bytearray([value & 0x7F])
-    value >>= 7
-    while value:
-        out.insert(0, 0x80 | (value & 0x7F))
-        value >>= 7
-    return bytes(out)
 
 
 def save_text(path: pathlib.Path, notes: Sequence[Note], file_format: str, round_pitch: bool = False) -> None:
@@ -393,26 +322,6 @@ def extract(
     return merge_notes(notes)
 
 
-def quantized(
-    notes: Sequence[Note], tempo: float, subdivisions: int, phase: float | None = None, fit_tempo=False, offset=0.0
-):
-    """Snap the notes to the beat grid `subdivisions` per quarter note apart, and report what was used.
-
-    `offset` is the grid's own zero - the editor's slid grid - and is written into the notes, so they
-    land on the lines that are drawn; `phase`, fitted from the onsets when not given, is retained
-    in the output timestamps. Returns the notes, the seconds per cell and the phase.
-    """
-    unit = (60.0 / tempo) / subdivisions
-    onsets = [note[0] for note in notes]
-    if offset:
-        phase = offset  # the drawn grid is the one to snap to, not one fitted from the onsets
-    elif phase is None:
-        phase = estimate_grid_phase(onsets, unit)
-    if fit_tempo:
-        unit = estimate_grid_period(onsets, phase, unit)
-    snapped = quantize_notes(notes, unit, phase)
-    snapped = [(onset + phase, oset + phase, pitch) for onset, oset, pitch in snapped]
-    return snapped, unit, phase
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

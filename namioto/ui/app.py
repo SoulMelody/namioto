@@ -1395,7 +1395,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _open_transcription(self) -> None:
-        """Ask GAME for the singing voice's notes, over the audio the session is already listening to."""
+        """Ask the chosen engine for notes, over the audio the session is already listening to."""
         if self.audio_path is None:
             return
         occupied = any(note.channel == 0 for note in self.view.notes())
@@ -1409,12 +1409,15 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if dialog.notes():
                 self.transport.grid_offset.setValue(dialog.offset * 1000.0)
-            self._adopt_transcription(dialog.notes())
+            if dialog.parts():
+                self._adopt_parts(dialog.parts())
+            else:
+                self._adopt_transcription(dialog.notes())
 
     def _adopt_transcription(self, notes) -> None:
         """Replace channel 0's notes with the transcription."""
         if not notes:
-            self.statusBar().showMessage(i18n.tr("GAME found no notes in the loaded audio"))
+            self.statusBar().showMessage(i18n.tr("The transcription found no notes in the loaded audio"))
             return
         arriving = [
             (round(pitch), self.view.to_beats(max(0.0, onset)), self.view.to_beats(max(0.0, offset - onset)))
@@ -1428,9 +1431,51 @@ class MainWindow(QMainWindow):
             for note in self.view.notes()
             if note.channel != 0
         ]
-        self.view.replace(channels, kept + [(*note, 0) for note in arriving], "Transcribe with GAME")
+        self.view.replace(channels, kept + [(*note, 0) for note in arriving], "Transcribe")
         self.statusBar().showMessage(
-            i18n.tr("GAME found {notes} notes on channel {channel}", notes=len(arriving), channel=0)
+            i18n.tr("Transcription found {notes} notes on channel {channel}", notes=len(arriving), channel=0)
+        )
+
+    def _adopt_parts(self, parts) -> None:
+        """Give each instrument its own channel, starting at the first free one.
+
+        A part that finds no free channel is left out and said so: sixteen channels is the MIDI
+        limit, and folding a leftover part into one that is taken would play the wrong instrument.
+        """
+        from namioto.channels import free_channel
+
+        channels = list(self.view.channels)
+        notes = [
+            (note.pitch, note.start, note.duration, note.channel, note.id) for note in self.view.notes()
+        ]
+        placed = 0
+        skipped = 0
+        for name, program, found in parts:
+            number = free_channel(channels)
+            if number is None:
+                skipped += 1
+                continue
+            channels.append(Channel(name=name.replace("_", " "), channel=number, program=int(program)))
+            notes.extend(
+                (
+                    round(pitch),
+                    self.view.to_beats(max(0.0, onset)),
+                    self.view.to_beats(max(0.0, offset - onset)),
+                    number,
+                )
+                for onset, offset, pitch in found
+            )
+            placed += 1
+        if placed == 0:
+            self.statusBar().showMessage(i18n.tr("No free channel for the transcription"))
+            return
+        self.view.replace(channels, notes, "Transcribe")
+        self.statusBar().showMessage(
+            i18n.tr(
+                "Transcription found {parts} parts{skipped}",
+                parts=placed,
+                skipped=i18n.tr(", {count} left out", count=skipped) if skipped else "",
+            )
         )
 
     def _target_notes(self, channel: int = 0) -> list[tuple[float, float, int, int]]:

@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Outbound requests: the GitHub mirror and the proxy, read from the settings when a call is made.
+"""Outbound requests: the GitHub mirror, the Hugging Face endpoint and the proxy.
 
-Every address the program fetches on its own - a release download - goes through here, so the two
-settings have one meaning wherever a request is built. `mirrored` puts the
-GitHub mirror in front of a github.com address, and `opener` is the `urlopen`-shaped callable the
-proxy setting asks for. Reading the settings at call time, rather than once at import, is what lets
-a change take effect without a restart. Qt-free on purpose.
+Every address the program fetches on its own - a release download, a checkpoint - goes through here,
+so the settings have one meaning wherever a request is built. `mirrored` puts the GitHub mirror in
+front of a github.com address, `hf_url` builds a file address at the Hugging Face endpoint in force,
+and `opener` is the `urlopen`-shaped callable the proxy setting asks for. Reading the settings at call
+time, rather than once at import, is what lets a change take effect without a restart. Qt-free on
+purpose.
 """
 
 from __future__ import annotations
 
+import os
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -18,11 +20,32 @@ from typing import Any
 from namioto import settings as store
 
 GITHUB_HOST = "github.com"
+HF_HOST = "huggingface.co"
+# where a checkpoint is fetched from when the setting and the environment say nothing
+HF_ENDPOINT = f"https://{HF_HOST}"
 
 
 def github_mirror() -> str:
     """The configured mirror prefix, empty when releases are fetched from GitHub directly."""
     return store.load().network.github_mirror.strip()
+
+
+def hf_endpoint() -> str:
+    """Where Hugging Face files are fetched from: the setting, `$HF_ENDPOINT`, or the site itself.
+
+    The setting comes first because it is what the window shows; the environment variable is what a
+    shell or another Hugging Face tool would set, and is honoured only where the setting is empty.
+    """
+    return (
+        store.load().network.hf_endpoint.strip()
+        or os.environ.get("HF_ENDPOINT", "").strip()
+        or HF_ENDPOINT
+    ).rstrip("/")
+
+
+def hf_url(repo: str, revision: str, name: str) -> str:
+    """One file of a Hugging Face repository, through the endpoint in force."""
+    return f"{hf_endpoint()}/{repo}/resolve/{revision}/{name}"
 
 
 def proxy() -> str:

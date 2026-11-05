@@ -137,6 +137,13 @@ SECTIONS: tuple[Section, ...] = (
                 "Downloads of GitHub releases are fetched through this mirror; empty goes straight to github.com",
             ),
             Field(
+                "hf_endpoint",
+                "text",
+                "https://hf-mirror.com",
+                "Hugging Face endpoint",
+                "MuScriptor checkpoints are fetched from this endpoint; empty falls back to $HF_ENDPOINT, then huggingface.co",
+            ),
+            Field(
                 "proxy",
                 "text",
                 "",

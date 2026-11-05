@@ -26,6 +26,9 @@ from namioto.params import Field
 from namioto.utils import config_dir, data_dir, file_stamp, resolved, write_json
 
 GAME_SIZES = ("small", "medium", "large")
+# what a run transcribes with: GAME hears one singing voice, MuScriptor hears instruments
+ENGINES = ("game", "muscriptor")
+ENGINE_LABELS = ("GAME (singing voice)", "MuScriptor (instruments)")
 # the codes GAME's own config.json maps for the segmenter; 0, and so the empty code, is universal
 LANGUAGE_CODES = ("", "en", "ja", "yue", "zh")
 LANGUAGE_LABELS = ("Universal", "English", "Japanese", "Cantonese", "Mandarin")
@@ -34,11 +37,20 @@ STORE_VERSION = 3
 
 PARAMETERS: tuple[Field, ...] = (
     Field(
+        "engine",
+        "choice",
+        "game",
+        "Engine",
+        "GAME transcribes one singing voice; MuScriptor transcribes instruments and keeps one part each",
+        choices=ENGINES,
+        labels=ENGINE_LABELS,
+    ),
+    Field(
         "size",
         "choice",
         "small",
         "Model",
-        "GAME's ONNX model, downloaded into the data directory on first use",
+        "The model's size, downloaded into the data directory on first use",
         choices=GAME_SIZES,
     ),
     Field(
@@ -237,7 +249,7 @@ def save_run(path: Any, parameters: Any, notes) -> pathlib.Path:
 
 
 def transcribe(path: str, parameters: dict, queue) -> None:
-    """Run GAME for one audio file, reporting through `queue`: a spawned process's whole job.
+    """Run one engine for one audio file, reporting through `queue`: a spawned process's whole job.
 
     The notes come back as the model found them, before any grid: the tempo, the quantize choice
     and the grid offset are the parent's to apply, so changing any of them re-snaps a stored run
@@ -248,29 +260,63 @@ def transcribe(path: str, parameters: dict, queue) -> None:
     """
     values = coerce_parameters(parameters)
     try:
-        from namioto.analysis import game
-
-        queue.put(("log", f"GAME model {values['size']}"))
-        model = game.resolve_model(
-            size=values["size"],
-            progress=lambda done, total: queue.put(("progress", "download", done, total)),
-        )
-        queue.put(("log", f"model at {model}"))
-        backend = game.OnnxBackend(model, provider=devices.resolve(values["device"]))
-        notes = game.extract(
-            backend,
-            path,
-            language=values["language"] or None,
-            batch_size=values["batch_size"],
-            seg_threshold=values["seg_threshold"],
-            seg_radius=values["seg_radius"],
-            est_threshold=values["est_threshold"],
-            d3pm_t0=values["d3pm_t0"],
-            d3pm_steps=values["d3pm_steps"],
-            silence_slice=values["silence_slice"],
-            progress=lambda done, total: queue.put(("progress", "parts", done, total)),
-        )
-        queue.put(("log", f"{len(notes)} notes"))
-        queue.put(("done", notes))
+        if values["engine"] == "muscriptor":
+            _transcribe_muscriptor(path, values, queue)
+        else:
+            _transcribe_game(path, values, queue)
     except Exception:  # the child must report a crash rather than take the queue down with it
         queue.put(("error", traceback.format_exc()))
+
+
+def _transcribe_game(path: str, values: dict, queue) -> None:
+    from namioto.analysis import game
+
+    queue.put(("log", f"GAME model {values['size']}"))
+    model = game.resolve_model(
+        size=values["size"],
+        progress=lambda done, total: queue.put(("progress", "download", done, total)),
+    )
+    queue.put(("log", f"model at {model}"))
+    backend = game.OnnxBackend(model, provider=devices.resolve(values["device"]))
+    notes = game.extract(
+        backend,
+        path,
+        language=values["language"] or None,
+        batch_size=values["batch_size"],
+        seg_threshold=values["seg_threshold"],
+        seg_radius=values["seg_radius"],
+        est_threshold=values["est_threshold"],
+        d3pm_t0=values["d3pm_t0"],
+        d3pm_steps=values["d3pm_steps"],
+        silence_slice=values["silence_slice"],
+        progress=lambda done, total: queue.put(("progress", "parts", done, total)),
+    )
+    queue.put(("log", f"{len(notes)} notes"))
+    queue.put(("done", notes, []))
+
+
+def _transcribe_muscriptor(path: str, values: dict, queue) -> None:
+    """MuScriptor answers in parts; the editor still takes one flat line, so the parts are joined.
+
+    A part keeps its own instrument, but the dialog this process reports to replaces one channel,
+    so the notes are flattened in the order the model returned them. The parts themselves are what
+    a later multi-channel adoption reads.
+    """
+    from namioto.analysis import muscriptor
+    from namioto.analysis.notes import flatten
+
+    queue.put(("log", f"MuScriptor model {values['size']}"))
+    folder = muscriptor.resolve_model(
+        size=values["size"],
+        progress=lambda done, total: queue.put(("progress", "download", done, total)),
+    )
+    queue.put(("log", f"model at {folder}"))
+    model = muscriptor.load(folder, device=devices.resolve(values["device"]))
+    parts = muscriptor.extract(
+        model,
+        path,
+        progress=lambda done, total: queue.put(("progress", "parts", done, total)),
+    )
+    notes = flatten(parts)
+    queue.put(("log", f"{len(parts)} parts, {len(notes)} notes"))
+    queue.put(("done", notes, [(part.name, part.program, list(part.notes)) for part in parts]))

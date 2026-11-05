@@ -54,7 +54,24 @@ def test_the_mirror_and_the_proxy_come_from_the_settings(settings_file) -> None:
     assert net.mirrored("https://github.com/a/b.zip") == "https://mirror.example/https://github.com/a/b.zip"
 
 
-def test_no_proxy_setting_keeps_the_standard_urlopen() -> None:
+def test_the_hugging_face_endpoint_defaults_to_the_mirror(settings_file, monkeypatch) -> None:
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    assert net.hf_endpoint() == "https://hf-mirror.com"
+
+
+def test_an_empty_endpoint_falls_back_to_the_environment_then_the_site(settings_file, monkeypatch) -> None:
+    settings = store.Settings()
+    store.set_value(settings, "network", "hf_endpoint", "")
+    store.save(settings)
+    monkeypatch.setenv("HF_ENDPOINT", "https://mirror.example/hf/")
+
+    assert net.hf_endpoint() == "https://mirror.example/hf"
+    assert net.hf_url("org/model", "rev", "model.safetensors") == (
+        "https://mirror.example/hf/org/model/resolve/rev/model.safetensors"
+    )
+
+    monkeypatch.delenv("HF_ENDPOINT")
+    assert net.hf_endpoint() == "https://huggingface.co"
     assert net.opener("") is urllib.request.urlopen
 
 
