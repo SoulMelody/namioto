@@ -1445,9 +1445,7 @@ class MainWindow(QMainWindow):
         from namioto.channels import free_channel
 
         channels = list(self.view.channels)
-        notes = [
-            (note.pitch, note.start, note.duration, note.channel, note.id) for note in self.view.notes()
-        ]
+        notes = [(note.pitch, note.start, note.duration, note.channel, note.id) for note in self.view.notes()]
         placed = 0
         skipped = 0
         for name, program, found in parts:

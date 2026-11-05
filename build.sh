@@ -30,7 +30,7 @@ build_wheel() {
 }
 
 build_cli() {
-    uv sync --extra cpu
+    uv sync --extra ort-cpu
     freeze namioto-cli namioto.cli \
         --collect-submodules namioto.analysis
 }
@@ -57,7 +57,7 @@ build_app() {
     # a frozen app collects what is installed, so the project is installed as a wheel rather than in
     # the editable layout, which would leave PyInstaller following a path hook into the checkout; the
     # reinstall is what picks up source edits, since the version itself does not change
-    uv sync --locked --extra cpu --no-editable --reinstall-package namioto
+    uv sync --locked --extra ort-cpu --no-editable --reinstall-package namioto
     freeze namioto namioto.ui.app \
         --windowed \
         --collect-data qtawesome \

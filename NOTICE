@@ -79,6 +79,23 @@ Third-party code and assets
 - Consequence: a transcription produced with those models is non-commercial, exactly as with the
   downloaded TempoCNN model above.
 
+### MuScriptor (instrument transcription)
+- Upstream: https://github.com/muscriptor/muscriptor, published on PyPI as `muscriptor`
+- License: MIT (code) / the checkpoints are a separate work under Creative Commons
+  Attribution-NonCommercial 4.0 (https://creativecommons.org/licenses/by-nc/4.0/) — neither is
+  AGPL-3.0
+- Used for: extracting one part per instrument from instrumental audio. Unlike GAME, MuScriptor is
+  not converted to ONNX: the program installs the package and runs it on torch, so it is only
+  offered by the `pytorch-cpu` and `ort-cuda` extras. `namioto/analysis/muscriptor.py` is this
+  project's own code — it fetches the checkpoint, copies its weights and reads the note events; the
+  decoding itself stays in the upstream package.
+- The checkpoints are not redistributed here: they are gated on Hugging Face and fetched on first
+  use from the endpoint set in Settings → Network (`https://hf-mirror.com` by default) into
+  `platformdirs.user_data_dir("namioto")/models/muscriptor/<size>` (small 412 MB / medium 1.2 GB /
+  large 5.5 GB), or read from a directory given with `--model` or `$NAMIOTO_MUSCRIPTOR_MODEL`.
+- Consequence: parts produced with those checkpoints are non-commercial. Accepting the license on
+  each model page is a prerequisite for the download.
+
 ### FA-Kara (forced alignment)
 - Upstream: moriwx/FA-Kara, https://github.com/moriwx/FA-Kara
 - License: MIT

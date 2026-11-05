@@ -43,9 +43,7 @@ def flatten(parts: Iterable[Part]) -> list[Note]:
     return [note for part in parts for note in part.notes]
 
 
-def quantize_notes(
-    notes: Sequence[Note], unit: float, phase: float = 0.0, monophonic: bool = True
-) -> list[Note]:
+def quantize_notes(notes: Sequence[Note], unit: float, phase: float = 0.0, monophonic: bool = True) -> list[Note]:
     """Snap to the grid cells picked around `phase`, output strictly on the absolute grid.
 
     The phase only influences rounding decisions; it is never baked into the output. A note the grid
@@ -176,9 +174,7 @@ def quantized_parts(
     return snapped, unit, phase
 
 
-def save_midi(
-    path: pathlib.Path, notes: Sequence[Note], tempo: float, grid: tuple[float, int] | None = None
-) -> None:
+def save_midi(path: pathlib.Path, notes: Sequence[Note], tempo: float, grid: tuple[float, int] | None = None) -> None:
     """Write the notes as a type 1 MIDI file; `grid` is (seconds per cell, ticks per cell)."""
     save_parts(path, whole(notes), tempo, grid=grid)
 

@@ -11,6 +11,8 @@ notes against what you hear and see.
 - Transcribe by hand with a pitch spectrum, slowed-down playback and a snap grid.
 - Import MIDI and edit up to 16 channels with separate instruments, colours and mute controls.
 - Extract singing-voice notes with [GAME](https://github.com/openvpi/GAME).
+- Extract instrument parts with [MuScriptor](https://github.com/muscriptor/muscriptor), one channel
+  per instrument it hears.
 - Add lyrics and readings, and adjust how the sounds map onto notes.
 - Save your work as a `.nto` project and export MIDI.
 - Run analysis and singing-voice extraction from the command line, or control a running editor
@@ -33,12 +35,17 @@ directly, with each gesture kept as one undo step.
 
 ### Extract notes and align lyrics
 
-GAME offers automatic singing-voice transcription; alignment helps map known lyrics against a
+Two engines transcribe automatically: GAME for a singing voice, and MuScriptor for instruments,
+which keeps one part per instrument it hears. Alignment helps map known lyrics against a
 separated vocal. These previews show the setup dialogs, not completed inference runs.
 
 | Singing-voice transcription | Lyrics alignment |
 | --- | --- |
-| ![GAME transcription options](docs/transcription.png) | ![Lyrics alignment options](docs/alignment.png) |
+| ![Transcription options](docs/transcription.png) | ![Lyrics alignment options](docs/alignment.png) |
+
+The **Engine** row picks which one runs. GAME writes to one channel. MuScriptor needs a torch build,
+so it ships in the `pytorch-cpu` and `ort-cuda` extras rather than the base install; its checkpoints
+are gated and fetched from the Hugging Face endpoint set in **Settings → Network**.
 
 ## Install and launch
 
@@ -47,7 +54,7 @@ For a source checkout, first follow the [source setup prerequisites](docs/develo
 From the cloned repository directory, run:
 
 ```bash
-uv sync --extra cpu
+uv sync --extra ort-cpu
 uv run namioto
 ```
 
@@ -90,7 +97,7 @@ It is enabled by default and adds/removes WaveTone's leading bar.
 | --- | --- |
 | [Using the editor](docs/usage.md) | Projects, spectrum, editing shortcuts, playback, channels and settings |
 | [Lyrics](docs/lyrics.md) | Lyric text, readings, alignment and the mapping onto notes |
-| [Command-line tools](docs/cli.md) | Analysis, singing-voice extraction, alignment and remote control |
+| [Command-line tools](docs/cli.md) | Analysis, note extraction, alignment and remote control |
 | [Development](docs/development.md) | Source setup, tests, packaging and model conversion |
 
 ## License

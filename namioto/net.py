@@ -37,9 +37,7 @@ def hf_endpoint() -> str:
     shell or another Hugging Face tool would set, and is honoured only where the setting is empty.
     """
     return (
-        store.load().network.hf_endpoint.strip()
-        or os.environ.get("HF_ENDPOINT", "").strip()
-        or HF_ENDPOINT
+        store.load().network.hf_endpoint.strip() or os.environ.get("HF_ENDPOINT", "").strip() or HF_ENDPOINT
     ).rstrip("/")
 
 

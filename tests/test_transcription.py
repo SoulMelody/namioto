@@ -251,4 +251,8 @@ def test_transcribe_runs_muscriptor_when_that_engine_is_chosen(monkeypatch) -> N
     transcription.transcribe(AUDIO, {"engine": "muscriptor", "size": "medium"}, channel)
 
     assert calls == {"size": "medium", "device": "cpu", "path": AUDIO}
-    assert drain(channel)[-1] == ("done", [(0.0, 0.5, 60.0), (0.5, 1.0, 48.0)], [("violin", 40, [(0.0, 0.5, 60.0)]), ("cello", 42, [(0.5, 1.0, 48.0)])])
+    assert drain(channel)[-1] == (
+        "done",
+        [(0.0, 0.5, 60.0), (0.5, 1.0, 48.0)],
+        [("violin", 40, [(0.0, 0.5, 60.0)]), ("cello", 42, [(0.5, 1.0, 48.0)])],
+    )

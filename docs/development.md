@@ -7,11 +7,11 @@
 Install uv, Python 3.12+ and PortAudio, then run from the repository root:
 
 ```bash
-uv sync --extra cpu
+uv sync --extra ort-cpu
 uv run namioto
 ```
 
-Choose `--extra cuda` or `--extra webgpu` instead if needed; see [devices](cli.md#devices-and-models).
+Choose `--extra ort-cuda` or `--extra ort-webgpu` instead if needed; see [devices](cli.md#devices-and-models).
 Audio output goes through `sounddevice`, which needs the system PortAudio its Linux wheel does not
 carry - `libportaudio2` on Debian, `portaudio` on Arch. Everything else is a prebuilt wheel, MIDI
 ports included, so no compiler, meson or pybind11 is involved at any point.

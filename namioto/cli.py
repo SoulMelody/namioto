@@ -13,6 +13,7 @@ COMMANDS = {
     "spectrum": "namioto.analysis.spectrum",
     "harmonic": "namioto.analysis.harmonic",
     "game": "namioto.analysis.game",
+    "muscriptor": "namioto.analysis.muscriptor",
     "align": "namioto.analysis.align",
 }
 

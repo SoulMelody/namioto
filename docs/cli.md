@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Editor guide](usage.md) · [Lyrics](lyrics.md)
 
-Examples below assume the source checkout and `uv sync --extra cpu` setup. Prefix commands
+Examples below assume the source checkout and `uv sync --extra ort-cpu` setup. Prefix commands
 with `uv run` in that environment. `namioto-cli` runs tasks without a GUI; `namioto-ctl`
 controls an already running editor.
 
@@ -31,7 +31,9 @@ note spans. WaveTone's onset-flux DFT estimator is the editor default. `tempo` u
 librosa beat tracker and least-squares fit; local estimates use 12-second windows, 6 seconds
 apart. JSON output includes beats. TempoCNN works best on full mixes rather than stems.
 
-## Extract singing-voice notes
+## Extract notes
+
+Two engines are available; the same choice is in the editor's transcription window.
 
 ```bash
 uv run namioto-cli game song.wav --language zh
@@ -41,7 +43,8 @@ uv run namioto-cli game song.wav --quantize 4 --tempo 93 --midi out.mid
 uv run namioto-cli game
 ```
 
-GAME downloads a model on first use; running without audio only fetches the model.
+GAME hears one singing voice. It downloads a model on first use; running without audio only
+fetches the model.
 
 | Size | Download |
 | --- | --- |
@@ -59,17 +62,44 @@ Options and results are remembered; identical requests can reuse cached notes.
 
 ![GAME transcription setup in the editor](transcription.png)
 
-## Devices and models
-
-The initial `uv sync --extra cpu` installs ONNX Runtime for CPU analysis. Alternatively:
+## Extract instrument parts
 
 ```bash
-uv sync --extra cuda
-# Or:
-uv sync --extra webgpu
+uv run namioto-cli muscriptor song.wav
+uv run namioto-cli muscriptor song.wav --size medium --device gpu
+uv run namioto-cli muscriptor song.wav --instrument violin --instrument cello
+uv run namioto-cli muscriptor song.wav --quantize 4 --tempo 93 --midi parts.mid
+uv run namioto-cli muscriptor
 ```
 
-CUDA requires the GPU runtime, CUDA 12 and cuDNN 9. WebGPU uses Vulkan with the CPU runtime
+MuScriptor keeps one part per instrument it hears, so its MIDI file has one track per part, each
+naming its General MIDI program. `--instrument` narrows what may be decoded; leaving it out keeps
+whatever the model hears. The command needs the `pytorch-cpu` extra (or `ort-cuda` on an NVIDIA
+machine), because the package runs on torch rather than ONNX Runtime.
+
+| Size | Checkpoint |
+| --- | --- |
+| small | 412 MB |
+| medium | 1.2 GB |
+| large | 5.5 GB |
+
+Checkpoints are cached under `~/.local/share/namioto/models/muscriptor/<size>` on Linux.
+`--model DIR` or `$NAMIOTO_MUSCRIPTOR_MODEL` selects an existing directory instead. They are
+gated and fetched from the Hugging Face endpoint in Settings → Network, which defaults to the
+domestic mirror; accept the license on the model page first.
+
+## Devices and models
+
+The initial `uv sync --extra ort-cpu` installs ONNX Runtime for CPU analysis. Alternatively:
+
+```bash
+uv sync --extra ort-cuda
+# Or:
+uv sync --extra ort-webgpu
+```
+
+`ort-cuda` also installs torch and MuScriptor, so GPU machines get transcription without a second
+sync. CUDA requires the GPU runtime, CUDA 12 and cuDNN 9. WebGPU uses Vulkan with the CPU runtime
 and a provider plugin. CPU and CUDA builds conflict: select one, not both. The editor's
 Settings → Devices chooses the backend used by `--device gpu`. If a GPU provider cannot
 be created, ONNX Runtime reports it and continues on CPU.

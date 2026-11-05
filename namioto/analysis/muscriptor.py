@@ -2,8 +2,9 @@
 """Instrument transcription with MuScriptor's published checkpoints.
 
 GAME hears one singing voice. MuScriptor (the `muscriptor` package on PyPI, pinned at 0.4.0) hears
-instruments, and answers with one part per instrument it kept. This module is the thin side of that: it fetches the checkpoint the run asks for, loads it, and turns the note events back
-into the parts the rest of the program already speaks. The package's own decoding stays inside it.
+instruments, and answers with one part per instrument it kept. This module is the thin side of that:
+it fetches the checkpoint the run asks for, loads it, and turns the note events back into the parts
+the rest of the program already speaks. The package's own decoding stays inside it.
 
 Nothing here is imported by the GUI. `torch` and `muscriptor` are reached only inside `load` and
 `extract`, which a spawned process calls, so opening the editor never pulls them in. The checkpoints
@@ -14,13 +15,16 @@ endpoint the network settings name (`namioto.net.hf_url`), or read from a direct
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import pathlib
+import sys
 from collections.abc import Callable, Sequence
 
 from namioto import net
-from namioto.analysis.notes import Note, Part
+from namioto.analysis import devices
+from namioto.analysis.notes import Note, Part, quantized_parts, save_parts
 from namioto.utils import data_dir
 
 MODEL_SIZES = ("small", "medium", "large")
@@ -192,12 +196,11 @@ def load(directory: str | pathlib.Path, device: str = "cpu"):
 
 def _load_weights(model, weights: pathlib.Path, device) -> None:
     """Copy the checkpoint in one tensor at a time, so the whole file is never a second copy."""
-    import torch
     from safetensors import safe_open
 
     destination = model.state_dict()
     with safe_open(weights, framework="pt", device="cpu") as source:
-        for key in source.keys():
+        for key in source.keys():  # noqa: SIM118 - safe_open exposes keys(), not iteration
             name = _remap(key)
             if name not in destination:
                 raise KeyError(f"{weights.name} holds {key}, which this model has no parameter for")
@@ -256,7 +259,9 @@ def extract(
                 start = event.start_event
                 instrument = str(start.instrument)
                 if instrument not in INSTRUMENTS:
-                    raise RuntimeError(f"MuScriptor returned an instrument this program has no program for: {instrument}")
+                    raise RuntimeError(
+                        f"MuScriptor returned an instrument this program has no program for: {instrument}"
+                    )
                 notes.setdefault(instrument, []).append(
                     (float(start.start_time), float(event.end_time), float(start.pitch))
                 )
@@ -276,3 +281,98 @@ def _instruments(instruments: Sequence[str] | None) -> list[str]:
 def read_config(directory: str | pathlib.Path) -> dict:
     """The checkpoint's own config, for a caller that wants to see what it loaded."""
     return json.loads((_whole(pathlib.Path(directory)) / "config.json").read_text(encoding="utf-8"))
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="namioto-cli muscriptor",
+        description="Extract the notes of instruments with MuScriptor's checkpoints.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("audio", nargs="?", help="audio file to extract from; leave out to only fetch a model")
+    parser.add_argument("-m", "--model", type=pathlib.Path, help="directory holding model.safetensors and config.json")
+    parser.add_argument(
+        "--size",
+        choices=MODEL_SIZES,
+        default="small",
+        help="model size to use, downloaded into the data directory when it is not there yet",
+    )
+    parser.add_argument(
+        "--device",
+        choices=devices.RUN_CHOICES,
+        default="cpu",
+        help="run on the CPU, or on the GPU backend the settings name",
+    )
+    parser.add_argument(
+        "--instrument",
+        action="append",
+        help="keep only this instrument; repeat to keep more, leave out to keep whatever the model hears",
+    )
+    parser.add_argument("--tempo", type=float, default=120.0, help="tempo used for the MIDI file")
+    parser.add_argument(
+        "--quantize",
+        type=int,
+        choices=[1, 2, 4, 8, 16, 32],
+        help="snap to a beat grid this many subdivisions per quarter note",
+    )
+    parser.add_argument("--midi", type=pathlib.Path, help="also write the parts to this MIDI file")
+    parser.add_argument("--json", action="store_true", help="print the parts as JSON")
+    return parser.parse_args(argv)
+
+
+def report_download(done: int, total: int) -> None:
+    """One line per megabyte on stderr, so a fetch does not look like a hang."""
+    megabytes = done // (1 << 20)
+    if megabytes != getattr(report_download, "last", -1):
+        report_download.last = megabytes
+        where = f" of {total // (1 << 20)}" if total else ""
+        print(f"  {megabytes}{where} MB", file=sys.stderr, flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        folder = resolve_model(args.model, args.size, progress=report_download)
+    except (OSError, ValueError) as error:
+        print(f"No model to use: {error}", file=sys.stderr)
+        return 2
+    if args.audio is None:
+        print(f"{args.size} model in {folder}")
+        return 0
+    model = load(folder, device=devices.resolve(args.device))
+    parts = extract(
+        model,
+        args.audio,
+        instruments=args.instrument,
+        progress=lambda done, total: print(f"  chunks {done}/{total}", file=sys.stderr),
+    )
+    grid = None
+    if args.quantize:
+        parts, unit, phase = quantized_parts(parts, args.tempo, args.quantize)
+        grid = (unit, 480 // args.quantize)
+        print(f"grid {unit * 1000:.1f} ms, phase {phase * 1000:.1f} ms", file=sys.stderr)
+    if args.midi:
+        save_parts(args.midi, parts, args.tempo, grid=grid)
+    if args.json:
+        payload = {
+            "parts": [
+                {
+                    "instrument": part.name,
+                    "program": part.program,
+                    "notes": [{"onset": onset, "offset": oset, "pitch": pitch} for onset, oset, pitch in part.notes],
+                }
+                for part in parts
+            ]
+        }
+        json.dump(payload, sys.stdout, indent=2)
+        print()
+    else:
+        total = sum(len(part.notes) for part in parts)
+        print(f"{len(parts)} parts, {total} notes")
+        for part in parts:
+            print(f"  {part.name:24} {len(part.notes):6} notes   program {part.program}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

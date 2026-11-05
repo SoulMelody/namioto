@@ -54,7 +54,7 @@ DEVICES: tuple[Device, ...] = (
         "gpu",
         ("WebGpuExecutionProvider", "CPUExecutionProvider"),
         runtime="Vulkan",
-        hint="install namioto[webgpu] and a working Vulkan driver",
+        hint="install namioto[ort-webgpu] and a working Vulkan driver",
         plugin="onnxruntime_ep_webgpu",
     ),
 )
@@ -125,10 +125,12 @@ def _register(ort) -> None:
 
 # what the interface says when a run cannot open a model; kept as the English a catalog can key on,
 # since the interface is the side that translates it
-MISSING_RUNTIME = "ONNX Runtime is not installed; install namioto[cpu], namioto[cuda] or namioto[webgpu] and restart"
+MISSING_RUNTIME = (
+    "ONNX Runtime is not installed; install namioto[ort-cpu], namioto[ort-cuda] or namioto[ort-webgpu] and restart"
+)
 MIXED_RUNTIME = (
     "two onnxruntime builds are installed; remove all but one and reinstall "
-    "namioto[cpu], namioto[cuda] or namioto[webgpu]"
+    "namioto[ort-cpu], namioto[ort-cuda] or namioto[ort-webgpu]"
 )
 
 

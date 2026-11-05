@@ -141,7 +141,10 @@ SECTIONS: tuple[Section, ...] = (
                 "text",
                 "https://hf-mirror.com",
                 "Hugging Face endpoint",
-                "MuScriptor checkpoints are fetched from this endpoint; empty falls back to $HF_ENDPOINT, then huggingface.co",
+                (
+                    "MuScriptor checkpoints are fetched from this endpoint; "
+                    "empty falls back to $HF_ENDPOINT, then huggingface.co"
+                ),
             ),
             Field(
                 "proxy",

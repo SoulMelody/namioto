@@ -24,7 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libportaudio2 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 fonts-noto-cjk
-      - run: uv sync --locked --extra cpu
+      - run: uv sync --locked --extra ort-cpu
       - run: uvx ruff check namioto tests scripts/package_release.py
       - run: uv run --no-sync pytest
 
