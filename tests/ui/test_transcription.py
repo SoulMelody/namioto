@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
+import pathlib
 import queue
 
 import pytest
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QToolButton
 
-from namioto.analysis import devices, transcription
+from namioto.analysis import devices, separation, transcription
 from namioto.channels import Channel
 from namioto.ui.transcription_dialog import TranscriptionDialog
+from namioto.utils import file_stamp, write_json
 
 from .helpers import parameter_writer
 
@@ -329,3 +331,133 @@ def test_transcription_replaces_only_channel_zero(own_window) -> None:
 
     assert len(own_window.view.channels) == 2
     assert sorted((note.pitch, note.channel) for note in own_window.view.notes()) == [(62, 1), (64, 0)]
+
+
+def fake_stage(messages, seen: list | None = None, exitcode: int = 0):
+    """`fake_job`, but it also records the audio it was handed, so a test can see which one a stage read."""
+    channel: queue.Queue = queue.Queue()
+    for message in messages:
+        channel.put(message)
+    process = FakeProcess(exitcode)
+
+    def start(audio, parameters):
+        if seen is not None:
+            seen.append((audio, parameters))
+        return process, channel
+
+    return start
+
+
+def source_writer(dialog, name: str):
+    """The write half of one row of the Source section, to change it the way a widget would."""
+    for field, _read, write in dialog._separation_fields:
+        if field.name == name:
+            return write
+    raise AssertionError(f"this dialog has no {name} source field")
+
+
+def cached_stems(audio: str, model: str) -> dict[str, pathlib.Path]:
+    """A finished separation's directory, written by hand so a check needs no model."""
+    folder = separation.stems_dir(audio, model)
+    folder.mkdir(parents=True)
+    written = {}
+    for name in ("vocals", "instrumental"):
+        path = folder / f"{name}.wav"
+        path.write_bytes(b"wav")
+        written[name] = path
+    write_json(
+        {
+            "version": separation.STORE_VERSION,
+            "audio": str(pathlib.Path(audio).resolve()),
+            "stamp": list(file_stamp(audio)),
+            "model": model,
+            "rate": 44100,
+            "stems": {name: path.name for name, path in written.items()},
+        },
+        folder / separation.MANIFEST,
+    )
+    return written
+
+
+def test_the_switch_separates_before_transcribing(own_window, monkeypatch, tmp_path) -> None:
+    audio = tmp_path / "song.wav"
+    audio.write_bytes(b"RIFF0000WAVE")
+    stems = {"vocals": str(tmp_path / "vocals.wav"), "instrumental": str(tmp_path / "instrumental.wav")}
+    separated: list = []
+    transcribed: list = []
+    monkeypatch.setattr(
+        "namioto.ui.transcription_dialog.start_separation",
+        fake_stage([("log", "separation model x"), ("progress", "separating", 1, 1), ("done", stems)], separated),
+    )
+    monkeypatch.setattr(
+        "namioto.ui.transcription_dialog.start_job", fake_stage([("done", [(0.0, 0.5, 60.0)])], transcribed)
+    )
+    dialog = TranscriptionDialog(str(audio), 120.0, parent=own_window)
+    source_writer(dialog, "enabled")(True)
+
+    dialog._start()
+    dialog._poll()  # the stems land, the transcription stage begins
+    dialog._poll()  # the notes land
+
+    assert len(separated) == 1
+    assert separated[0][0] == str(audio)
+    assert [entry[0] for entry in transcribed] == [str(stems["vocals"])]
+    assert dialog.notes() == [(0.0, 0.5, 60.0)]
+    assert "Transcribing the vocals stem" in dialog.log.toPlainText()
+
+
+def test_cached_stems_skip_the_separation_stage(own_window, monkeypatch, tmp_path) -> None:
+    audio = tmp_path / "song.wav"
+    audio.write_bytes(b"RIFF0000WAVE")
+    model = separation.MODELS[0]
+    stems = cached_stems(str(audio), model)
+    transcribed: list = []
+    monkeypatch.setattr("namioto.ui.transcription_dialog.start_separation", lambda *args: pytest.fail("must not split"))
+    monkeypatch.setattr(
+        "namioto.ui.transcription_dialog.start_job", fake_stage([("done", [(0.0, 0.5, 60.0)])], transcribed)
+    )
+    dialog = TranscriptionDialog(str(audio), 120.0, parent=own_window)
+    source_writer(dialog, "enabled")(True)
+    source_writer(dialog, "model")(model)
+
+    dialog._start()
+    dialog._poll()
+
+    assert [entry[0] for entry in transcribed] == [str(stems["vocals"])]
+    assert "stems reused" in dialog.log.toPlainText()
+    assert dialog.notes() == [(0.0, 0.5, 60.0)]
+
+
+def test_a_separation_without_the_vocals_stem_fails_in_the_log(own_window, monkeypatch, tmp_path) -> None:
+    audio = tmp_path / "song.wav"
+    audio.write_bytes(b"RIFF0000WAVE")
+    monkeypatch.setattr(
+        "namioto.ui.transcription_dialog.start_separation",
+        fake_stage([("done", {"drums": str(tmp_path / "drums.wav")})]),
+    )
+    monkeypatch.setattr("namioto.ui.transcription_dialog.start_job", lambda *args: pytest.fail("must not transcribe"))
+    dialog = TranscriptionDialog(str(audio), 120.0, parent=own_window)
+    source_writer(dialog, "enabled")(True)
+
+    dialog._start()
+    dialog._poll()
+
+    assert "vocals" in dialog.log.toPlainText()
+    assert dialog.progress_label.text() == "Failed"
+    assert dialog.notes() == []
+
+
+def test_an_unreported_download_shows_an_indeterminate_bar(own_window) -> None:
+    dialog = TranscriptionDialog("/tmp/song.wav", 120.0, parent=own_window)
+
+    dialog._show_progress("download", 0, 0)
+
+    assert dialog.progress.minimum() == 0
+    assert dialog.progress.maximum() == 0
+    assert dialog.progress_label.text() == "Downloading the model …"
+
+    dialog._show_progress("separating", 2, 4)
+
+    assert dialog.progress_label.text() == "Separating … 2/4"
+    assert dialog.progress.value() == 2
+    dialog.close()

@@ -24,6 +24,7 @@ uv run pytest -m slow
 uv run pytest -m ''
 uvx ruff check namioto tests
 uvx ruff format namioto tests
+uvx ty check
 uv run scripts/bench_spectrum.py
 ```
 

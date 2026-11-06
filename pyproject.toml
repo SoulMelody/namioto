@@ -45,6 +45,10 @@ pytorch-cpu = [
   "torchaudio ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
   "muscriptor==0.4.0 ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
 ]
+# pymss brings its own catalog downloader and torch, so a sync with this extra and one of the pytorch
+# extras shares the torch build rather than installing a second one; the weights are fetched on the
+# first separation run and never shipped with the program
+separation = ["pymss>=2.0.14"]
 
 [dependency-groups]
 # the analysis jobs need one of the onnxruntime builds and the tests exercise them, but no default
@@ -59,10 +63,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["namioto"]
 
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
-typeCheckingMode = "basic"
+# the type checker an editor runs. ty takes the language level from `requires-python` and finds the
+# project's `.venv` on its own, so only the scope is named here: `scripts` holds the release helpers
+# that run inside the project, `refs` and the build output never do
+[tool.ty.src]
 include = ["namioto", "tests", "scripts"]
 exclude = ["refs", "build", "dist"]
 

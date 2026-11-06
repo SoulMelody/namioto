@@ -101,6 +101,21 @@ they are neither imported from nor exported to MIDI track names.
 **WaveTone compatibility** is on by default. It removes WaveTone's leading bar on import
 and adds it on export. Disable it for ordinary MIDI exchange with other tools.
 
+## Transcription
+
+The wand opens the transcription window. **Engine** picks GAME for one singing voice or MuScriptor
+for instrument parts; both run in a process of their own, with their log and progress in the window,
+and a finished run inserts its notes into channel 0.
+
+### Separate the source first
+
+**Source → Separate first** splits the audio before transcribing and keeps only the stem the chosen
+engine hears: the vocals for GAME, the instrumental for MuScriptor. A two-stem model supplies both;
+`HTDemucs4` supplies four stems, and the instrumental is built by summing the ones that are not the
+vocal. The separator is chosen in the same section, and the weights download on first use. Stems are
+kept in the data directory and reused on the next run over the same recording; changing the audio
+file makes them stale rather than wrong.
+
 ## Settings and remembered values
 
 The gear opens Settings. Changes to interface language take effect on the next run.

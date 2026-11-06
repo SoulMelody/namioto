@@ -96,6 +96,20 @@ Third-party code and assets
 - Consequence: parts produced with those checkpoints are non-commercial. Accepting the license on
   each model page is a prerequisite for the download.
 
+### pymss (source separation)
+- Upstream: https://github.com/pymss-project/pymss, published on PyPI as `pymss`
+- License: MIT (the package's code) — the separator weights are a separate work, and each
+  checkpoint keeps the licence its upstream project published it under
+- Used for: splitting a recording into the stems a transcription reads, before GAME or MuScriptor
+  runs. `namioto/analysis/separation.py` is this project's own code: it fetches the weights, calls
+  the separator, and files the stems and their manifest. The inference itself stays in the package,
+  which brings its own torch and catalog downloader; it is only offered by the `separation` extra.
+- The weights are not redistributed here and are not part of any wheel or frozen build: they are
+  fetched on demand from the pymss model catalog into
+  `platformdirs.user_data_dir("namioto")/models/pymss` on the first run that separates.
+- Consequence: the terms of a produced stem follow the checkpoint that produced it, as published by
+  that checkpoint's upstream authors; consult the model page before redistributing the stems.
+
 ### Audio output (reached at runtime)
 - sounddevice (https://github.com/spatialaudio/python-sounddevice) — MIT; the output stream the song
   is played through. Its Linux wheel leaves PortAudio to the system, so a desktop needs
@@ -120,6 +134,7 @@ Third-party code and assets
 | supriya-midi, RtMidi | MIT |
 | torch, torchaudio (the MuScriptor extras only) | BSD-3-Clause / Apache-2.0 |
 | muscriptor (the MuScriptor extras only) | MIT |
+| pymss, av (the separation extra only) | MIT |
 | packaging | Apache-2.0 OR BSD-2-Clause |
 | soxr | LGPL-2.1-or-later |
 | pytest (development only) | MIT |

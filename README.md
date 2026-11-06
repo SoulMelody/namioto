@@ -13,6 +13,7 @@ notes against what you hear and see.
 - Extract singing-voice notes with [GAME](https://github.com/openvpi/GAME).
 - Extract instrument parts with [MuScriptor](https://github.com/muscriptor/muscriptor), one channel
   per instrument it hears.
+- Separate a mix into vocals and instrumental first, so each engine hears only its own stem.
 - Add lyrics and readings, and adjust how the sounds map onto notes.
 - Save your work as a `.nto` project and export MIDI.
 - Run analysis and singing-voice extraction from the command line, or control a running editor
@@ -46,6 +47,11 @@ inference run.
 The **Engine** row picks which one runs. GAME writes to one channel. MuScriptor needs a torch build,
 so it ships in the `pytorch-cpu` and `ort-cuda` extras rather than the base install; its checkpoints
 are gated and fetched from the Hugging Face endpoint set in **Settings → Network**.
+
+The **Source** section separates the recording before transcribing it, with [pymss](https://pypi.org/project/pymss/):
+GAME then hears the vocals and MuScriptor the instrumental. The separation weights come from the pymss
+model catalog on first use and stay in the data directory, and the same recording is not split twice.
+It needs the `separation` extra, and the same models are available as `namioto-cli separate`.
 
 ## Install and launch
 

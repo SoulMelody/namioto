@@ -241,10 +241,14 @@ def curve_editor(value: Any, field: Field):
     return row, read, write
 
 
-def advanced_section(form: QFormLayout) -> QToolButton:
-    """The heading over a form of advanced rows, folded away until it is clicked."""
+def advanced_section(form: QFormLayout, caption: str = "") -> QToolButton:
+    """The heading over a form of advanced rows, folded away until it is clicked.
+
+    `caption` is the heading's text: the transcription window folds two sections away, and only one
+    of them is "Advanced".
+    """
     button = QToolButton()
-    button.setText(tr("Advanced"))
+    button.setText(caption or tr("Advanced"))
     button.setCheckable(True)
     button.setAutoRaise(True)
     button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)

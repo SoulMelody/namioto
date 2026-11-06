@@ -88,6 +88,24 @@ Checkpoints are cached under `~/.local/share/namioto/models/muscriptor/<size>` o
 gated and fetched from the Hugging Face endpoint in Settings → Network, which defaults to the
 domestic mirror; accept the license on the model page first.
 
+## Separate the source
+
+```bash
+uv run namioto-cli separate song.wav
+uv run namioto-cli separate song.wav --model voc_fv7.ckpt
+uv run namioto-cli separate song.wav --device cuda --out stems/
+```
+
+`separate` splits a recording into the stems a transcription reads: the vocals a singing-voice run
+transcribes, and an instrumental the instrument run transcribes instead. The two-stem models keep
+`vocals` and `instrumental`; `HTDemucs4.th` keeps four stems, and the instrumental is the sum of
+everything that is not the vocal. The weights are fetched from the pymss model catalog on first use
+into `~/.local/share/namioto/models/pymss` on Linux and are never shipped with this program.
+Without `--out` the stems are written to `~/.local/share/namioto/stems/<audio hash>/<model>` and
+recorded in a manifest, so a later transcription reuses them; `--out` writes plain wav files
+wherever it is told. `--model` or `$NAMIOTO_SEPARATION_MODEL` picks the separator, and `--device`
+takes `auto`, `cpu` or `cuda`. The command needs the `separation` extra.
+
 ## Devices and models
 
 The initial `uv sync --extra ort-cpu` installs ONNX Runtime for CPU analysis. Alternatively:
@@ -96,6 +114,8 @@ The initial `uv sync --extra ort-cpu` installs ONNX Runtime for CPU analysis. Al
 uv sync --extra ort-cuda
 # Or:
 uv sync --extra ort-webgpu
+# Source separation, on top of either:
+uv sync --extra separation
 ```
 
 `ort-cuda` also installs torch and MuScriptor, so GPU machines get transcription without a second

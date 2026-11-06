@@ -195,6 +195,23 @@ def run_key(path: Any, parameters: Any) -> str:
     return hashlib.sha1(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+# which stem each engine hears: GAME one voice, so the band has to go; MuScriptor the band, so the
+# voice has to. This table is the whole policy of separating before transcribing, and it is read
+# here rather than stored with the run so an existing cached run keeps its key.
+SEPARATED_INPUTS = {"game": "vocals", "muscriptor": "instrumental"}
+
+
+def input_for(engine: str, stems: dict[str, pathlib.Path]) -> pathlib.Path:
+    """The one stem a run of this engine transcribes, from the set a separation just wrote."""
+    wanted = SEPARATED_INPUTS.get(engine)
+    if wanted is None:
+        raise ValueError(f"no separated input for engine {engine!r}; it reads the audio as it is")
+    if wanted not in stems:
+        available = ", ".join(sorted(stems)) or "nothing"
+        raise ValueError(f"the {engine} engine needs the {wanted} stem, but the separation wrote {available}")
+    return stems[wanted]
+
+
 def _results_path(path: Any) -> pathlib.Path:
     return results_root() / f"{audio_key(path)}.json"
 

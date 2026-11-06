@@ -1,8 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The transcription window: GAME's parameters, the run's progress and log, and what it found.
+"""The transcription window: the engines' parameters, the run's progress and log, and what it found.
 
 The run lives in a process of its own (`namioto.analysis.transcription.transcribe`), so a model crash cannot
-take the editor down; this window only spawns it, drains its queue and offers the result.
+take the editor down; this window only spawns it, drains its queue and offers the result. A separation run
+(`namioto.analysis.separation.separate`) is a stage of the same window rather than a window of its own: it
+writes the stems a transcription reads, and only its `("done", stems)` matters here.
+
+The run is two stages at most, kept as two fields: `_stage` says which one the child is running and
+`_input` is the audio that stage actually reads. A separation stage resolves `_input` to the stem the
+engine wants and hands over to the transcription stage, which may still offer a cached run of that stem.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from namioto.analysis import devices, transcription
+from namioto.analysis import devices, separation, transcription
 from namioto.i18n import tr
 from namioto.params import Field
 from namioto.ui.form import add_row, advanced_section, field_editor
@@ -37,6 +43,11 @@ POLL_MS = 100
 LOG_HEIGHT = 140
 # the rows the form folds away: the ones only worth reaching for when the small model misses
 ADVANCED = ("batch_size", "seg_threshold", "seg_radius", "est_threshold", "d3pm_t0", "d3pm_steps", "silence_slice")
+# which stage a child is running; a run is at most these two, in this order
+SEPARATION = "separation"
+TRANSCRIPTION = "transcription"
+# the stage name a separation child puts on its progress messages
+SEPARATING = "separating"
 
 
 def start_job(audio: str, parameters: dict):
@@ -52,8 +63,21 @@ def start_job(audio: str, parameters: dict):
     return process, channel
 
 
+def start_separation(audio: str, parameters: dict):
+    """Spawn the separation child and the queue it reports on; the second seam the tests replace."""
+    context = multiprocessing.get_context("spawn")
+    channel = context.Queue()
+    process = context.Process(
+        target=separation.separate,
+        args=(audio, parameters, channel),
+        daemon=True,
+    )
+    process.start()
+    return process, channel
+
+
 class TranscriptionDialog(QDialog):
-    """GAME's parameters and the run, over one audio file.
+    """The engines' parameters and the run, over one audio file.
 
     `accept()` means the caller replaces channel 0 with `notes()`; a finished run accepts on its own.
     """
@@ -66,13 +90,19 @@ class TranscriptionDialog(QDialog):
         self.offset = float(offset)
         self.channel_has_notes = bool(channel_has_notes)
         self._parameters = transcription.load_parameters()
+        self._separation_parameters = separation.load_parameters()
         self._fields: list[tuple[Field, Callable[[], object], Callable[[object], None]]] = []
+        self._separation_fields: list[tuple[Field, Callable[[], object], Callable[[object], None]]] = []
         self._process = None
         self._queue = None
         self._notes: list[tuple[float, float, float]] = []
         self._parts: list[tuple] = []
         self._settled = True
         self._downloading = False
+        # the run's own two fields: which stage the child is in, and the audio that stage reads
+        self._stage = TRANSCRIPTION
+        self._input = pathlib.Path(self.audio)
+        self._stems: dict[str, pathlib.Path] | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
         self._timer.timeout.connect(self._poll)
@@ -109,6 +139,10 @@ class TranscriptionDialog(QDialog):
     def parameters(self) -> dict:
         """What the form holds now, checked the way the store checks it."""
         return transcription.coerce_parameters({field.name: read() for field, read, _write in self._fields})
+
+    def separation_parameters(self) -> dict:
+        """What the Source section holds now, checked the way its own store checks it."""
+        return separation.coerce_parameters({field.name: read() for field, read, _write in self._separation_fields})
 
     def notes(self) -> list[tuple[float, float, float]]:
         return list(self._notes)
@@ -149,6 +183,27 @@ class TranscriptionDialog(QDialog):
                 layout.addWidget(heading)
                 heading.toggled.connect(lambda _open: QTimer.singleShot(0, self._fit))
             layout.addLayout(form)
+            if not advanced:
+                # the separation switch follows the engine rows: what it does is about the source
+                # those rows name, and it is folded away because most runs transcribe the mix
+                layout.addWidget(self._build_source())
+        return widget
+
+    def _build_source(self) -> QWidget:
+        widget = QWidget()
+        widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        for item in separation.PARAMETERS:
+            editor, read, write = field_editor(self._separation_parameters[item.name], item)
+            add_row(form, editor, item)
+            self._separation_fields.append((item, read, write))
+        heading = advanced_section(form, tr("Source"))
+        layout.addWidget(heading)
+        layout.addLayout(form)
+        heading.toggled.connect(lambda _open: QTimer.singleShot(0, self._fit))
         return widget
 
     def _fit(self) -> None:
@@ -194,14 +249,36 @@ class TranscriptionDialog(QDialog):
     def _start(self) -> None:
         if not self._confirm_target():
             return
+        self.log.clear()
         self._parameters = self.parameters()
         transcription.save_parameters(self._parameters)
-        cached = transcription.find_run(self.audio, self._parameters)
+        self._separation_parameters = self.separation_parameters()
+        separation.save_parameters(self._separation_parameters)
+        # the input this run transcribes: the mix, or the stem a previous separation already wrote
+        self._stems = None
+        self._input = pathlib.Path(self.audio)
+        if self._separation_parameters["enabled"]:
+            # the override a shell sets wins here too, so the stems looked for are the ones written
+            model = separation.model_name(self._separation_parameters["model"])
+            stems = separation.find_stems(self.audio, model)
+            if stems is not None:
+                try:
+                    self._input = transcription.input_for(self._parameters["engine"], stems)
+                except ValueError as error:  # a cached set this engine cannot read is worth no re-run
+                    self._fail(str(error))
+                    return
+                self._stems = stems
+                self._log_line(tr("stems reused: {names}", names=", ".join(sorted(stems))))
+        cached = transcription.find_run(self._input, self._parameters)
         if cached is not None and self._use_cache(len(cached)):
             self._log_line(tr("saved run reused: {count} notes", count=len(cached)))
             self._settle(cached, save=False)
             return
-        self._launch()
+        # two branches, not a chain: either the separation stage comes first or the mix is transcribed
+        if self._separation_parameters["enabled"] and self._stems is None:
+            self._launch_separation()
+        else:
+            self._launch()
 
     def _use_cache(self, count: int) -> bool:
         """Ask before a repeat run is skipped; the notes are never listed anywhere, only offered back."""
@@ -216,13 +293,33 @@ class TranscriptionDialog(QDialog):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _launch_separation(self) -> None:
+        """Stage one: split the mix, so the transcription stage can read the stem it hears."""
+        self._stage = SEPARATION
+        self._input = pathlib.Path(self.audio)
+        self._notes = []
+        self._settled = False
+        self._downloading = False
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress_label.setText(tr("Separating …"))
+        self._set_running(True)
+        self._log_line(tr("Separating {name} …", name=pathlib.Path(self.audio).name))
+        try:
+            self._process, self._queue = start_separation(self.audio, self._separation_parameters)
+        except Exception as error:  # a child that cannot start must not leave the form stuck
+            self._fail(f"{type(error).__name__}: {error}")
+            return
+        self._timer.start()
+
     def _launch(self) -> None:
-        self.log.clear()
+        """Stage two, or the only stage: transcribe `_input`, which a separation may have just named."""
+        self._stage = TRANSCRIPTION
         problem = devices.validate()
         if problem is not None:
             self._fail(tr(problem))
             return
-        self._log_line(tr("Transcribing {name} …", name=pathlib.Path(self.audio).name))
+        self._log_line(tr("Transcribing {name} …", name=self._input.name))
         self._notes = []
         self._settled = False
         self._downloading = False
@@ -231,16 +328,19 @@ class TranscriptionDialog(QDialog):
         self.progress_label.setText(tr("Starting GAME …"))
         self._set_running(True)
         try:
-            self._process, self._queue = start_job(self.audio, self._parameters)
+            self._process, self._queue = start_job(str(self._input), self._parameters)
         except Exception as error:  # a child that cannot start must not leave the form stuck
             self._fail(f"{type(error).__name__}: {error}")
             return
         self._timer.start()
 
     def _poll(self) -> None:
-        self._drain()
         process = self._process
-        if process is None or self._settled or process.is_alive():
+        self._drain()
+        # a finished stage may have handed over to the next one, which reports on later ticks
+        if process is None or self._process is not process:
+            return
+        if self._settled or process.is_alive():
             return
         self._drain()  # the last messages can land just after the child exits
         self._timer.stop()
@@ -264,22 +364,57 @@ class TranscriptionDialog(QDialog):
         elif kind == "progress":
             self._show_progress(*message[1:])
         elif kind == "done":
-            self._parts = list(message[2]) if len(message) > 2 else []
-            self._settle(list(message[1]), save=True)
+            if self._stage == SEPARATION:
+                self._settle_separation(dict(message[1]))
+            else:
+                self._parts = list(message[2]) if len(message) > 2 else []
+                self._settle(list(message[1]), save=True)
         elif kind == "error":
             self._fail(message[1])
 
+    def _settle_separation(self, stems: dict) -> None:
+        """The stems are written; hand the one this engine reads to the transcription stage.
+
+        The child has done its whole job, so the timer stops here, but nothing is settled: a
+        transcription may still be offered from the cache or started against the stem.
+        """
+        self._timer.stop()
+        self._process = None
+        self._queue = None
+        self._stems = {name: pathlib.Path(path) for name, path in stems.items()}
+        try:
+            self._input = transcription.input_for(self._parameters["engine"], self._stems)
+        except ValueError as error:  # a model that kept no stem this engine reads
+            self._fail(str(error))
+            return
+        self._log_line(tr("Transcribing the {stem} stem", stem=tr(self._input.stem)))
+        cached = transcription.find_run(self._input, self._parameters)
+        if cached is not None and self._use_cache(len(cached)):
+            self._log_line(tr("saved run reused: {count} notes", count=len(cached)))
+            self._settle(cached, save=False)
+            return
+        self._launch()
+
     def _show_progress(self, stage: str, done: int, total: int) -> None:
         if stage == "download":
-            self._downloading = True
-            where = tr(" of {total}", total=total // (1 << 20)) if total else ""
-            self.progress_label.setText(
-                tr("Downloading the model … {done}{where} MB", done=done // (1 << 20), where=where)
-            )
+            # only a transcription download leaves an archive behind; a separation one is pymss's
+            self._downloading = self._stage == TRANSCRIPTION
+            if total:
+                where = tr(" of {total}", total=total // (1 << 20))
+                label = tr("Downloading the model … {done}{where} MB", done=done // (1 << 20), where=where)
+            else:
+                # the catalog downloader reports nothing, so the bar does not pretend to know
+                label = tr("Downloading the model …")
+        elif stage == SEPARATING:
+            label = tr("Separating … {done}/{total}", done=done, total=total)
         else:
-            self.progress_label.setText(tr("Extracting … {done}/{total}", done=done, total=total))
-        self.progress.setRange(0, max(1, total))
-        self.progress.setValue(done)
+            label = tr("Extracting … {done}/{total}", done=done, total=total)
+        self.progress_label.setText(label)
+        if total:
+            self.progress.setRange(0, total)
+            self.progress.setValue(done)
+        else:
+            self.progress.setRange(0, 0)
 
     def _settle(self, notes, save: bool) -> None:
         self._settled = True
@@ -289,7 +424,7 @@ class TranscriptionDialog(QDialog):
         self._notes = self._snapped(notes)
         if save:
             try:
-                transcription.save_run(self.audio, self._parameters, notes)  # raw: the grid is applied here
+                transcription.save_run(self._input, self._parameters, notes)  # raw: the grid is applied here
             except OSError as error:
                 self._log_line(tr("the result could not be saved: {error}", error=error))
         self.progress.setRange(0, 1)
@@ -325,12 +460,17 @@ class TranscriptionDialog(QDialog):
         self._queue = None
         for line in str(message).strip().splitlines()[-8:]:
             self._log_line(line)
+        self.progress.setRange(0, 1)
         self.progress.setValue(0)
         self.progress_label.setText(tr("Failed"))
         self._set_running(False)
 
     def _crash(self, exitcode) -> None:
-        self._log_line(tr("GAME stopped unexpectedly (exit code {code})", code=exitcode))
+        if self._stage == SEPARATION:
+            self._log_line(tr("Separation stopped unexpectedly (exit code {code})", code=exitcode))
+        else:
+            self._log_line(tr("GAME stopped unexpectedly (exit code {code})", code=exitcode))
+        self.progress.setRange(0, 1)
         self.progress.setValue(0)
         self.progress_label.setText(tr("Failed"))
         self._set_running(False)
@@ -356,7 +496,11 @@ class TranscriptionDialog(QDialog):
             self._sweep()
 
     def _sweep(self) -> None:
-        """A killed download leaves its archive in the model directory; it is worth no keeping."""
+        """A killed download leaves its archive in the model directory; it is worth no keeping.
+
+        Only the transcription stage downloads through a temporary archive, so a killed separation
+        leaves nothing behind that this has to remove.
+        """
         if not self._downloading:
             return
         from namioto.analysis import game
