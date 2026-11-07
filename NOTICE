@@ -96,6 +96,29 @@ Third-party code and assets
 - Consequence: parts produced with those checkpoints are non-commercial. Accepting the license on
   each model page is a prerequisite for the download.
 
+### Qwen3-ForcedAligner (lyric alignment)
+- Upstream: Alibaba Qwen, https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B
+- License: Apache-2.0
+- Used for: putting a time on every note from the word it sings. Unlike TIFA, the model reads the
+  text itself and returns one timed unit per word or character, so no phoneme set or G2P belongs to
+  this program: `namioto/analysis/qwen_aligner.py` validates the snapshot, calls `align()` and
+  matches the units back onto the notes.
+- It is a torch model, so it is offered by the `pytorch-cpu` and `ort-cuda` extras, never by the
+  base install, and it is imported only in the spawned alignment process.
+- The weights are not redistributed here: the pinned revision is fetched on first use from the
+  endpoint in Settings → Network (`https://hf-mirror.com` by default) into
+  `platformdirs.user_data_dir("namioto")/models/qwen3-forcedaligner-0.6b`, or read from a directory
+  given with `--model` or `$NAMIOTO_QWEN_ALIGNER_MODEL`.
+- The model card marks its audio type as speech. This program aligns a separated vocal stem, which
+  is what the built-in pymss stage produces, and treats the result as a starting point.
+
+### qwen-asr (the aligner's runtime wrapper)
+- Upstream: https://github.com/QwenLM/Qwen3-ASR, published on PyPI as `qwen-asr`
+- License: Apache-2.0
+- Used for: loading the aligner and running it. It pins `transformers==4.57.6` and brings `gradio`,
+  `flask`, `sox`, `nagisa`, `soynlp` and `accelerate` with it, which is why the extra is heavier
+  than the model alone would be. Nothing of it is shipped in a wheel or a frozen build.
+
 ### pymss (source separation)
 - Upstream: https://github.com/pymss-project/pymss, published on PyPI as `pymss`
 - License: MIT (the package's code) — the separator weights are a separate work, and each
@@ -134,6 +157,7 @@ Third-party code and assets
 | supriya-midi, RtMidi | MIT |
 | torch, torchaudio (the MuScriptor extras only) | BSD-3-Clause / Apache-2.0 |
 | muscriptor (the MuScriptor extras only) | MIT |
+| qwen-asr, transformers (the alignment extras only) | Apache-2.0 |
 | pymss, av (the separation extra only) | MIT |
 | packaging | Apache-2.0 OR BSD-2-Clause |
 | soxr | LGPL-2.1-or-later |

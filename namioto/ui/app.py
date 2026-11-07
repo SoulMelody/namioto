@@ -77,6 +77,7 @@ from namioto.mtc import Rate
 from namioto.playback import note_frequency
 from namioto.tempo_map import TempoMap
 from namioto.ui import theme
+from namioto.ui.align_dialog import AlignDialog
 from namioto.ui.audio import open_player
 from namioto.ui.channel_panel import ChannelPanel
 from namioto.ui.controls import ControlArea, EditBar, MixBar, TransportBar
@@ -434,6 +435,7 @@ class MainWindow(QMainWindow):
         self.transport.save_requested.connect(self._on_save)
         self.transport.export_midi_requested.connect(self._on_export_midi)
         self.edit.transcribe_requested.connect(self._open_transcription)
+        self.edit.align_requested.connect(self._open_align)
         self.edit.lyrics_requested.connect(self._open_lyrics)
         self.transport.note_lyrics.toggled.connect(self.view.set_note_lyrics_visible)
         self.player.finished.connect(self._on_playback_finished)
@@ -1369,6 +1371,49 @@ class MainWindow(QMainWindow):
             else:
                 self._adopt_transcription(dialog.notes())
 
+    def _open_align(self) -> None:
+        """Ask the aligner for a time on every note, from the word it sings."""
+        if self.view.gesture_active:
+            return
+        if self.audio_path is None:
+            self.statusBar().showMessage(i18n.tr("Load the audio before aligning the lyrics"))
+            return
+        notes = [
+            item.note
+            for item in self.view.notes()
+            if item.note.channel == self.view.active_channel and item.note.lyric
+        ]
+        if not notes:
+            self.statusBar().showMessage(i18n.tr("The selected channel has no lyrics to align"))
+            return
+        dialog = AlignDialog(
+            self.audio_path,
+            [note.lyric for note in notes],
+            [self.view.to_seconds(note.start) for note in notes],
+            self.transport.bpm.value(),
+            self,
+            offset=self.view.offset,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._adopt_alignment(notes, dialog.spans())
+
+    def _adopt_alignment(self, notes, spans) -> None:
+        """Lay the aligned spans onto the notes, as one undo step."""
+        timed = [(note, span) for note, span in zip(notes, spans, strict=True) if span is not None]
+        if not timed:
+            self.statusBar().showMessage(i18n.tr("The aligner put a time on no note"))
+            return
+        self.view.begin_gesture(i18n.tr("Align lyrics"))
+        try:
+            for note, (start, end) in timed:
+                note.set_range(self.view.to_beats(start), note.pitch)
+                note.set_duration(self.view.to_beats(end) - self.view.to_beats(start))
+        finally:
+            self.view.commit_gesture()
+        self.view.refresh()
+        self._mark_dirty()
+        self.statusBar().showMessage(i18n.tr("Aligned {notes} notes", notes=len(timed)))
+
     def _adopt_transcription(self, notes) -> None:
         """Replace channel 0's notes with the transcription."""
         if not notes:
@@ -1464,6 +1509,7 @@ class MainWindow(QMainWindow):
         self.player.stop()
         self.transport.detect.setEnabled(False)
         self.edit.transcribe.setEnabled(False)
+        self.edit.align.setEnabled(False)
         self.transport.suggestion.hide()
         self._show_position()
 
@@ -1540,6 +1586,7 @@ class MainWindow(QMainWindow):
         self._audio_generation += 1
         generation = self._audio_generation
         self.edit.transcribe.setEnabled(True)
+        self.edit.align.setEnabled(True)
         self._mark_dirty()
         self.state.last_audio_dir = str(Path(path).parent)
         self._save_state()
@@ -1949,6 +1996,7 @@ class MainWindow(QMainWindow):
         tools_menu = bars.addMenu(i18n.tr("Tools"))
         tools_menu.addAction(self._register("tempo", tempo_action(self)))
         tools_menu.addAction(self._command("transcribe", "Transcription…", self._open_transcription))
+        tools_menu.addAction(self._command("align", "Align Lyrics…", self._open_align))
         tools_menu.addSeparator()
         tools_menu.addAction(self._command("bookmark-add", "Add Bookmark at Playhead", self._add_bookmark))
         tools_menu.addAction(self._command("bookmark-remove", "Remove Nearest Bookmark", self._remove_bookmark))

@@ -36,6 +36,7 @@ ort-cuda = [
   "torch ; sys_platform != 'darwin'",
   "torchaudio ; sys_platform != 'darwin'",
   "muscriptor==0.4.0 ; sys_platform != 'darwin'",
+  "qwen-asr==0.0.6 ; sys_platform != 'darwin'",
 ]
 ort-webgpu = ["onnxruntime>=1.24.4", "onnxruntime-ep-webgpu"]
 # muscriptor 0.4.0 pins numpy<2 on Intel macOS, which librosa cannot accept, and no current torch
@@ -44,6 +45,7 @@ pytorch-cpu = [
   "torch ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
   "torchaudio ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
   "muscriptor==0.4.0 ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+  "qwen-asr==0.0.6 ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
 ]
 # pymss brings its own catalog downloader and torch, so a sync with this extra and one of the pytorch
 # extras shares the torch build rather than installing a second one; the weights are fetched on the

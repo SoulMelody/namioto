@@ -14,9 +14,11 @@ notes against what you hear and see.
 - Extract instrument parts with [MuScriptor](https://github.com/muscriptor/muscriptor), one channel
   per instrument it hears.
 - Separate a mix into vocals and instrumental first, so each engine hears only its own stem.
-- Add lyrics and readings, and adjust how the sounds map onto notes.
+- Add lyrics and readings, align them against a separated vocal with
+  [Qwen3-ForcedAligner](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B), and adjust how the
+  sounds map onto notes.
 - Save your work as a `.nto` project and export MIDI.
-- Run analysis and singing-voice extraction from the command line, or control a running editor
+- Run analysis, extraction and alignment from the command line, or control a running editor
   remotely.
 
 ## Feature previews
@@ -103,7 +105,7 @@ It is enabled by default and adds/removes WaveTone's leading bar.
 | --- | --- |
 | [Using the editor](docs/usage.md) | Projects, spectrum, editing shortcuts, playback, channels and settings |
 | [Lyrics](docs/lyrics.md) | Lyric text, readings and the mapping onto notes |
-| [Command-line tools](docs/cli.md) | Analysis, note extraction and remote control |
+| [Command-line tools](docs/cli.md) | Analysis, note extraction, alignment and remote control |
 | [Development](docs/development.md) | Source setup, tests, packaging and models |
 
 ## License

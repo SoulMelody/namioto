@@ -46,6 +46,19 @@ for the enforced boundaries.
 Neither wheels nor frozen builds bundle analysis models. Model publishing uses
 `scripts/upload_models.sh`; preserve each model's license and attribution in [NOTICE](../NOTICE).
 
+## Alignment weights
+
+The aligner is Qwen3-ForcedAligner-0.6B, a torch model, and it is not published by this project:
+`namioto.analysis.qwen_aligner` fetches the pinned revision from the Hugging Face endpoint in
+Settings → Network (`https://hf-mirror.com` by default) into
+`<data dir>/namioto/models/qwen3-forcedaligner-0.6b`. The bundle it needs is the upstream snapshot
+as published — `config.json`, `model.safetensors`, `preprocessor_config.json`,
+`tokenizer_config.json`, `vocab.json`, `merges.txt` — so there is nothing to convert, unlike GAME.
+
+Point `--model DIR` or `$NAMIOTO_QWEN_ALIGNER_MODEL` at a local copy to skip the fetch. The
+revision is pinned in `REVISION`, so a checkpoint that moves upstream cannot change results under a
+released version of this program without that constant changing too.
+
 ### GitHub Actions and releases
 
 The CI workflow runs lint and the default headless tests on Ubuntu 24.04 for pull requests,
@@ -86,7 +99,7 @@ Packages are written to `dist/release/`.
 | Location | Responsibility |
 | --- | --- |
 | `namioto/ui/` | Qt editor, dialogs, spectrum rendering and remote-control server |
-| `namioto/analysis/` | Spectrum, tempo, transcription, model downloads and devices |
+| `namioto/analysis/` | Spectrum, tempo, transcription, alignment, model downloads and devices |
 | `namioto/lyrics.py` | The word a note sings, and how a text becomes one word per note |
 | `namioto/document.py`, `project.py`, `midi.py` | Notes, project persistence and MIDI interchange |
 | `namioto/settings.py`, `state.py` | Preferences and remembered UI/new-project values |

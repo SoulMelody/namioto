@@ -106,6 +106,23 @@ recorded in a manifest, so a later transcription reuses them; `--out` writes pla
 wherever it is told. `--model` or `$NAMIOTO_SEPARATION_MODEL` picks the separator, and `--device`
 takes `auto`, `cpu` or `cuda`. The command needs the `separation` extra.
 
+## Align a vocal
+
+```bash
+uv run namioto-cli align vocal.wav --words "き み の こ え"
+uv run namioto-cli align vocal.wav --words "你好 世界" --language Chinese --device gpu
+uv run namioto-cli align vocal.wav --words "き み の" --starts "0,1.2,2.4" --json
+```
+
+`--words` is one word per note, in the order they sound; the command writes the time it found for
+each. `--starts` is optional and only decides where the audio is cut: the model hears at most five
+minutes per call, so a longer file is aligned in windows between words, and without starts they are
+spread evenly over the file. A word the model could not place comes back as `null`.
+
+The command needs a torch extra (`pytorch-cpu` or `ort-cuda`), because the aligner is a torch model.
+Weights are fetched from the Hugging Face endpoint in Settings → Network on first use, or read from
+`--model DIR` / `$NAMIOTO_QWEN_ALIGNER_MODEL`. See [development](development.md#alignment-weights).
+
 ## Devices and models
 
 The initial `uv sync --extra ort-cpu` installs ONNX Runtime for CPU analysis. Alternatively:
@@ -118,11 +135,11 @@ uv sync --extra ort-webgpu
 uv sync --extra separation
 ```
 
-`ort-cuda` also installs torch and MuScriptor, so GPU machines get transcription without a second
-sync. CUDA requires the GPU runtime, CUDA 12 and cuDNN 9. WebGPU uses Vulkan with the CPU runtime
-and a provider plugin. CPU and CUDA builds conflict: select one, not both. The editor's
-Settings → Devices chooses the backend used by `--device gpu`. If a GPU provider cannot
-be created, ONNX Runtime reports it and continues on CPU.
+`ort-cuda` also installs torch, MuScriptor and the aligner, so GPU machines get transcription and
+alignment without a second sync. CUDA requires the GPU runtime, CUDA 12 and cuDNN 9. WebGPU uses
+Vulkan with the CPU runtime and a provider plugin. CPU and CUDA builds conflict: select one, not
+both. The editor's Settings → Devices chooses the backend used by `--device gpu`. If a GPU provider
+cannot be created, ONNX Runtime reports it and continues on CPU.
 
 Models are downloaded separately from this project's `models` release or GAME's release.
 They are not included in builds. Configure a GitHub mirror or proxy in Settings → Network

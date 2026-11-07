@@ -665,7 +665,7 @@ def test_the_menu_bar_offers_its_commands_and_none_of_them_is_dead(own_window) -
     assert len(menus) == 8  # File, Edit, View, Transport, Tools, Sync, Settings, Help
 
     counts = [len([item for item in menu.actions() if not item.isSeparator()]) for menu in menus]
-    assert counts == [7, 6, 4, 7, 5, 2, 1, 1]
+    assert counts == [7, 6, 4, 7, 6, 2, 1, 1]
     # a menu entry that does nothing is worse than one that is missing
     assert all(item.isEnabled() for menu in menus for item in menu.actions())
 
