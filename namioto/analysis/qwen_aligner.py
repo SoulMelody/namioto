@@ -10,6 +10,9 @@ is two calls and one matching step.
     units = align(model, "vocal.wav", "きみのこえ", "Japanese")
     times = match_units(units, ["き", "み", "の", "こ", "え"])
 
+Its sibling in the same package, Qwen3-ASR (`namioto.analysis.qwen_asr`), reads the words out of the
+audio before anyone has typed them; the aligner here then puts a time on them.
+
 The model is Apache-2.0 and ungated, but it is a torch model: `torch` and `qwen_asr` are reached
 only inside `load` and `align`, which a spawned process calls, so opening the editor never pulls a
 torch build in. Its weights are a separate work fetched on first use from the Hugging Face endpoint
@@ -27,22 +30,27 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from namioto import net
-from namioto.utils import data_dir
+from namioto.analysis.qwen_checkpoint import MISSING, Checkpoint
 
-MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
-# the revision this module was written against; a checkpoint that moved under the old one would
-# change results without a version of this program changing
-REVISION = "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
-# the files `from_pretrained` reads; the weights are the only large one
-FILES = (
-    "config.json",
-    "model.safetensors",
-    "preprocessor_config.json",
-    "tokenizer_config.json",
-    "vocab.json",
-    "merges.txt",
+CHECKPOINT = Checkpoint(
+    repo="Qwen/Qwen3-ForcedAligner-0.6B",
+    # the revision this module was written against; a checkpoint that moved under the old one would
+    # change results without a version of this program changing
+    revision="c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
+    # the files `from_pretrained` reads; the weights are the only large one
+    files=(
+        "config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+    ),
+    directory="qwen3-forcedaligner-0.6b",
 )
+MODEL = CHECKPOINT.repo
+REVISION = CHECKPOINT.revision
+FILES = CHECKPOINT.files
 # what the model calls each language, in the order the window offers them
 LANGUAGES = (
     "Chinese",
@@ -57,7 +65,6 @@ LANGUAGES = (
     "Russian",
     "Spanish",
 )
-MISSING = "qwen-asr is not installed; run `pip install namioto[pytorch-cpu]` (or namioto[ort-cuda])"
 # the model's own ceiling: one call hears five minutes of audio, and the window asks for less
 MAX_SECONDS = 300.0
 # how far the matching may move the cursor to find a word: a different reading of one character,
@@ -75,12 +82,11 @@ class Unit(NamedTuple):
 
 def model_dir() -> pathlib.Path:
     """Where the weights are filed, whether or not they have been fetched yet."""
-    return data_dir("models", "qwen3-forcedaligner-0.6b")
+    return CHECKPOINT.model_dir()
 
 
 def is_installed(directory: pathlib.Path | None = None) -> bool:
-    target = model_dir() if directory is None else pathlib.Path(directory)
-    return all((target / name).is_file() for name in FILES)
+    return CHECKPOINT.is_installed(directory)
 
 
 def resolve_model(
@@ -89,50 +95,17 @@ def resolve_model(
     download: bool = True,
     progress: Callable[[int, int], None] | None = None,
 ) -> pathlib.Path:
-    """The directory to load from: an explicit one, the one here, or a fetch of the pinned revision.
-
-    A directory that is missing a file is refused by name, rather than left to fail inside
-    `from_pretrained`, because a half-copied checkpoint is the usual mistake.
-    """
-    if explicit:
-        return _whole(pathlib.Path(explicit))
-    target = model_dir()
-    if is_installed(target):
-        return target
-    if not download:
-        raise FileNotFoundError(f"no Qwen3-ForcedAligner weights in {target}")
-    return install(progress)
+    """The directory to load from: an explicit one, the one here, or a fetch of the pinned revision."""
+    return CHECKPOINT.resolve(explicit, download=download, progress=progress)
 
 
 def install(progress: Callable[[int, int], None] | None = None) -> pathlib.Path:
-    """Fetch the pinned revision through the endpoint in force, one snapshot into `model_dir()`.
-
-    `huggingface_hub` reports no byte progress for a snapshot, so `progress` is told nothing rather
-    than given a bar that would not move.
-    """
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as error:  # the window turns this into the sentence above
-        raise ModuleNotFoundError(MISSING) from error
-    target = model_dir()
-    target.mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=MODEL,
-        revision=REVISION,
-        local_dir=str(target),
-        allow_patterns=list(FILES),
-        endpoint=net.hf_endpoint(),
-    )
-    if progress is not None:
-        progress(len(FILES), len(FILES))
-    return _whole(target)
+    """Fetch the pinned revision through the endpoint in force, one snapshot into `model_dir()`."""
+    return CHECKPOINT.install(progress)
 
 
 def _whole(directory: pathlib.Path) -> pathlib.Path:
-    missing = [name for name in FILES if not (directory / name).is_file()]
-    if missing:
-        raise FileNotFoundError(f"{directory} is not a Qwen3-ForcedAligner checkpoint: missing {', '.join(missing)}")
-    return directory
+    return CHECKPOINT.whole(directory)
 
 
 def load(directory: str | pathlib.Path, device: str = "cpu"):

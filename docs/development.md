@@ -59,6 +59,16 @@ Point `--model DIR` or `$NAMIOTO_QWEN_ALIGNER_MODEL` at a local copy to skip the
 revision is pinned in `REVISION`, so a checkpoint that moves upstream cannot change results under a
 released version of this program without that constant changing too.
 
+## Recognition weights
+
+The recognizer behind **Recognize lyrics** is Qwen3-ASR-0.6B, the other model in the same `qwen-asr`
+package, and it is not published here either: `namioto.analysis.qwen_asr` fetches the pinned
+revision through the same endpoint into `<data dir>/namioto/models/qwen3-asr-0.6b`, as the upstream
+snapshot — `config.json`, `generation_config.json`, `model.safetensors`,
+`preprocessor_config.json`, `tokenizer_config.json`, `vocab.json`, `merges.txt`,
+`chat_template.json`. A recognized text is not cached: it lands in the window's box where it is
+corrected before it moves a note.
+
 ### GitHub Actions and releases
 
 The CI workflow runs lint and the default headless tests on Ubuntu 24.04 for pull requests,

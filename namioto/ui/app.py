@@ -1372,30 +1372,30 @@ class MainWindow(QMainWindow):
                 self._adopt_transcription(dialog.notes())
 
     def _open_align(self) -> None:
-        """Ask the aligner for a time on every note, from the word it sings."""
+        """Put a time on every note of the channel from the word it sings, typing the words or hearing them."""
         if self.view.gesture_active:
             return
         if self.audio_path is None:
             self.statusBar().showMessage(i18n.tr("Load the audio before aligning the lyrics"))
             return
-        notes = [
-            item.note
-            for item in self.view.notes()
-            if item.note.channel == self.view.active_channel and item.note.lyric
-        ]
+        notes = [item.note for item in self.view.notes() if item.note.channel == self.view.active_channel]
         if not notes:
-            self.statusBar().showMessage(i18n.tr("The selected channel has no lyrics to align"))
+            self.statusBar().showMessage(i18n.tr("The selected channel has no notes to align"))
             return
         dialog = AlignDialog(
             self.audio_path,
-            [note.lyric for note in notes],
-            [self.view.to_seconds(note.start) for note in notes],
+            [note.lyric for note in notes if note.lyric],
+            [self.view.to_seconds(note.start) for note in notes if note.lyric],
             self.transport.bpm.value(),
             self,
             offset=self.view.offset,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._adopt_alignment(notes, dialog.spans())
+            target_notes = [item.note for item in self.view.notes() if item.note.channel == self.view.active_channel]
+            self._adopt_lyrics(target_notes, dialog.lyrics_text())
+            spans = dialog.spans()
+            aligned_notes = [note for note in target_notes if note.lyric][: len(spans)]
+            self._adopt_alignment(aligned_notes, spans[: len(aligned_notes)])
 
     def _adopt_alignment(self, notes, spans) -> None:
         """Lay the aligned spans onto the notes, as one undo step."""

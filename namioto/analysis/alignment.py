@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Lyric alignment as the editor uses it: the run's parameters, their store, and the child entry.
+"""Lyric alignment as the editor uses it: the run's parameters, their store, and the child entries.
 
 Qt-free on purpose, and free of `namioto.analysis.qwen_aligner` too: importing that would be
-harmless, but the model is reached only in the spawned process, which is also where the weights are
-fetched and `torch` is imported, so a crash cannot touch the GUI and opening the editor never loads
-a model.
+harmless, but the models are reached only in the spawned process, which is also where the weights
+are fetched and `torch` is imported, so a crash cannot touch the GUI and opening the editor never
+loads a model.
+
+Two jobs live here because they are the two halves of one window. `align` puts a time on words the
+user already has; `recognize` writes the words themselves, for a lyric nobody has typed yet. Only
+the alignment is remembered in a store: a recognized text lands in the window's box where the user
+edits it, so the text that gets aligned is theirs and re-running the recognizer would only undo
+their corrections.
 
 A run is keyed by the audio its alignment reads - the separated vocal when the source is a mix, the
 file itself otherwise - together with the words on the notes and the parameters that change what the
@@ -29,11 +35,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from namioto import params
-from namioto.analysis import devices, qwen_aligner
+from namioto.analysis import devices, qwen_aligner, qwen_asr
 from namioto.params import Field
 from namioto.utils import config_dir, data_dir, file_stamp, resolved, write_json
 
 LANGUAGE_CODES = qwen_aligner.LANGUAGES
+# the recognizer knows more languages than the aligner, and empty is "identify it yourself"
+ASR_LANGUAGE_CODES = ("", *qwen_asr.LANGUAGES)
 PARAMETER_FILE = "alignment.json"
 STORE_VERSION = 1
 # how much audio either side of a window is handed to the model, so a word on the seam is heard
@@ -48,6 +56,15 @@ PARAMETERS: tuple[Field, ...] = (
         "Language",
         "The language the lyrics are in; the model aligns text it is given, so this only picks its reading",
         choices=LANGUAGE_CODES,
+    ),
+    Field(
+        "asr_language",
+        "choice",
+        "",
+        "Recognition language",
+        "Language for automatic lyric recognition; empty lets Qwen identify it",
+        choices=ASR_LANGUAGE_CODES,
+        labels=("Auto", *qwen_asr.LANGUAGES),
     ),
     Field(
         "device",
@@ -130,7 +147,9 @@ def run_key(path: Any, words: Sequence[str], parameters: Any) -> str:
         "words": list(words),
         "model": qwen_aligner.REVISION,
         "parameters": {
-            item.name: values[item.name] for item in PARAMETERS if item.name not in ("quantize", "model_dir")
+            item.name: values[item.name]
+            for item in PARAMETERS
+            if item.name not in ("quantize", "model_dir", "asr_language")
         },
     }
     return hashlib.sha1(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
@@ -296,6 +315,30 @@ def _align_windows(model, path: str, words, starts, values, queue) -> list[tuple
                 previous_end = stop
             queue.put(("progress", "chunks", index + 1, len(cuts)))
     return spans
+
+
+def recognize(path: str, parameters: dict, channel) -> None:
+    """Recognize the lyric in a spawned process and report text or a traceback through `channel`."""
+    values = coerce_parameters(parameters)
+    try:
+        try:
+            channel.put(("log", f"{qwen_asr.MODEL}, {values['asr_language'] or 'auto'}"))
+            folder = qwen_asr.resolve_model(
+                values["model_dir"] or None,
+                progress=lambda done, total: channel.put(("progress", "weights", done, total)),
+            )
+            channel.put(("log", f"weights at {folder}"))
+            model = qwen_asr.load(folder, device=devices.resolve(values["device"]))
+            channel.put(("progress", "recognizing", 0, 0))
+            text = qwen_asr.recognize(model, path, values["asr_language"])
+            channel.put(("log", f"{len(text)} characters recognized"))
+            channel.put(("done", text))
+        except ModuleNotFoundError:
+            # the traceback alone would not say what to do, so the window gets the sentence first
+            channel.put(("log", qwen_asr.MISSING))
+            raise
+    except Exception:  # the child must report a crash rather than take the queue down with it
+        channel.put(("error", traceback.format_exc()))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -164,3 +164,102 @@ def test_a_child_that_cannot_start_is_reported(own_window, monkeypatch, agreed) 
     assert "no processes left" in dialog.log.toPlainText()
     assert dialog.run_button.isEnabled()
     dialog.close()
+
+
+def test_the_box_holds_the_words_the_notes_already_sing(own_window) -> None:
+    dialog = make_dialog(own_window)
+
+    assert dialog.lyrics_text() == "き み"
+    dialog.close()
+
+
+def test_recognizing_puts_the_heard_words_in_the_box(own_window, monkeypatch) -> None:
+    monkeypatch.setattr(align_dialog, "has_runtime", lambda: True)
+    monkeypatch.setattr(align_dialog, "start_recognition", fake_job([("done", "きみのこえ")]))
+    dialog = make_dialog(own_window)
+
+    dialog._recognize()
+    dialog._poll()
+
+    assert dialog.lyrics_text() == "きみのこえ"
+    assert dialog.recognize_button.isEnabled()
+    assert dialog.spans() == []  # nothing was aligned, so the caller keeps the notes' timing
+    dialog.close()
+
+
+def test_recognition_runs_on_the_vocal_stem_when_separation_is_on(own_window, monkeypatch) -> None:
+    monkeypatch.setattr(align_dialog, "has_runtime", lambda: True)
+    monkeypatch.setattr(
+        align_dialog,
+        "start_separation",
+        fake_job([("done", {"vocals": "/tmp/vocals.wav", "instrumental": "/tmp/inst.wav"})]),
+    )
+    calls: list = []
+    monkeypatch.setattr(align_dialog, "start_recognition", fake_job([("done", "きみの")], calls=calls))
+    dialog = make_dialog(own_window)
+    for field, _read, write in dialog._separation_fields:
+        if field.name == "enabled":
+            write(True)
+
+    dialog._recognize()
+    dialog._poll()
+    dialog._poll()
+
+    assert calls and calls[0][0] == "/tmp/vocals.wav"
+    assert dialog.lyrics_text() == "きみの"
+    dialog.close()
+
+
+def test_the_alignment_aligns_what_the_box_holds(own_window, monkeypatch, agreed) -> None:
+    monkeypatch.setattr(align_dialog, "has_runtime", lambda: True)
+    calls: list = []
+    spans = [(0.0, 0.4), (0.4, 0.8), (0.8, 1.2)]
+    monkeypatch.setattr(align_dialog, "start_job", fake_job([("done", spans)], calls=calls))
+    dialog = make_dialog(own_window)
+    dialog.lyrics.setPlainText("き み の")
+
+    dialog._start()
+
+    assert calls and calls[0][1] == ["き", "み", "の"]
+    dialog.close()
+
+
+def test_a_pasted_text_keeps_the_notes_starts_until_its_word_count_differs(own_window) -> None:
+    dialog = make_dialog(own_window)
+    dialog.starts = [0.0, 2.0, 4.0]
+
+    # one word per note: the windows are cut where the notes already sound
+    assert dialog._word_starts(["き", "み", "の"]) == [0.0, 2.0, 4.0]
+    # no longer: the same span, shared evenly, so the cuts still follow the phrases
+    assert dialog._word_starts(["き", "み"]) == [0.0, 4.0]
+    dialog.close()
+
+
+def test_empty_lyrics_stop_the_run(own_window, monkeypatch, agreed) -> None:
+    monkeypatch.setattr(align_dialog, "start_job", lambda *args: pytest.fail("must not run"))
+    dialog = make_dialog(own_window)
+    dialog.lyrics.setPlainText("  ")
+
+    dialog._start()
+
+    assert "recognize" in dialog.log.toPlainText()
+    dialog.close()
+
+
+def test_accepting_puts_the_box_text_and_the_spans_on_the_channel(own_window, monkeypatch) -> None:
+    own_window.audio_path = "/tmp/song.wav"
+    first = own_window.view.add_note(60, 0.0, 1.0)
+    second = own_window.view.add_note(62, 1.0, 1.0)
+
+    def accepted(dialog):
+        dialog.lyrics.setPlainText("き み")
+        dialog._spans = [(0.5, 1.0), (1.5, 2.0)]
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(AlignDialog, "exec", accepted)
+
+    own_window._open_align()
+
+    assert [first.note.lyric, second.note.lyric] == ["き", "み"]
+    assert own_window.view.to_seconds(first.note.start) == pytest.approx(0.5)
+    assert own_window.view.to_seconds(second.note.start) == pytest.approx(1.5)

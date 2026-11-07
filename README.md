@@ -14,7 +14,8 @@ notes against what you hear and see.
 - Extract instrument parts with [MuScriptor](https://github.com/muscriptor/muscriptor), one channel
   per instrument it hears.
 - Separate a mix into vocals and instrumental first, so each engine hears only its own stem.
-- Add lyrics and readings, align them against a separated vocal with
+- Add lyrics and readings, hear them out of the recording with
+  [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B), align them against a separated vocal with
   [Qwen3-ForcedAligner](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B), and adjust how the
   sounds map onto notes.
 - Save your work as a `.nto` project and export MIDI.

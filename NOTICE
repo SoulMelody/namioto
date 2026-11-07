@@ -112,12 +112,25 @@ Third-party code and assets
 - The model card marks its audio type as speech. This program aligns a separated vocal stem, which
   is what the built-in pymss stage produces, and treats the result as a starting point.
 
-### qwen-asr (the aligner's runtime wrapper)
+### qwen-asr (the aligner's and the recognizer's runtime wrapper)
 - Upstream: https://github.com/QwenLM/Qwen3-ASR, published on PyPI as `qwen-asr`
 - License: Apache-2.0
-- Used for: loading the aligner and running it. It pins `transformers==4.57.6` and brings `gradio`,
-  `flask`, `sox`, `nagisa`, `soynlp` and `accelerate` with it, which is why the extra is heavier
-  than the model alone would be. Nothing of it is shipped in a wheel or a frozen build.
+- Used for: loading both Qwen3 models and running them. It pins `transformers==4.57.6` and brings
+  `gradio`, `flask`, `sox`, `nagisa`, `soynlp` and `accelerate` with it, which is why the extra is
+  heavier than the model alone would be. Nothing of it is shipped in a wheel or a frozen build.
+
+### Qwen3-ASR (lyric recognition)
+- Upstream: Alibaba Qwen, https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+- License: Apache-2.0
+- Used for: hearing the words of a sung lyric so they do not have to be typed. The model answers one
+  text for the file and cuts long audio itself; `namioto/analysis/qwen_asr.py` validates the
+  snapshot and calls `transcribe()`. The text lands in the alignment window's box, so a rounded
+  character is corrected before it moves a note.
+- It is a torch model like the aligner, offered by the same `pytorch-cpu` and `ort-cuda` extras and
+  imported only in the spawned recognition process.
+- The weights are not redistributed here: the pinned revision is fetched on first use from the
+  endpoint in Settings → Network into
+  `platformdirs.user_data_dir("namioto")/models/qwen3-asr-0.6b`.
 
 ### pymss (source separation)
 - Upstream: https://github.com/pymss-project/pymss, published on PyPI as `pymss`

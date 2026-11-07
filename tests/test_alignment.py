@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import soundfile
 
-from namioto.analysis import alignment, qwen_aligner
+from namioto.analysis import alignment, qwen_aligner, qwen_asr
 
 AUDIO = "/tmp/song.wav"
 
@@ -162,4 +162,41 @@ def test_the_child_reports_a_missing_runtime(tmp_path, monkeypatch) -> None:
 
     messages = drain(channel)
     assert ("log", qwen_aligner.MISSING) in messages
+    assert messages[-1][0] == "error"
+
+
+def test_the_recognition_child_reports_the_text_it_heard(tmp_path, monkeypatch) -> None:
+    audio = tmp_path / "song.wav"
+    soundfile.write(audio, np.zeros(16000, dtype=np.float32), 16000)
+    monkeypatch.setattr(qwen_asr, "resolve_model", lambda *args, **kwargs: tmp_path)
+    monkeypatch.setattr(qwen_asr, "load", lambda folder, device="cpu": object())
+    calls: list = []
+
+    def fake_recognize(model, path, language=""):
+        calls.append((path, language))
+        return "きみのこえ"
+
+    monkeypatch.setattr(qwen_asr, "recognize", fake_recognize)
+    channel: queue.Queue = queue.Queue()
+
+    alignment.recognize(str(audio), {"asr_language": "Japanese"}, channel)
+
+    messages = drain(channel)
+    assert messages[-1] == ("done", "きみのこえ")
+    assert calls == [(str(audio), "Japanese")]
+
+
+def test_the_recognition_child_reports_a_missing_runtime(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(qwen_asr, "resolve_model", lambda *args, **kwargs: tmp_path)
+
+    def missing(folder, device="cpu"):
+        raise ModuleNotFoundError(qwen_asr.MISSING)
+
+    monkeypatch.setattr(qwen_asr, "load", missing)
+    channel: queue.Queue = queue.Queue()
+
+    alignment.recognize(str(tmp_path / "song.wav"), {}, channel)
+
+    messages = drain(channel)
+    assert ("log", qwen_asr.MISSING) in messages
     assert messages[-1][0] == "error"
